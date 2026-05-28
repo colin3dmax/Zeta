@@ -20,6 +20,181 @@
       <li><strong>Agent：</strong>描述有状态任务单元的决策边界、工具集合和策略约束。</li>
     </ul>
 
+    <h2>设计原则</h2>
+    <ul>
+      <li><strong>默认无权限：</strong>代码默认不能访问文件、网络、系统命令、环境变量、模型服务或外部工具。</li>
+      <li><strong>声明先于调用：</strong>所有 capability 必须在函数、tool、agent 或模块边界显式声明。</li>
+      <li><strong>Schema 先行：</strong>AI 输出、tool 输入输出和 agent 状态必须先有可验证 schema，再允许进入实现。</li>
+      <li><strong>最小授权：</strong>授权粒度应缩到具体路径、域名、模型族、工具名和操作类型。</li>
+      <li><strong>可审计：</strong>每次 capability 调用必须能生成 trace 事件，记录调用方、权限、输入摘要、输出摘要、错误和耗时。</li>
+      <li><strong>可降级：</strong>权限拒绝、超时、模型不可用和 schema 校验失败必须进入显式错误模型。</li>
+    </ul>
+
+    <h2>Capability 生命周期</h2>
+    <ol>
+      <li><strong>声明：</strong>源码通过 <code>uses</code> 或模块 manifest 声明需要的 capability。</li>
+      <li><strong>发现：</strong>编译器和包管理器汇总 capability 清单，生成可审计权限图。</li>
+      <li><strong>授权：</strong>运行时或部署配置决定具体授权范围，例如路径、域名、模型和调用额度。</li>
+      <li><strong>调用：</strong>代码只能通过已授权 capability 入口访问外部能力。</li>
+      <li><strong>审计：</strong>运行时记录 trace，供测试、生产观测和安全审查使用。</li>
+      <li><strong>失效：</strong>权限可以因配置变更、过期、额度耗尽、策略拒绝或用户撤销而失效。</li>
+    </ol>
+
+    <h2>Capability 命名</h2>
+    <p>Capability 使用点分层级命名，一级为能力域，二级为操作，后续层级用于细分 provider 或资源类型。</p>
+    <pre><code>fs.read
+fs.write
+net.connect
+net.listen
+env.read
+process.spawn
+ai.chat
+ai.embedding
+ai.vision
+tool.call
+secret.read</code></pre>
+
+    <h2>权限声明</h2>
+    <pre><code>fn summarize(path: Path) -> Result&lt;String, Error&gt;
+  uses [fs.read, ai.chat]
+{
+  let text = fs.readText(path)?
+  ai.chat(model: "fast", input: text)
+}</code></pre>
+
+    <p>模块级 manifest 可以收窄授权范围。源码声明“需要什么”，部署配置声明“允许到什么范围”。</p>
+    <pre><code>[permissions]
+fs.read = ["./docs", "./data/public"]
+net.connect = ["api.example.com:443"]
+ai.chat = {
+  models = ["fast", "reasoning"],
+  max_tokens_per_call = 4096
+}</code></pre>
+
+    <h2>Schema 契约字段</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>字段</th>
+          <th>要求</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>name</code></td>
+          <td>必填</td>
+          <td>稳定名称，使用 PascalCase。</td>
+        </tr>
+        <tr>
+          <td><code>version</code></td>
+          <td>必填</td>
+          <td>语义版本。破坏性变更必须提升 major。</td>
+        </tr>
+        <tr>
+          <td><code>fields</code></td>
+          <td>必填</td>
+          <td>字段名、类型、可选性、默认值和验证规则。</td>
+        </tr>
+        <tr>
+          <td><code>examples</code></td>
+          <td>必填</td>
+          <td>至少一个成功样例和一个失败样例。</td>
+        </tr>
+        <tr>
+          <td><code>compatibility</code></td>
+          <td>必填</td>
+          <td>向前兼容规则、废弃字段和迁移策略。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Tool 契约字段</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>字段</th>
+          <th>要求</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>input</code></td>
+          <td>必填</td>
+          <td>输入 schema，禁止未结构化 Any 作为正式接口。</td>
+        </tr>
+        <tr>
+          <td><code>output</code></td>
+          <td>必填</td>
+          <td>输出 schema，AI 输出必须通过校验。</td>
+        </tr>
+        <tr>
+          <td><code>errors</code></td>
+          <td>必填</td>
+          <td>错误枚举，必须区分权限、超时、校验和外部服务失败。</td>
+        </tr>
+        <tr>
+          <td><code>uses</code></td>
+          <td>必填</td>
+          <td>最小 capability 集合。</td>
+        </tr>
+        <tr>
+          <td><code>timeout</code></td>
+          <td>必填</td>
+          <td>默认超时和最大超时。</td>
+        </tr>
+        <tr>
+          <td><code>idempotency</code></td>
+          <td>必填</td>
+          <td>标记为 none、read、retry_safe 或 key_required。</td>
+        </tr>
+        <tr>
+          <td><code>trace</code></td>
+          <td>必填</td>
+          <td>调用链字段、脱敏策略和采样策略。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Agent 契约字段</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>字段</th>
+          <th>要求</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>tools</code></td>
+          <td>必填</td>
+          <td>Agent 可调用 tool 白名单。</td>
+        </tr>
+        <tr>
+          <td><code>memory</code></td>
+          <td>必填</td>
+          <td>状态存储类型、生命周期和隐私策略。</td>
+        </tr>
+        <tr>
+          <td><code>policy</code></td>
+          <td>必填</td>
+          <td>决策边界、人类确认点和禁止行为。</td>
+        </tr>
+        <tr>
+          <td><code>budget</code></td>
+          <td>必填</td>
+          <td>最大调用次数、token、费用、时间和重试次数。</td>
+        </tr>
+        <tr>
+          <td><code>explainability</code></td>
+          <td>必填</td>
+          <td>需要记录的计划、选择理由和最终决策摘要。</td>
+        </tr>
+      </tbody>
+    </table>
+
     <h2>示例</h2>
     <pre><code>schema Task {
   title: String
@@ -31,6 +206,87 @@ tool classify(input: String) -> Result&lt;Task, AIError&gt;
 {
   ai.extract&lt;Task&gt;(model: "fast", input: input)
 }</code></pre>
+
+    <h2>Agent 示例</h2>
+    <pre><code>agent SupportAgent {
+  memory: SessionMemory(ttl: "24h")
+  tools: [searchDocs, createTicket]
+  policy: [
+    "no_payment_action_without_user_confirm",
+    "no_secret_exfiltration",
+    "human_review_required_for_account_closure"
+  ]
+  budget: {
+    max_tool_calls: 12,
+    max_duration_ms: 30000
+  }
+
+  async fn handle(msg: Message) -> Result&lt;Response, AgentError&gt;
+    uses [tool.call, ai.chat]
+  {
+    plan(msg).execute()
+  }
+}</code></pre>
+
+    <h2>错误模型</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>错误</th>
+          <th>含义</th>
+          <th>是否可恢复</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>PermissionDenied</code></td>
+          <td>未声明或未授权 capability。</td>
+          <td>可通过配置或用户授权恢复。</td>
+        </tr>
+        <tr>
+          <td><code>SchemaInvalid</code></td>
+          <td>输入或输出不符合 schema。</td>
+          <td>通常可通过重试、修复输入或降级恢复。</td>
+        </tr>
+        <tr>
+          <td><code>Timeout</code></td>
+          <td>超过 tool 或 agent 的时间限制。</td>
+          <td>可重试，但必须受预算限制。</td>
+        </tr>
+        <tr>
+          <td><code>ProviderUnavailable</code></td>
+          <td>外部模型、网络或工具服务不可用。</td>
+          <td>可降级到备用 provider 或排队。</td>
+        </tr>
+        <tr>
+          <td><code>PolicyRejected</code></td>
+          <td>调用违反 agent policy 或部署策略。</td>
+          <td>需要用户确认、策略变更或终止任务。</td>
+        </tr>
+        <tr>
+          <td><code>BudgetExceeded</code></td>
+          <td>超过费用、token、调用次数或时间预算。</td>
+          <td>需要新预算或人工确认。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>版本策略</h2>
+    <ul>
+      <li>Schema、tool 和 agent 契约使用语义版本。</li>
+      <li>新增可选字段是 minor 变更。</li>
+      <li>删除字段、改变字段含义、收紧验证规则、改变错误语义是 major 变更。</li>
+      <li>破坏性变更必须提供迁移说明、兼容窗口和回滚方案。</li>
+    </ul>
+
+    <h2>Lint 与 Review 规则</h2>
+    <ul>
+      <li>禁止 tool 缺少 schema、错误模型、timeout 或 uses 声明。</li>
+      <li>禁止 agent 调用未列入 tools 白名单的 tool。</li>
+      <li>禁止 capability 使用通配符授权进入 stable 文档。</li>
+      <li>禁止 AI 输出未经 schema 校验进入业务状态。</li>
+      <li>Review 必须检查成功样例、失败样例、权限最小化和 trace 脱敏。</li>
+    </ul>
 
     <h2>质量要求</h2>
     <ul>
