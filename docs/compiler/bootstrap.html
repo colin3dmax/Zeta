@@ -15,13 +15,90 @@
     <h2>自举原则</h2>
     <p>自编译是最终目标，但第一版编译器必须使用成熟宿主语言实现。推荐使用 Rust 或 Zig 构建 stage0，以降低早期调试、跨平台、包管理和性能风险。</p>
 
-    <h2>阶段定义</h2>
+    <h2>路线目标与非目标</h2>
     <ul>
-      <li><strong>Stage 0：</strong>宿主语言实现的 bootstrap 编译器。</li>
-      <li><strong>Stage 1：</strong>使用 Zeta 重写 parser 或 typechecker 等前端模块，并接回 stage0。</li>
-      <li><strong>Stage 2：</strong>Zeta 编译器可以编译 Zeta 编译器核心前端。</li>
-      <li><strong>Stage 3：</strong>完整编译器由 Zeta 编译自身，stage0 仅保留为冷启动 seed。</li>
+      <li><strong>目标：</strong>建立可验证、可复现、可逐步替换宿主实现的 self-hosting 路线。</li>
+      <li><strong>目标：</strong>让 Stage 0 成为规范执行器、测试基准和冷启动 seed，而不是一次性脚手架。</li>
+      <li><strong>目标：</strong>每个阶段都有明确输入、输出、退出条件和回归测试。</li>
+      <li><strong>非目标：</strong>Stage 0 不追求完整语言、完整标准库、全平台 backend 或优化编译器。</li>
+      <li><strong>非目标：</strong>自举路径不纳入 async、宏、复杂泛型、完整 borrow checker 和完整 AI agent 语法。</li>
     </ul>
+
+    <h2>Self-hosting MVP 子集</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>类别</th>
+          <th>必须支持</th>
+          <th>暂缓</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>模块</td>
+          <td><code>module</code>、<code>import</code>、<code>export</code>、文件级符号。</td>
+          <td>复杂包可见性、条件编译宏。</td>
+        </tr>
+        <tr>
+          <td>语句与表达式</td>
+          <td><code>fn</code>、块表达式、<code>let</code>、<code>if/else</code>、<code>while</code>、<code>return</code>、<code>match</code>。</td>
+          <td>生成器、协程、模式宏。</td>
+        </tr>
+        <tr>
+          <td>类型</td>
+          <td><code>Bool</code>、整数、<code>String</code>、数组或 slice、<code>struct</code>、<code>enum</code>、<code>Option</code>、<code>Result</code>。</td>
+          <td>高阶类型、完整 trait specialization、复杂生命周期。</td>
+        </tr>
+        <tr>
+          <td>编译器库能力</td>
+          <td><code>String</code>、<code>Vec</code>、<code>Map</code>、<code>Set</code>、文件读取、路径处理、诊断输出。</td>
+          <td>完整 std、网络、线程池、AI runtime。</td>
+        </tr>
+        <tr>
+          <td>错误模型</td>
+          <td><code>Result</code> 风格显式错误、错误码、源码 span。</td>
+          <td>异常作为主错误路径。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>阶段定义</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>阶段</th>
+          <th>输入</th>
+          <th>输出</th>
+          <th>退出条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Stage 0</td>
+          <td>Rust 或 Zig 实现的 bootstrap 编译器。</td>
+          <td>Lexer、parser、AST、diagnostics、name resolution、typechecker、HIR/MIR dump、最小 interpreter 或单一 backend。</td>
+          <td>能编译并运行 MVP corpus，所有 golden tests 稳定。</td>
+        </tr>
+        <tr>
+          <td>Stage 1</td>
+          <td>Stage 0 编译器和 Zeta 编写的独立前端模块。</td>
+          <td>优先替换 parser、diagnostics 或 AST dump，不优先替换 typechecker。</td>
+          <td>Zeta 实现模块与宿主实现对同一 corpus 输出等价。</td>
+        </tr>
+        <tr>
+          <td>Stage 2</td>
+          <td>Zeta 编写的 lexer/parser/AST/HIR/typechecker 核心。</td>
+          <td>Zeta 编译器可以编译自身核心前端，Stage 0 仍负责 backend 和 runtime seed。</td>
+          <td>Stage 1 与 Stage 2 编译器在 golden corpus 上输出一致。</td>
+        </tr>
+        <tr>
+          <td>Stage 3</td>
+          <td>完整 Zeta 编译器源码。</td>
+          <td>Zeta 编译器可编译完整 Zeta 编译器，Stage 0 只作为冷启动 seed。</td>
+          <td>三轮自举产物稳定，reproducible build、版本 pin 和 bootstrap diff 通过。</td>
+        </tr>
+      </tbody>
+    </table>
 
     <h2>编译器管线</h2>
     <pre><code>Zeta Source
@@ -34,12 +111,74 @@
   -> LLVM Native / WASM Component / Interpreter</code></pre>
 
     <h2>质量闸门</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>闸门</th>
+          <th>验收要求</th>
+          <th>阻断条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Parser</td>
+          <td>语法子集冻结；AST 节点稳定；所有节点带 source span；合法、非法、错误恢复样例有 golden dump。</td>
+          <td>错误恢复阻塞同文件后续诊断，或 AST dump 不稳定。</td>
+        </tr>
+        <tr>
+          <td>Name Resolution / Typechecker</td>
+          <td>name resolution 与 typecheck 分层；支持局部作用域、跨模块符号、函数签名、struct/enum 字段、基础类型推断。</td>
+          <td>backend 直接依赖未检查 AST，或诊断缺少 span 和错误码。</td>
+        </tr>
+        <tr>
+          <td>HIR</td>
+          <td>去语法糖；绑定 symbol id 和 type id；控制流、调用、字段访问、match/if lower 形式稳定；HIR verifier 通过。</td>
+          <td>存在悬空 id、类型未附着、非确定性 dump。</td>
+        </tr>
+        <tr>
+          <td>MIR</td>
+          <td>定义 basic block、locals、temporaries、terminator、call、return、drop/cleanup；MIR verifier 检查 CFG 和变量初始化。</td>
+          <td>缺少终结指令、未初始化变量、return path 不完整。</td>
+        </tr>
+        <tr>
+          <td>Backend</td>
+          <td>统一 codegen interface，输入 MIR、target triple、runtime ABI、diagnostic sink；smoke 覆盖整数、字符串、函数调用、模块调用。</td>
+          <td>backend 直接消费 AST/HIR，或不同 backend 对同一 corpus 行为不一致。</td>
+        </tr>
+        <tr>
+          <td>Bootstrap</td>
+          <td>Stage 0 编译 Stage 1，Stage 1 编译 Stage 2，对 corpus 输出一致；三轮自举稳定。</td>
+          <td>宿主实现长期分叉，或 Zeta 实现无法替换对应宿主模块。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>最小 Compiler Corpus</h2>
     <ul>
-      <li>Parser golden tests：AST 快照、错误恢复、源码 span。</li>
-      <li>Typecheck golden tests：类型错误、跨模块解析、错误定位。</li>
-      <li>HIR/MIR golden tests：IR dump 稳定，MIR verifier 通过。</li>
-      <li>Backend smoke tests：LLVM/WASM 编译执行结果一致。</li>
-      <li>Bootstrap check：stage1/stage2/stage3 产物行为稳定。</li>
+      <li>语法样例：空文件、模块、函数、表达式、控制流、struct、enum、match。</li>
+      <li>错误样例：非法 token、缺失分隔符、重复定义、未解析符号、类型不匹配。</li>
+      <li>跨模块样例：import/export、命名冲突、可见性错误。</li>
+      <li>IR 样例：函数调用、短路逻辑、结构体构造、enum 分支、早返回。</li>
+      <li>自举样例：lexer、token、span、diagnostic、AST 节点等编译器自身子模块。</li>
+    </ul>
+
+    <h2>Backend 优先级</h2>
+    <p>早期不应把 LLVM 作为唯一语义验证路径。推荐先建立 MIR interpreter 或 WASM/WASI smoke 作为可快速调试的语义基线，再接入 LLVM native backend。</p>
+    <ol>
+      <li>MIR interpreter：最快验证语义，适合 golden tests 和错误定位。</li>
+      <li>WASM/WASI backend：便于跨平台 smoke 和沙箱运行。</li>
+      <li>LLVM native backend：用于原生性能和生产 AOT。</li>
+      <li>WASM Component backend：用于插件、AI tool sandbox 和跨语言组件。</li>
+    </ol>
+
+    <h2>主要风险</h2>
+    <ul>
+      <li>MVP 子集过大，会让自举路线被 async、宏、复杂泛型和 borrow checker 拖慢。</li>
+      <li>HIR/MIR 边界不清，会导致 backend 反向依赖 AST，后期难以替换。</li>
+      <li>golden dump 不稳定，会让回归测试噪音过大。</li>
+      <li>标准库能力不足，会导致语言子集能编译但无法编写编译器。</li>
+      <li>Stage 0 没有规格约束，会变成事实标准，Zeta 实现很难追齐。</li>
+      <li>过早展开多 target，会稀释 self-hosting 主线。</li>
     </ul>
   </main>
 </body>
