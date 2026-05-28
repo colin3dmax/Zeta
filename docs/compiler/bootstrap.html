@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zeta 编译器与自举路线</title>
+  <link rel="stylesheet" href="../shared.css">
+</head>
+<body>
+  <main>
+    <h1>Zeta 编译器与自举路线</h1>
+    <p><strong>状态：</strong>draft</p>
+    <p><strong>更新时间：</strong>2026-05-28</p>
+
+    <h2>自举原则</h2>
+    <p>自编译是最终目标，但第一版编译器必须使用成熟宿主语言实现。推荐使用 Rust 或 Zig 构建 stage0，以降低早期调试、跨平台、包管理和性能风险。</p>
+
+    <h2>阶段定义</h2>
+    <ul>
+      <li><strong>Stage 0：</strong>宿主语言实现的 bootstrap 编译器。</li>
+      <li><strong>Stage 1：</strong>使用 Zeta 重写 parser 或 typechecker 等前端模块，并接回 stage0。</li>
+      <li><strong>Stage 2：</strong>Zeta 编译器可以编译 Zeta 编译器核心前端。</li>
+      <li><strong>Stage 3：</strong>完整编译器由 Zeta 编译自身，stage0 仅保留为冷启动 seed。</li>
+    </ul>
+
+    <h2>编译器管线</h2>
+    <pre><code>Zeta Source
+  -> Lexer / Parser
+  -> AST
+  -> Name Resolution / Type Check
+  -> HIR
+  -> MIR
+  -> Backend Interface
+  -> LLVM Native / WASM Component / Interpreter</code></pre>
+
+    <h2>质量闸门</h2>
+    <ul>
+      <li>Parser golden tests：AST 快照、错误恢复、源码 span。</li>
+      <li>Typecheck golden tests：类型错误、跨模块解析、错误定位。</li>
+      <li>HIR/MIR golden tests：IR dump 稳定，MIR verifier 通过。</li>
+      <li>Backend smoke tests：LLVM/WASM 编译执行结果一致。</li>
+      <li>Bootstrap check：stage1/stage2/stage3 产物行为稳定。</li>
+    </ul>
+  </main>
+</body>
+</html>

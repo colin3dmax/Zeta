@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zeta HTML 文档规范</title>
+  <link rel="stylesheet" href="../shared.css">
+</head>
+<body>
+  <main>
+    <h1>Zeta HTML 文档规范</h1>
+    <p><strong>状态：</strong>draft</p>
+    <p><strong>更新时间：</strong>2026-05-28</p>
+
+    <h2>格式规则</h2>
+    <ul>
+      <li>除 GitHub README.md 使用 Markdown 作为仓库首页外，其他项目文档全部使用 HTML。</li>
+      <li>正式文档优先中文，后续通过同一结构支持多语言版本。</li>
+      <li>每份文档必须包含 title、h1、状态、更新时间、适用范围和验收标准。</li>
+      <li>代码示例使用 pre/code，示例应能进入后续 golden tests。</li>
+      <li>文档之间使用相对链接，避免不可迁移的本地绝对路径。</li>
+      <li>后续多语言版本使用相同目录结构，例如 zh-CN、en-US。</li>
+    </ul>
+
+    <h2>状态标记</h2>
+    <ul>
+      <li>draft：草案，可大幅调整。</li>
+      <li>accepted：已接受，作为实现依据。</li>
+      <li>stable：已被测试和实现验证。</li>
+      <li>deprecated：仍可参考，但不再作为新实现依据。</li>
+    </ul>
+
+    <h2>DevGame 交付规则</h2>
+    <ul>
+      <li>任务进入 in_progress 前必须说明预期改动、风险和验证方式。</li>
+      <li>任务进入 review 前必须附带测试结果和文档链接。</li>
+      <li>任务进入 done 前必须处理 review 评论并记录最终验收证据。</li>
+      <li>跨模块任务必须先定 schema 和规范，再实现 tool、agent 或 runtime 行为。</li>
+    </ul>
+  </main>
+</body>
+</html>

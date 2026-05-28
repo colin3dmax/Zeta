@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zeta 跨平台与运行时架构</title>
+  <link rel="stylesheet" href="../shared.css">
+</head>
+<body>
+  <main>
+    <h1>Zeta 跨平台与运行时架构</h1>
+    <p><strong>状态：</strong>draft</p>
+    <p><strong>更新时间：</strong>2026-05-28</p>
+
+    <h2>目标平台</h2>
+    <ul>
+      <li>Desktop / Server：macOS、Linux、Windows，x64、arm64、riscv64。</li>
+      <li>Mobile：iOS arm64、Android arm64，优先以 staticlib/cdylib 进入原生应用。</li>
+      <li>Web：wasm32-browser、wasm32-wasi、WASM Component。</li>
+      <li>Embedded：arm-none-eabi、riscv32-none，支持 no_std 和可选 alloc。</li>
+    </ul>
+
+    <h2>标准库分层</h2>
+    <pre><code>std
+  -> alloc
+    -> core</code></pre>
+    <ul>
+      <li><strong>core：</strong>基础类型、Option、Result、panic 抽象，无操作系统和堆依赖。</li>
+      <li><strong>alloc：</strong>堆分配、字符串、数组、集合和智能指针。</li>
+      <li><strong>std：</strong>文件、网络、线程、时间、环境变量和平台集成。</li>
+    </ul>
+
+    <h2>Runtime 裁剪</h2>
+    <ul>
+      <li>runtime-none：裸机和极小嵌入式。</li>
+      <li>runtime-core：基础 panic、入口、内存和错误处理。</li>
+      <li>runtime-async：异步调度和事件循环。</li>
+      <li>runtime-std：文件、网络、线程、进程。</li>
+      <li>runtime-ai：schema、tool、agent、trace、policy。</li>
+    </ul>
+
+    <h2>CI Matrix</h2>
+    <ul>
+      <li>Host：Linux、macOS、Windows。</li>
+      <li>Target：native、wasm32、mobile build-only、embedded no_std。</li>
+      <li>Runtime：std、alloc、no_std、minimal。</li>
+      <li>检查：format、lint、unit、cross-compile smoke、runtime feature matrix、WASM artifact size。</li>
+    </ul>
+  </main>
+</body>
+</html>

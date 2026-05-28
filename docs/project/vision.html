@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zeta 语言定位与产品原则</title>
+  <link rel="stylesheet" href="../shared.css">
+</head>
+<body>
+  <main>
+    <h1>Zeta 语言定位与产品原则</h1>
+    <p><strong>状态：</strong>draft</p>
+    <p><strong>更新时间：</strong>2026-05-28</p>
+
+    <h2>一句话定位</h2>
+    <p>Zeta 是一门默认安全、可脚本化、可编译部署、可自举、自编译，并面向 AI 原生应用的系统应用语言。</p>
+
+    <h2>设计目标</h2>
+    <ul>
+      <li>让脚本、服务端、桌面、移动端、WebAssembly、嵌入式和 AI agent 共享同一套语言与工具链。</li>
+      <li>在默认模式下提供安全、清晰、快速的工程体验。</li>
+      <li>在高性能模块中提供接近 Rust/C/C++ 的控制能力。</li>
+      <li>用 capability、schema、tool、agent 和 trace 建立 AI 时代的应用安全边界。</li>
+    </ul>
+
+    <h2>非目标</h2>
+    <ul>
+      <li>第一阶段不追求完整替代 Rust、C++、Go、JavaScript 或 Python。</li>
+      <li>第一阶段不内建完整 UI 框架，优先保证语言、编译器、运行时和 WASM 输出。</li>
+      <li>第一阶段不把所有权模型强制暴露给所有业务代码，性能敏感模块使用可选 owned 模式。</li>
+    </ul>
+
+    <h2>MVP 能力</h2>
+    <ul>
+      <li>基础语法、函数、模块、结构体、枚举、模式匹配。</li>
+      <li>静态类型、局部类型推导、Option、Result。</li>
+      <li>解释执行和 LLVM AOT 编译路径。</li>
+      <li>HTML 文档、CLI、formatter、最小 LSP 和测试框架。</li>
+      <li>DevGame 任务流、review 闸门和 done 验收证据。</li>
+    </ul>
+  </main>
+</body>
+</html>

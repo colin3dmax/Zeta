@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zeta AI 原生能力与权限模型</title>
+  <link rel="stylesheet" href="../shared.css">
+</head>
+<body>
+  <main>
+    <h1>Zeta AI 原生能力与权限模型</h1>
+    <p><strong>状态：</strong>draft</p>
+    <p><strong>更新时间：</strong>2026-05-28</p>
+
+    <h2>核心边界</h2>
+    <ul>
+      <li><strong>Capability：</strong>描述代码被授权做什么，例如文件读取、网络访问、模型调用。</li>
+      <li><strong>Schema：</strong>描述输入、输出、错误和可验证数据契约。</li>
+      <li><strong>Tool：</strong>描述可调用能力的函数边界、权限、超时、幂等性和失败场景。</li>
+      <li><strong>Agent：</strong>描述有状态任务单元的决策边界、工具集合和策略约束。</li>
+    </ul>
+
+    <h2>示例</h2>
+    <pre><code>schema Task {
+  title: String
+  priority: "low" | "medium" | "high"
+}
+
+tool classify(input: String) -> Result&lt;Task, AIError&gt;
+  uses [ai.chat]
+{
+  ai.extract&lt;Task&gt;(model: "fast", input: input)
+}</code></pre>
+
+    <h2>质量要求</h2>
+    <ul>
+      <li>Tool 必须声明 schema、错误模型、权限和超时。</li>
+      <li>Agent 必须声明可调用 tool 和决策边界。</li>
+      <li>权限默认最小化，禁止隐式文件、网络、系统命令和 AI 模型访问。</li>
+      <li>Review 必须包含成功样例和失败样例。</li>
+      <li>Done 必须附带测试结果、文档链接和 DevGame 验收证据。</li>
+    </ul>
+  </main>
+</body>
+</html>
