@@ -3,36 +3,79 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Zeta 文档中心</title>
-  <style>
-    body { max-width: 960px; margin: 40px auto; padding: 0 24px; font: 16px/1.7 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #202124; }
-    h1, h2 { line-height: 1.25; }
-    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    pre { overflow: auto; padding: 16px; background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; }
-    a { color: #0969da; }
-    .status { display: inline-block; padding: 2px 8px; border: 1px solid #d0d7de; border-radius: 999px; font-size: 13px; color: #57606a; }
-  </style>
+  <title>Zeta 编程语言</title>
+  <link rel="stylesheet" href="shared.css">
 </head>
 <body>
-  <h1>Zeta 文档中心 <span class="status">draft</span></h1>
-  <p>Zeta 是一门可自举、自编译、跨平台、默认安全、可脚本化也可 AOT 编译的 AI 原生系统应用语言。</p>
+  <main>
+    <h1>Zeta 编程语言</h1>
+    <p><strong>状态：</strong>draft</p>
+    <p><strong>更新时间：</strong>2026-05-28</p>
+    <p><strong>适用范围：</strong>Zeta 官网首页、用户入口、文档导航、在线 playground 和教程入口。</p>
+    <p><strong>验收标准：</strong>用户可以从本页进入快速开始、在线 playground、教程、设计文档和编辑器支持页面。</p>
 
-  <h2>文档原则</h2>
-  <ul>
-    <li>除 GitHub README.md 使用 Markdown 作为仓库首页外，其他项目文档全部使用 HTML 编写。</li>
-    <li>正式文档优先使用中文，后续通过同一结构支持多语言版本。</li>
-    <li>每份文档必须标明状态、更新时间、适用范围和验收标准。</li>
-    <li>README 作为 GitHub 入口，正式规格和决策以 HTML 文档为准。</li>
-  </ul>
+    <section class="hero">
+      <p class="eyebrow">低门槛，高上限，小内核，高性能</p>
+      <h2>像 JavaScript 一样容易开始，像系统语言一样能抵达底层。</h2>
+      <p>Zeta 是一门严肃的专业编程语言，面向上层应用、服务端、桌面、移动端、WASM、操作系统、嵌入式和硬件软件。核心内核保持小而强，外围能力通过标准库和第三方模块按需扩展。</p>
+      <p>
+        <a class="button" href="playground.html">打开 Playground</a>
+        <a class="button secondary" href="user/getting-started.html">快速开始</a>
+        <a class="button secondary" href="tutorial/index.html">在线教程</a>
+      </p>
+    </section>
 
-  <h2>核心文档</h2>
-  <ul>
-    <li><a href="project/vision.html">语言定位与产品原则</a></li>
-    <li><a href="project/language-landscape.html">语言生态与未来趋势分析</a></li>
-    <li><a href="compiler/bootstrap.html">编译器与自举路线</a></li>
-    <li><a href="platform/targets.html">跨平台与运行时架构</a></li>
-    <li><a href="spec/ai-capability.html">AI 原生能力与权限模型</a></li>
-    <li><a href="project/html-docs.html">HTML 文档规范</a></li>
-  </ul>
+    <h2>当前可用能力</h2>
+    <div class="grid">
+      <section>
+        <h3>命令行</h3>
+        <ul>
+          <li><code>zeta ast-dump</code>：输出 AST dump。</li>
+          <li><code>zeta check</code>：执行 parse、name resolution 和基础 typecheck。</li>
+          <li><code>zeta repl</code>：交互式语法终端，支持 <code>:help</code>、<code>:doc</code>、<code>:complete</code>。</li>
+        </ul>
+      </section>
+      <section>
+        <h3>语言前端</h3>
+        <ul>
+          <li>模块、import/export、函数、struct、enum。</li>
+          <li>let、return、if/else、while、match。</li>
+          <li>Int、String、Bool 和基础算术表达式。</li>
+        </ul>
+      </section>
+      <section>
+        <h3>编辑器</h3>
+        <ul>
+          <li>VS Code 语法高亮。</li>
+          <li>snippets、静态补全和 hover 文档。</li>
+          <li>本地一键安装脚本。</li>
+        </ul>
+      </section>
+    </div>
+
+    <h2>用户文档</h2>
+    <ul>
+      <li><a href="user/getting-started.html">用户快速开始</a></li>
+      <li><a href="user/vscode.html">VS Code 插件使用说明</a></li>
+      <li><a href="playground.html">在线 Playground</a></li>
+      <li><a href="tutorial/index.html">在线教程</a></li>
+    </ul>
+
+    <h2>设计文档</h2>
+    <ul>
+      <li><a href="project/vision.html">语言定位与产品原则</a></li>
+      <li><a href="project/mvp-baseline.html">MVP Baseline 与冻结边界</a></li>
+      <li><a href="project/language-landscape.html">语言生态与未来趋势分析</a></li>
+      <li><a href="compiler/bootstrap.html">编译器与自举路线</a></li>
+      <li><a href="platform/targets.html">跨平台与运行时架构</a></li>
+      <li><a href="spec/ai-capability.html">AI 原生能力与权限模型</a></li>
+      <li><a href="project/html-docs.html">HTML 文档规范</a></li>
+    </ul>
+
+    <h2>编辑器支持</h2>
+    <ul>
+      <li><a href="user/vscode.html">VS Code Zeta 扩展</a></li>
+    </ul>
+  </main>
 </body>
 </html>

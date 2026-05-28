@@ -1,0 +1,52 @@
+{
+  "module": {
+    "prefix": "module",
+    "body": [
+      "module ${1:name};"
+    ],
+    "description": "Declare a Zeta module"
+  },
+  "function": {
+    "prefix": "fn",
+    "body": [
+      "fn ${1:name}(${2:param}: ${3:Type}) -> ${4:Result} {",
+      "  ${0}",
+      "}"
+    ],
+    "description": "Declare a Zeta function"
+  },
+  "export function": {
+    "prefix": "exportfn",
+    "body": [
+      "export fn ${1:name}(${2:param}: ${3:Type}) -> ${4:Result} {",
+      "  ${0}",
+      "}"
+    ],
+    "description": "Declare an exported Zeta function"
+  },
+  "struct": {
+    "prefix": "struct",
+    "body": [
+      "struct ${1:Name} {",
+      "  ${2:field}: ${3:Type},",
+      "}"
+    ],
+    "description": "Declare a Zeta struct"
+  },
+  "enum": {
+    "prefix": "enum",
+    "body": [
+      "enum ${1:Name} {",
+      "  ${2:Variant},",
+      "}"
+    ],
+    "description": "Declare a Zeta enum"
+  },
+  "let": {
+    "prefix": "let",
+    "body": [
+      "let ${1:name}: ${2:Type} = ${3:value};"
+    ],
+    "description": "Declare a local binding"
+  }
+}

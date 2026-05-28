@@ -1,0 +1,46 @@
+{
+  "name": "zeta-language",
+  "displayName": "Zeta Language",
+  "description": "Syntax highlighting and snippets for the Zeta programming language.",
+  "version": "0.1.0",
+  "publisher": "zeta",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets"
+  ],
+  "activationEvents": [
+    "onLanguage:zeta"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "zeta",
+        "aliases": [
+          "Zeta",
+          "zeta"
+        ],
+        "extensions": [
+          ".zeta"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "zeta",
+        "scopeName": "source.zeta",
+        "path": "./syntaxes/zeta.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "zeta",
+        "path": "./snippets/zeta.json"
+      }
+    ]
+  }
+}

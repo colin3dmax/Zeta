@@ -1,0 +1,46 @@
+Module
+  ModuleDecl name=demo
+  Import path=std.io
+  Struct name=User exported=true
+    Field name=name type=String
+    Field name=age type=Int
+  Enum name=ResultTag exported=false
+    Variant name=Ok
+    Variant name=Err
+  Function name=main exported=true
+    Param name=name type=String
+    Return type=Int
+    Let name=base type=Int
+      Binary op=add
+        Int 1
+        Binary op=mul
+          Int 2
+          Int 3
+    If
+      Condition
+        Bool true
+      Then
+        Let name=label type=String
+          String "ready"
+      Else
+        Let name=label type=String
+          String "skip"
+    While
+      Condition
+        Bool false
+      Body
+        Let name=next type=Int
+          Binary op=add
+            Name base
+            Int 1
+    Match
+      Value
+        Name base
+      Arm pattern=int:0
+        Return
+          Int 0
+      Arm pattern=_
+        Return
+          Name base
+    Return
+      Name base

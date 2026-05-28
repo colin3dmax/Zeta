@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zeta VS Code 插件使用说明</title>
+  <link rel="stylesheet" href="../shared.css">
+</head>
+<body>
+  <main>
+    <h1>Zeta VS Code 插件使用说明</h1>
+    <p><strong>状态：</strong>draft</p>
+    <p><strong>更新时间：</strong>2026-05-28</p>
+    <p><strong>适用范围：</strong>本地安装和使用 Zeta VS Code 插件，包括语法高亮、snippets、静态补全和 hover 文档。</p>
+    <p><strong>验收标准：</strong>用户可以安装插件、重载 VS Code、打开 <code>.zeta</code> 文件，并看到 Zeta 语言模式、补全和悬浮文档。</p>
+
+    <h2>一键本地安装</h2>
+    <p>从仓库根目录运行：</p>
+    <pre><code>sh editors/vscode-zeta/scripts/install-local.sh</code></pre>
+    <p>该脚本会把插件目录链接到 VS Code 用户扩展目录：</p>
+    <pre><code>~/.vscode/extensions/zeta.zeta-language-0.1.0</code></pre>
+
+    <h2>重载 VS Code</h2>
+    <ul>
+      <li>打开命令面板，执行 <code>Developer: Reload Window</code>。</li>
+      <li>或者退出并重新打开 VS Code。</li>
+    </ul>
+
+    <h2>打开 Zeta 文件</h2>
+    <pre><code>testdata/core_items.zeta</code></pre>
+    <p>右下角语言模式应显示 <code>Zeta</code>。如果没有显示，可以点击语言模式并手动选择 Zeta。</p>
+
+    <h2>插件能力</h2>
+    <ul>
+      <li><code>.zeta</code> 文件关联。</li>
+      <li>模块、导入、函数、结构体、枚举、控制流、字面量、注释和操作符的语法高亮。</li>
+      <li><code>module</code>、<code>fn</code>、<code>exportfn</code>、<code>struct</code>、<code>enum</code>、<code>let</code> snippets。</li>
+      <li>Stage 0 关键词和标量类型的静态补全。</li>
+      <li>关键词和类型的 hover 文档。</li>
+    </ul>
+
+    <h2>手动安装</h2>
+    <pre><code>mkdir -p ~/.vscode/extensions
+ln -sfn "$(pwd)/editors/vscode-zeta" ~/.vscode/extensions/zeta.zeta-language-0.1.0</code></pre>
+
+    <h2>验证插件</h2>
+    <pre><code>code --list-extensions | grep zeta
+python3 tools/check-vscode-extension.py</code></pre>
+
+    <h2>当前限制</h2>
+    <ul>
+      <li>当前插件不是 LSP，暂不提供基于项目语义的诊断、跳转定义或重命名。</li>
+      <li>补全和 hover 文档是静态规则，后续会接入 Zeta 编译器前端。</li>
+      <li>修改插件源码后，需要重载 VS Code 才能看到更新。</li>
+    </ul>
+  </main>
+</body>
+</html>

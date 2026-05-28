@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zeta MVP Baseline 与冻结边界</title>
+  <link rel="stylesheet" href="../shared.css">
+</head>
+<body>
+  <main>
+    <h1>Zeta MVP Baseline 与冻结边界</h1>
+    <p><strong>状态：</strong>draft</p>
+    <p><strong>更新时间：</strong>2026-05-28</p>
+    <p><strong>适用范围：</strong>Zeta Stage 0 到 Stage 1 的语言、编译器、运行时、平台 target 和 AI 原生能力取舍。</p>
+    <p><strong>验收标准：</strong>新任务必须能标记为 MVP included、MVP support 或 deferred；README、语言定位、自举路线、target matrix 和 AI capability 文档必须引用同一条 baseline。</p>
+
+    <h2>Baseline 原则</h2>
+    <ul>
+      <li>MVP 目标是建立可运行、可测试、可自举演进的最小语言与工具链，不追求完整语言生态。</li>
+      <li>MVP 必须同时保护低门槛和高上限：基础语法要容易学习，编译器和 runtime 边界要能承载系统级、嵌入式和硬件软件演进。</li>
+      <li>release 产物体积是核心质量指标；未使用的 runtime、std、AI 能力、调试元数据和 adapter 不得默认进入最终二进制。</li>
+      <li>所有 included 项必须服务于 Stage 0 编译器、脚本运行、AOT smoke 或 capability-first 安全模型。</li>
+      <li>所有 deferred 项不得阻塞 Stage 0 parser、typechecker、MIR、interpreter、WASM/WASI smoke 和 LLVM native smoke。</li>
+      <li>跨模块能力必须先冻结 schema 和诊断格式，再进入 runtime、tool 或 agent 实现。</li>
+    </ul>
+
+    <h2>MVP Included</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>领域</th>
+          <th>Included</th>
+          <th>冻结条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>语言核心</td>
+          <td>基础 token、模块、import/export、函数、块表达式、let、if/else、while、return、match、struct、enum、Option、Result、基础整数、Bool、String、数组或 slice。</td>
+          <td>语法子集必须易学、显式且稳定；AST 节点、source span、错误恢复和 golden dump 格式稳定。</td>
+        </tr>
+        <tr>
+          <td>类型系统</td>
+          <td>静态类型、局部类型推导、函数签名、结构体字段、枚举变体、基础泛型、显式 Result 错误路径。</td>
+          <td>name resolution 与 typecheck 分层；诊断包含错误码和 source span。</td>
+        </tr>
+        <tr>
+          <td>编译器管线</td>
+          <td>Lexer、parser、AST、diagnostics、name resolution、typechecker、HIR、MIR、MIR verifier、backend interface。</td>
+          <td>每层有 deterministic dump、verifier 或 golden tests；backend 不直接消费 AST。</td>
+        </tr>
+        <tr>
+          <td>执行路径</td>
+          <td>MIR interpreter 作为首个语义基线，WASM/WASI smoke 作为跨平台 smoke，LLVM native 作为 AOT smoke。</td>
+          <td>同一 corpus 在 interpreter、WASM/WASI 和 LLVM smoke 中行为一致。</td>
+        </tr>
+        <tr>
+          <td>标准库分层</td>
+          <td><code>core</code>、<code>alloc</code>、<code>std</code> 分层；String、Vec、Map、Set、路径、文件读取、诊断输出。</td>
+          <td>依赖方向只能是 std -> alloc -> core；no_std target 不反向依赖 std；系统级和硬件侧软件可以只依赖 core/alloc。</td>
+        </tr>
+        <tr>
+          <td>产物体积</td>
+          <td>runtime 裁剪、按需链接、strip/LTO、最小启动 glue、可关闭 trace/debug 元数据。</td>
+          <td>每个 target 必须能说明默认链接内容；release smoke 记录 artifact size，体积回归需要 review。</td>
+        </tr>
+        <tr>
+          <td>平台 target</td>
+          <td>Linux/macOS/Windows native、wasm32-wasi、wasm32-component；embedded no_std build-only。</td>
+          <td>每个 target 明确 OS、CPU/ABI、runtime 档位、panic 策略、allocator、CI level。</td>
+        </tr>
+        <tr>
+          <td>AI 原生能力</td>
+          <td>capability 声明、schema、tool contract、agent 边界、policy、budget、timeout、trace 契约。</td>
+          <td>默认无权限；核心只冻结可检查契约，provider SDK、agent 框架和模型适配器通过标准库或第三方模块按需引入。</td>
+        </tr>
+        <tr>
+          <td>工具链</td>
+          <td>CLI、formatter、最小 LSP、测试命令、HTML 文档、DevGame review/done 证据。</td>
+          <td>每个任务进入 review 前有验证命令、文档链接和风险记录。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>MVP Support</h2>
+    <p>这些能力可以作为实现支撑出现，但不得扩大语言表面积或改变 baseline。</p>
+    <ul>
+      <li>Rust Stage 0 宿主语言、Cargo 包管理、测试框架和 CI。</li>
+      <li>用于调试的 AST/HIR/MIR dump、trace dump 和 corpus runner。</li>
+      <li>仅服务 smoke 的最小 runtime shim、WASI adapter 和 native ABI glue。</li>
+      <li>面向文档预览的静态服务器、链接检查和 HTML 结构检查。</li>
+      <li>Zig 可以作为未来 Android/iOS native glue、C ABI、allocator、panic 或 cross-linker adapter 的候选工具，但不进入当前 Stage 0 必需依赖。</li>
+    </ul>
+
+    <h2>Deferred</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>领域</th>
+          <th>暂缓内容</th>
+          <th>原因</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>语言特性</td>
+          <td>宏系统、完整 trait specialization、高阶类型、复杂生命周期、生成器、协程。</td>
+          <td>会放大 parser/typechecker 和自举复杂度。</td>
+        </tr>
+        <tr>
+          <td>并发与 async</td>
+          <td>完整 async runtime、线程池调度、actor 系统。</td>
+          <td>需要 runtime 与内存模型稳定后再冻结。</td>
+        </tr>
+        <tr>
+          <td>内存模型</td>
+          <td>完整 borrow checker、unsafe 扩展、手写 allocator API。</td>
+          <td>MVP 先保证默认安全和基础 owned 模式。</td>
+        </tr>
+        <tr>
+          <td>平台</td>
+          <td>移动端完整应用框架、浏览器 DOM 标准库、嵌入式 runtime-std。</td>
+          <td>首阶段只要求 build/smoke，不承诺完整产品体验。</td>
+        </tr>
+        <tr>
+          <td>AI agent</td>
+          <td>完整多 agent 编排语言、长期记忆、跨模型策略优化。</td>
+          <td>MVP 先冻结 capability、schema、tool、trace 和 policy contract。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>变更流程</h2>
+    <ol>
+      <li>新增能力必须先在 DevGame 创建任务，并声明它属于 included、support 还是 deferred。</li>
+      <li>会改变 baseline 的任务必须进入 review，附带影响范围、兼容风险和回滚方案。</li>
+      <li>如果能力进入 included，必须同步更新本文件和对应领域文档。</li>
+      <li>如果任务只是 support，不能把临时实现写成长期语言承诺。</li>
+      <li>如果能力属于 deferred，只能记录设计动机，不进入 Stage 0 实现路径。</li>
+    </ol>
+  </main>
+</body>
+</html>

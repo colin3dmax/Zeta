@@ -11,6 +11,8 @@
     <h1>Zeta HTML 文档规范</h1>
     <p><strong>状态：</strong>draft</p>
     <p><strong>更新时间：</strong>2026-05-28</p>
+    <p><strong>适用范围：</strong>Zeta 仓库内正式设计文档的 HTML 格式、元信息、链接和交付规则。</p>
+    <p><strong>验收标准：</strong>新增正式文档必须包含 title、h1、状态、更新时间、适用范围和验收标准，并使用相对链接。</p>
 
     <h2>格式规则</h2>
     <ul>
@@ -21,6 +23,14 @@
       <li>文档之间使用相对链接，避免不可迁移的本地绝对路径。</li>
       <li>后续多语言版本使用相同目录结构，例如 zh-CN、en-US。</li>
     </ul>
+
+    <h2>验证命令</h2>
+    <pre><code>python3 tools/check-docs.py</code></pre>
+    <p>该命令检查 HTML 标签配平、正式文档元信息、HTML 相对链接和 README 本地链接。</p>
+
+    <h2>本地预览</h2>
+    <pre><code>python3 tools/serve-docs.py</code></pre>
+    <p>默认地址是 <code>http://127.0.0.1:8765/docs/index.html</code>。预览服务会监听文档、源码、示例和工具文件变化，并自动刷新浏览器。</p>
 
     <h2>状态标记</h2>
     <ul>

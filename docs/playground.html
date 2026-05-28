@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zeta Playground</title>
+  <link rel="stylesheet" href="shared.css">
+</head>
+<body>
+  <main>
+    <h1>Zeta Playground</h1>
+    <p><strong>状态：</strong>draft</p>
+    <p><strong>更新时间：</strong>2026-05-28</p>
+    <p><strong>适用范围：</strong>浏览器内体验 Zeta Stage 0 语法、AST dump 和基础 check 说明。</p>
+    <p><strong>验收标准：</strong>用户可以编辑示例、切换 AST/check 视图，并理解当前网页版 playground 是前端原型，后续会接入 WASM 编译器。</p>
+
+    <p>当前 playground 是浏览器端原型，用来展示语法和学习流程；真正的编译器检查请使用 <code>cargo run -- check</code>。后续会把 Stage 0 编译器编译为 WASM 后接入这里。</p>
+
+    <div class="playground">
+      <section>
+        <h2>输入</h2>
+        <textarea id="source" spellcheck="false">module demo;
+import std.io;
+
+export fn main(name: String) -> Int {
+  let base: Int = 1 + 2 * 3;
+  if true {
+    let label: String = "ready";
+  }
+  return base;
+}</textarea>
+        <p>
+          <button id="showAst" type="button">AST Dump</button>
+          <button id="showCheck" type="button">Check</button>
+        </p>
+      </section>
+      <section>
+        <h2>输出</h2>
+        <pre id="output"><code>点击 AST Dump 或 Check。</code></pre>
+      </section>
+    </div>
+
+    <h2>本地真实命令</h2>
+    <pre><code>cargo run -- ast-dump testdata/core_items.zeta
+cargo run -- check testdata/core_items.zeta
+cargo run -- repl</code></pre>
+  </main>
+  <script src="playground.js"></script>
+</body>
+</html>

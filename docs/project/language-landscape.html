@@ -12,6 +12,7 @@
     <p><strong>状态：</strong>draft</p>
     <p><strong>更新时间：</strong>2026-05-28</p>
     <p><strong>适用范围：</strong>本文件作为 Zeta 语言定位、类型系统、运行时、工具链、跨平台和 AI 原生能力设计的输入依据。</p>
+    <p><strong>验收标准：</strong>每个趋势结论必须映射到 Zeta 的明确取舍，且不直接扩大 MVP baseline。</p>
 
     <h2>结论摘要</h2>
     <p>Zeta 不应成为某一门现有语言的语法变体。它应吸收现有语言被真实工程验证过的能力，同时明确拒绝它们的历史包袱。</p>
@@ -125,12 +126,17 @@
         <tr>
           <td>脚本还是编译型语言</td>
           <td>两者都支持，但共享同一语义核心。</td>
-          <td>AI 时代需要快速试验，也需要生产部署和跨平台交付。</td>
+          <td>AI 时代需要像 JavaScript 一样快速开始，也需要生产部署、跨平台交付和系统级性能。</td>
         </tr>
         <tr>
           <td>GC 还是所有权</td>
           <td>默认安全托管内存，高性能模块使用 owned 模式。</td>
-          <td>业务开发不应被完整 borrow checker 阻塞，系统模块仍需要无 GC 控制力。</td>
+          <td>业务开发不应被完整 borrow checker 阻塞，系统、嵌入式和硬件软件仍需要无 GC 控制力。</td>
+        </tr>
+        <tr>
+          <td>完整 runtime 还是小体积产物</td>
+          <td>默认按需链接和 runtime 裁剪。</td>
+          <td>上层应用可以按需启用 std、async、AI provider SDK 或 agent 框架，系统和嵌入式产物必须能保持极小二进制和可审计依赖。</td>
         </tr>
         <tr>
           <td>异常还是 Result</td>
@@ -158,9 +164,11 @@
     <h2>明确不采用</h2>
     <ul>
       <li>不采用 JavaScript 式隐式类型转换作为核心语义。</li>
+      <li>不把“像 JavaScript 一样容易学”解释为动态弱类型或运行时才发现核心错误。</li>
       <li>不采用 Python 式“类型只做提示、不影响边界安全”的生产模型。</li>
       <li>不要求所有代码从第一天接受 Rust 完整借用复杂度。</li>
       <li>不把完整 runtime 强行带到 embedded、browser 或 wasm component。</li>
+      <li>不默认把未使用的 std、AI provider SDK、agent 框架、调试信息或反射元数据打进 release 二进制。</li>
       <li>不把 AI model 调用等同于普通网络库调用，必须经过 capability、schema 和 trace。</li>
       <li>不让宿主语言 stage0 永久成为事实标准，自举路线必须逐步替换宿主模块。</li>
     </ul>

@@ -1,0 +1,91 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Zeta",
+  "scopeName": "source.zeta",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#numbers" },
+    { "include": "#functions" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.zeta",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.zeta",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.zeta",
+              "match": "\\\\(?:[\"\\\\nrt]|u\\{[0-9A-Fa-f]+\\})"
+            }
+          ]
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.zeta",
+          "match": "\\b(?:if|else|while|match|return)\\b"
+        },
+        {
+          "name": "keyword.declaration.zeta",
+          "match": "\\b(?:module|import|export|fn|let|struct|enum)\\b"
+        },
+        {
+          "name": "constant.language.boolean.zeta",
+          "match": "\\b(?:true|false)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.zeta",
+          "match": "\\b(?:Bool|Int|String|Option|Result)\\b"
+        },
+        {
+          "name": "entity.name.type.zeta",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.integer.zeta",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "entity.name.function.zeta",
+          "match": "(?<=\\bfn\\s+)[A-Za-z_][A-Za-z0-9_]*"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.zeta",
+          "match": "->|[=+\\-*/:]"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,33 @@
+module demo;
+import std.io;
+
+export struct User {
+  name: String,
+  age: Int,
+}
+
+enum ResultTag {
+  Ok,
+  Err,
+}
+
+export fn main(name: String) -> Int {
+  let base: Int = 1 + 2 * 3;
+  if true {
+    let label: String = "ready";
+  } else {
+    let label: String = "skip";
+  }
+  while false {
+    let next: Int = base + 1;
+  }
+  match base {
+    0 -> {
+      return 0;
+    },
+    _ -> {
+      return base;
+    },
+  }
+  return base;
+}

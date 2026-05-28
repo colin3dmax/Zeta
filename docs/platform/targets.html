@@ -11,6 +11,9 @@
     <h1>Zeta 跨平台与运行时架构</h1>
     <p><strong>状态：</strong>draft</p>
     <p><strong>更新时间：</strong>2026-05-28</p>
+    <p><strong>适用范围：</strong>Zeta target 命名、runtime 分层、panic 策略、allocator contract、build mode 兼容性和 CI matrix。</p>
+    <p><strong>验收标准：</strong>每个 tier-1 target 必须声明 runtime、panic、allocator 和 CI level；WASI、browser、component 必须分开描述。</p>
+    <p><strong>MVP 边界：</strong>target tier、runtime、panic 和 allocator 的取舍以 <a href="../project/mvp-baseline.html">Zeta MVP Baseline 与冻结边界</a> 为准。</p>
 
     <h2>设计目标</h2>
     <ul>
@@ -24,7 +27,9 @@
     <ul>
       <li>Desktop / Server：macOS、Linux、Windows，x64、arm64、riscv64。</li>
       <li>Mobile：iOS arm64、Android arm64，优先以 staticlib/cdylib 进入原生应用。</li>
-      <li>Web：wasm32-browser、wasm32-wasi、WASM Component。</li>
+      <li>Browser：<code>wasm32-browser</code>，运行在 JS/Web API host 中，不等同于 WASI。</li>
+      <li>WASI：<code>wasm32-wasi</code>，运行在 WASI host 中，文件和网络必须按 WASI capability 描述。</li>
+      <li>WASM Component：<code>wasm32-component</code>，交付 component artifact，通过 WIT imports/exports 和 host 交互。</li>
       <li>Embedded：arm-none-eabi、riscv32-none，支持 no_std 和可选 alloc。</li>
     </ul>
 
@@ -42,6 +47,7 @@ arm-none-eabi
 riscv32-none-elf</code></pre>
 
     <h2>MVP Target Set</h2>
+    <p>tier-1 target 必须在 PR CI 中至少达到 unit 或 smoke；tier-2 target 允许 build-only 或 nightly，但不能缺少 panic 和 allocator contract。</p>
     <table>
       <thead>
         <tr>
@@ -49,6 +55,10 @@ riscv32-none-elf</code></pre>
           <th>Tier</th>
           <th>Build Mode</th>
           <th>Artifact</th>
+          <th>Panic</th>
+          <th>Allocator</th>
+          <th>Runtime</th>
+          <th>CI Level</th>
           <th>说明</th>
         </tr>
       </thead>
@@ -58,6 +68,10 @@ riscv32-none-elf</code></pre>
           <td>tier-1</td>
           <td>script, aot</td>
           <td>exe</td>
+          <td>unwind</td>
+          <td>system</td>
+          <td>std, async</td>
+          <td>unit + nightly full</td>
           <td>首个 CI 主目标和服务器部署目标。</td>
         </tr>
         <tr>
@@ -65,6 +79,10 @@ riscv32-none-elf</code></pre>
           <td>tier-1</td>
           <td>script, aot</td>
           <td>exe, staticlib, cdylib</td>
+          <td>unwind</td>
+          <td>system</td>
+          <td>std, async</td>
+          <td>smoke + nightly full</td>
           <td>Mac 开发主机和桌面目标。</td>
         </tr>
         <tr>
@@ -72,20 +90,43 @@ riscv32-none-elf</code></pre>
           <td>tier-1</td>
           <td>script, aot</td>
           <td>exe, staticlib, cdylib</td>
+          <td>unwind</td>
+          <td>system</td>
+          <td>std</td>
+          <td>smoke + nightly full</td>
           <td>Windows 开发和桌面目标。</td>
         </tr>
         <tr>
           <td><code>wasm32-wasi</code></td>
           <td>tier-1</td>
-          <td>aot, component</td>
+          <td>aot</td>
           <td>wasm</td>
+          <td>abort</td>
+          <td>host-provided or bundled</td>
+          <td>alloc, std partial</td>
+          <td>smoke</td>
           <td>WASM CLI 和跨平台 smoke 目标。</td>
+        </tr>
+        <tr>
+          <td><code>wasm32-browser</code></td>
+          <td>tier-2</td>
+          <td>aot</td>
+          <td>wasm + JS glue</td>
+          <td>abort</td>
+          <td>bundled</td>
+          <td>alloc, async</td>
+          <td>nightly smoke</td>
+          <td>浏览器目标，依赖 JS/Web API host，不提供 WASI 语义。</td>
         </tr>
         <tr>
           <td><code>wasm32-component</code></td>
           <td>tier-1</td>
           <td>component</td>
           <td>component</td>
+          <td>abort</td>
+          <td>host-provided or bundled</td>
+          <td>alloc, async</td>
+          <td>smoke</td>
           <td>插件、AI tool sandbox 和跨语言 SDK 目标。</td>
         </tr>
         <tr>
@@ -93,6 +134,10 @@ riscv32-none-elf</code></pre>
           <td>tier-2</td>
           <td>aot</td>
           <td>firmware</td>
+          <td>abort or trap</td>
+          <td>user-provided optional</td>
+          <td>none, core</td>
+          <td>build-only</td>
           <td>嵌入式 no_std build-only smoke。</td>
         </tr>
       </tbody>
@@ -111,10 +156,11 @@ riscv32-none-elf</code></pre>
         <tr><td><code>target</code></td><td>target triple 或 Zeta target 名。</td><td>例如 <code>wasm32-component</code>。</td></tr>
         <tr><td><code>tier</code></td><td>支持等级。</td><td>tier-1、tier-2、experimental。</td></tr>
         <tr><td><code>build modes</code></td><td>支持的构建模式。</td><td>script、aot、component。</td></tr>
+        <tr><td><code>panic strategy</code></td><td>panic 后的控制流和 ABI 约束。</td><td>unwind、abort、trap、host-provided。</td></tr>
         <tr><td><code>core</code></td><td>是否支持 core。</td><td>所有 target 必须支持。</td></tr>
-        <tr><td><code>alloc</code></td><td>是否支持堆分配。</td><td>required、optional、unsupported。</td></tr>
+        <tr><td><code>allocator contract</code></td><td>堆分配来源和失败语义。</td><td>system、bundled、host-provided、user-provided、unsupported。</td></tr>
         <tr><td><code>std</code></td><td>标准库支持等级。</td><td>full、partial、unsupported。</td></tr>
-        <tr><td><code>runtime</code></td><td>可用 runtime 档位。</td><td>none、core、alloc、async、std、ai。</td></tr>
+        <tr><td><code>runtime tier</code></td><td>target 默认可用 runtime 档位。</td><td>none、core、alloc、async、std、ai。</td></tr>
         <tr><td><code>threads</code></td><td>线程模型。</td><td>native、web-worker、unsupported。</td></tr>
         <tr><td><code>filesystem</code></td><td>文件系统能力。</td><td>full、sandboxed、virtual、unsupported。</td></tr>
         <tr><td><code>network</code></td><td>网络能力。</td><td>full、capability-gated、host-provided、unsupported。</td></tr>
@@ -124,6 +170,17 @@ riscv32-none-elf</code></pre>
         <tr><td><code>ci level</code></td><td>CI 覆盖等级。</td><td>unit、smoke、build-only、nightly。</td></tr>
       </tbody>
     </table>
+
+    <h2>Panic 与 Allocator Contract</h2>
+    <ul>
+      <li><strong>unwind：</strong>只允许在 native tier-1 且 ABI 明确支持 unwind 的 target 上作为默认策略。</li>
+      <li><strong>abort：</strong>WASM、mobile library 和多数 sandbox target 的默认策略，不能跨 host 边界 unwind。</li>
+      <li><strong>trap：</strong>no_std 或 board support package 未提供恢复路径时使用，必须在 target adapter 中映射到可观测错误。</li>
+      <li><strong>system allocator：</strong>native std target 默认使用系统 allocator，并继承平台 OOM 语义。</li>
+      <li><strong>bundled allocator：</strong>browser、WASI 和 component 可随 artifact 打包 allocator，但必须声明内存上限和 OOM 行为。</li>
+      <li><strong>host-provided allocator：</strong>component target 可以由 host 注入 allocator，ABI 和 ownership 必须通过 WIT 或等价接口描述。</li>
+      <li><strong>user-provided allocator：</strong>embedded target 的 alloc 是可选能力；未声明 allocator 时只能启用 <code>runtime-none</code> 或 <code>runtime-core</code>。</li>
+    </ul>
 
     <h2>标准库分层</h2>
     <pre><code>std
@@ -137,6 +194,7 @@ riscv32-none-elf</code></pre>
     </ul>
 
     <h2>Runtime 裁剪</h2>
+    <p>Runtime 裁剪的目标是让同一门语言能覆盖上层应用和极小系统产物。release 构建必须支持按需链接、dead code elimination、strip/LTO 和显式 runtime tier，不能因为启用了语言工具链就默认带上完整 std、AI provider SDK、agent 框架或调试元数据。</p>
     <table>
       <thead>
         <tr>
@@ -177,14 +235,16 @@ riscv32-none-elf</code></pre>
           <td>文件、网络、线程、时间、环境变量、进程。</td>
           <td>mobile 和 wasm 只能标注 partial。</td>
         </tr>
-        <tr>
-          <td><code>runtime-ai</code></td>
-          <td>schema/tool/agent/trace/policy</td>
-          <td>AI 原生契约、调用追踪、策略检查。</td>
-          <td>不隐式授予网络、文件或模型权限，必须经过 capability。</td>
-        </tr>
       </tbody>
     </table>
+
+    <h2>AI 能力扩展边界</h2>
+    <p>AI 能力不是独立 runtime tier。核心内核只保留 capability、schema、tool contract、policy、budget 和 trace 这些可检查契约；provider SDK、agent 框架、模型适配器和高级编排应通过标准库模块或第三方包按需引入。</p>
+    <ul>
+      <li>未导入 AI 模块的程序不得链接 AI provider、agent scheduler、prompt/template 系统或模型客户端。</li>
+      <li>AI 模块即使被导入，也必须通过 capability 授权访问文件、网络、secret 或模型服务。</li>
+      <li>系统、嵌入式、硬件软件、WASM component 和极小 CLI 可以完全不依赖 AI 相关模块。</li>
+    </ul>
 
     <h2>Build Mode 与 Target 兼容性</h2>
     <table>
@@ -208,13 +268,14 @@ riscv32-none-elf</code></pre>
         </tr>
         <tr>
           <td>Component Mode</td>
-          <td>wasm32-wasi、wasm32-browser、wasm32-component。</td>
-          <td>直接访问原生进程、裸硬件或未声明 host imports 的环境。</td>
+          <td>wasm32-component。</td>
+          <td>直接访问原生进程、裸硬件、未声明 host imports 的环境；browser 或 WASI 需要通过 component adapter 单独声明。</td>
         </tr>
       </tbody>
     </table>
 
     <h2>CI Matrix</h2>
+    <p>CI 必须同时验证 target、runtime tier、panic strategy 和 allocator contract；缺少任一字段的 target 不能晋升 tier-1。</p>
     <h3>PR 必跑</h3>
     <table>
       <thead>
@@ -222,16 +283,19 @@ riscv32-none-elf</code></pre>
           <th>Host</th>
           <th>Target</th>
           <th>Runtime</th>
+          <th>Panic</th>
+          <th>Allocator</th>
+          <th>CI Level</th>
           <th>Check</th>
         </tr>
       </thead>
       <tbody>
-        <tr><td>Linux x64</td><td>native</td><td>std</td><td>format, lint, unit</td></tr>
-        <tr><td>Linux x64</td><td>wasm32-wasi</td><td>alloc/std partial</td><td>build smoke</td></tr>
-        <tr><td>Linux x64</td><td>wasm32-component</td><td>alloc</td><td>component build smoke</td></tr>
-        <tr><td>Linux x64</td><td>arm-none-eabi</td><td>no_std/core</td><td>build-only</td></tr>
-        <tr><td>macOS arm64</td><td>native</td><td>std</td><td>unit smoke</td></tr>
-        <tr><td>Windows x64</td><td>native</td><td>std</td><td>unit smoke</td></tr>
+        <tr><td>Linux x64</td><td>x86_64-linux-gnu</td><td>std</td><td>unwind</td><td>system</td><td>unit</td><td>format, lint, unit</td></tr>
+        <tr><td>Linux x64</td><td>wasm32-wasi</td><td>alloc/std partial</td><td>abort</td><td>host-provided or bundled</td><td>smoke</td><td>build smoke</td></tr>
+        <tr><td>Linux x64</td><td>wasm32-component</td><td>alloc/async</td><td>abort</td><td>host-provided or bundled</td><td>smoke</td><td>component build smoke</td></tr>
+        <tr><td>Linux x64</td><td>arm-none-eabi</td><td>no_std/core</td><td>abort or trap</td><td>user-provided optional</td><td>build-only</td><td>build-only</td></tr>
+        <tr><td>macOS arm64</td><td>aarch64-apple-darwin</td><td>std</td><td>unwind</td><td>system</td><td>smoke</td><td>unit smoke</td></tr>
+        <tr><td>Windows x64</td><td>x86_64-pc-windows-msvc</td><td>std</td><td>unwind</td><td>system</td><td>smoke</td><td>unit smoke</td></tr>
       </tbody>
     </table>
 
@@ -242,29 +306,42 @@ riscv32-none-elf</code></pre>
           <th>Host</th>
           <th>Target</th>
           <th>Runtime</th>
+          <th>Panic</th>
+          <th>Allocator</th>
+          <th>CI Level</th>
           <th>Check</th>
         </tr>
       </thead>
       <tbody>
-        <tr><td>Linux x64</td><td>x86_64-linux-gnu</td><td>std/async/ai</td><td>full test</td></tr>
-        <tr><td>macOS arm64</td><td>aarch64-apple-darwin</td><td>std/async</td><td>full test</td></tr>
-        <tr><td>Windows x64</td><td>x86_64-pc-windows-msvc</td><td>std</td><td>full test</td></tr>
-        <tr><td>Linux x64</td><td>aarch64-linux-android</td><td>std partial</td><td>build-only</td></tr>
-        <tr><td>macOS arm64</td><td>aarch64-apple-ios</td><td>std partial</td><td>build-only</td></tr>
-        <tr><td>Linux x64</td><td>riscv32-none-elf</td><td>core/alloc</td><td>build-only</td></tr>
-        <tr><td>Linux x64</td><td>wasm32-browser</td><td>alloc/async</td><td>artifact size + smoke</td></tr>
+        <tr><td>Linux x64</td><td>x86_64-linux-gnu</td><td>std/async</td><td>unwind</td><td>system</td><td>nightly</td><td>full test</td></tr>
+        <tr><td>macOS arm64</td><td>aarch64-apple-darwin</td><td>std/async</td><td>unwind</td><td>system</td><td>nightly</td><td>full test</td></tr>
+        <tr><td>Windows x64</td><td>x86_64-pc-windows-msvc</td><td>std</td><td>unwind</td><td>system</td><td>nightly</td><td>full test</td></tr>
+        <tr><td>Linux x64</td><td>aarch64-linux-android</td><td>std partial</td><td>abort</td><td>system</td><td>build-only</td><td>build-only</td></tr>
+        <tr><td>macOS arm64</td><td>aarch64-apple-ios</td><td>std partial</td><td>abort</td><td>system</td><td>build-only</td><td>build-only</td></tr>
+        <tr><td>Linux x64</td><td>riscv32-none-elf</td><td>core/alloc</td><td>abort or trap</td><td>user-provided optional</td><td>build-only</td><td>build-only</td></tr>
+        <tr><td>Linux x64</td><td>wasm32-browser</td><td>alloc/async</td><td>abort</td><td>bundled</td><td>nightly smoke</td><td>artifact size + smoke</td></tr>
       </tbody>
     </table>
+
+    <h3>质量闸门</h3>
+    <ul>
+      <li>tier-1 target 必须有明确 panic strategy、allocator contract、runtime tier 和 PR CI level。</li>
+      <li>tier-2 target 可以只做 build-only，但必须能证明 artifact 不依赖未声明的 std、thread、process 或 host import。</li>
+      <li>browser、WASI、component 三类 WASM target 必须分别记录 host capability，不能用一个 <code>wasm</code> 行覆盖。</li>
+      <li>component target 的 CI 以 WIT 接口、adapter 绑定和 host imports 检查为主，不继承 browser 或 WASI 的文件、网络语义。</li>
+    </ul>
 
     <h2>风险与约束</h2>
     <ul>
       <li><code>std</code> 如果过早承诺 full cross-platform，会在 browser、mobile、embedded 上失真。</li>
-      <li><code>runtime-ai</code> 不能和网络权限混为一谈，模型调用必须走 capability。</li>
+      <li>AI provider SDK 和 agent 框架不能进入核心 runtime；模型调用必须由外部模块提供，并经过 capability。</li>
       <li>Script Mode 不适合 embedded 和多数 mobile 发布目标，应优先 host/native。</li>
       <li>CI matrix 不应一次性全量阻塞 PR，必须区分 PR 必跑和 nightly。</li>
+      <li>产物体积回归必须可见；release smoke 应记录 artifact size，避免 runtime、std、AI provider SDK 或 agent 框架被隐式链接。</li>
       <li>allocator contract 必须先定义，否则 embedded、wasm、component 行为会不一致。</li>
       <li>WASM browser、WASI、WASM Component 是三个不同环境，不应合并成一个能力描述。</li>
       <li>iOS 动态库、JIT、进程和文件访问限制较多，必须以 partial std 表达。</li>
+      <li>Android 需要明确 NDK、JNI/原生库边界和 target ABI；移动端默认以 library artifact 接入，不承诺完整 runtime-std。</li>
       <li>panic unwind 在 embedded、wasm、mobile 上不一定成立，target matrix 必须单独列 panic 策略。</li>
     </ul>
   </main>

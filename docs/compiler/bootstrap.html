@@ -11,9 +11,44 @@
     <h1>Zeta 编译器与自举路线</h1>
     <p><strong>状态：</strong>draft</p>
     <p><strong>更新时间：</strong>2026-05-28</p>
+    <p><strong>适用范围：</strong>Zeta Stage 0 到 Stage 3 的编译器实现、自举替换路径、MIR 语义基线和 backend 优先级。</p>
+    <p><strong>验收标准：</strong>Stage 0 能运行 MVP corpus；parser、typechecker、HIR、MIR、backend 和 bootstrap 均有明确质量闸门。</p>
 
     <h2>自举原则</h2>
-    <p>自编译是最终目标，但第一版编译器必须使用成熟宿主语言实现。推荐使用 Rust 或 Zig 构建 stage0，以降低早期调试、跨平台、包管理和性能风险。</p>
+    <p>自编译是最终目标，但第一版编译器必须使用成熟宿主语言实现。Stage 0 主体采用 Rust，以降低早期调试、包管理、测试和 golden corpus 维护成本。</p>
+
+    <h2>宿主技术栈决策</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>范围</th>
+          <th>决策</th>
+          <th>理由</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Stage 0 编译器主体</td>
+          <td>Rust</td>
+          <td>Cargo、单元测试、快照/golden corpus、错误处理和跨平台 CI 更适合快速建立 lexer、parser、AST、diagnostics、HIR/MIR dump。</td>
+        </tr>
+        <tr>
+          <td>CLI 与文档/测试工具</td>
+          <td>Rust + Python</td>
+          <td>编译器 CLI 跟随 Rust workspace；轻量仓库检查脚本可以继续使用 Python 标准库，避免引入额外构建依赖。</td>
+        </tr>
+        <tr>
+          <td>Zig</td>
+          <td>暂不引入</td>
+          <td>当前 Stage 0 不需要 C ABI glue、手写 allocator、panic adapter 或外部 C toolchain 封装；过早引入会增加双工具链维护成本。</td>
+        </tr>
+        <tr>
+          <td>Zig 重新评估触发条件</td>
+          <td>按需评估</td>
+          <td>当 embedded、WASM/component adapter、Android/iOS native glue、C ABI、allocator/panic contract 或 cross-linker 需求无法用 Rust 工具链清晰覆盖时，再以独立任务评估 Zig。</td>
+        </tr>
+      </tbody>
+    </table>
 
     <h2>路线目标与非目标</h2>
     <ul>
@@ -25,6 +60,7 @@
     </ul>
 
     <h2>Self-hosting MVP 子集</h2>
+    <p>语言、工具链、runtime 和 AI 能力的统一取舍以 <a href="../project/mvp-baseline.html">Zeta MVP Baseline 与冻结边界</a> 为准；本节只展开自举路径所需的编译器子集。</p>
     <table>
       <thead>
         <tr>
@@ -52,7 +88,7 @@
         <tr>
           <td>编译器库能力</td>
           <td><code>String</code>、<code>Vec</code>、<code>Map</code>、<code>Set</code>、文件读取、路径处理、诊断输出。</td>
-          <td>完整 std、网络、线程池、AI runtime。</td>
+          <td>完整 std、网络、线程池、AI provider SDK 或 agent 框架。</td>
         </tr>
         <tr>
           <td>错误模型</td>
@@ -75,7 +111,7 @@
       <tbody>
         <tr>
           <td>Stage 0</td>
-          <td>Rust 或 Zig 实现的 bootstrap 编译器。</td>
+          <td>Rust 实现的 bootstrap 编译器。</td>
           <td>Lexer、parser、AST、diagnostics、name resolution、typechecker、HIR/MIR dump、最小 interpreter 或单一 backend。</td>
           <td>能编译并运行 MVP corpus，所有 golden tests 稳定。</td>
         </tr>

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zeta 在线教程</title>
+  <link rel="stylesheet" href="../shared.css">
+</head>
+<body>
+  <main>
+    <h1>Zeta 在线教程</h1>
+    <p><strong>状态：</strong>draft</p>
+    <p><strong>更新时间：</strong>2026-05-28</p>
+    <p><strong>适用范围：</strong>Zeta Stage 0 用户教程，覆盖当前已经实现的语法、CLI、REPL 和检查能力。</p>
+    <p><strong>验收标准：</strong>用户可以按章节学习当前语言能力，并能跳转到 playground 或本地命令验证示例。</p>
+
+    <h2>课程 1：第一个模块</h2>
+    <pre><code>module demo;
+import std.io;</code></pre>
+    <p>模块声明和 import 是当前文件级结构的基础。可以在 <a href="../playground.html">Playground</a> 中查看 AST。</p>
+
+    <h2>课程 2：函数和返回值</h2>
+    <pre><code>fn main(name: String) -> Int {
+  return 0;
+}</code></pre>
+    <p>当前 checker 会检查 return 表达式和函数返回类型是否一致。</p>
+
+    <h2>课程 3：局部变量和表达式</h2>
+    <pre><code>fn calc() -> Int {
+  let base: Int = 1 + 2 * 3;
+  return base;
+}</code></pre>
+    <p>算术表达式目前支持 <code>+ - * /</code>，乘除优先级高于加减。</p>
+
+    <h2>课程 4：控制流</h2>
+    <pre><code>fn choose(flag: Bool) -> Int {
+  if flag {
+    return 1;
+  } else {
+    return 0;
+  }
+}</code></pre>
+    <p><code>if</code> 和 <code>while</code> 条件必须是 <code>Bool</code>。</p>
+
+    <h2>课程 5：结构体和枚举</h2>
+    <pre><code>struct User {
+  name: String,
+  age: Int,
+}
+
+enum ResultTag {
+  Ok,
+  Err,
+}</code></pre>
+    <p>当前 Stage 0 可以解析并 dump struct / enum，后续会接入字段访问和模式匹配的类型检查。</p>
+
+    <h2>课程 6：REPL 文档查询</h2>
+    <pre><code>cargo run -- repl
+:help
+:doc let
+:complete st</code></pre>
+    <p>REPL 当前用于交互式解析和查询文档；真正运行程序需要后续 MIR interpreter。</p>
+
+    <h2>下一步</h2>
+    <ul>
+      <li><a href="../user/getting-started.html">继续阅读用户快速开始</a></li>
+      <li><a href="../playground.html">打开 Playground</a></li>
+      <li><a href="../compiler/bootstrap.html">查看编译器与自举路线</a></li>
+    </ul>
+  </main>
+</body>
+</html>

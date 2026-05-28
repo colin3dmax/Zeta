@@ -11,6 +11,9 @@
     <h1>Zeta AI 原生能力与权限模型</h1>
     <p><strong>状态：</strong>draft</p>
     <p><strong>更新时间：</strong>2026-05-28</p>
+    <p><strong>适用范围：</strong>Zeta AI 原生 capability、schema、tool、agent、policy、budget、授权配置和 trace 审计契约。</p>
+    <p><strong>验收标准：</strong>能力调用必须有声明、授权、资源收窄、错误码和脱敏 trace；stable 文档禁止无边界通配符。</p>
+    <p><strong>MVP 边界：</strong>capability、schema、tool、policy、budget 和 trace 的冻结范围以 <a href="../project/mvp-baseline.html">Zeta MVP Baseline 与冻结边界</a> 为准。</p>
 
     <h2>核心边界</h2>
     <ul>
@@ -22,6 +25,7 @@
 
     <h2>设计原则</h2>
     <ul>
+      <li><strong>不进入核心 runtime：</strong>AI provider SDK、agent 框架、模型适配器和高级编排通过标准库模块或第三方包引入，不能扩大语言内核。</li>
       <li><strong>默认无权限：</strong>代码默认不能访问文件、网络、系统命令、环境变量、模型服务或外部工具。</li>
       <li><strong>声明先于调用：</strong>所有 capability 必须在函数、tool、agent 或模块边界显式声明。</li>
       <li><strong>Schema 先行：</strong>AI 输出、tool 输入输出和 agent 状态必须先有可验证 schema，再允许进入实现。</li>
@@ -70,6 +74,171 @@ ai.chat = {
   models = ["fast", "reasoning"],
   max_tokens_per_call = 4096
 }</code></pre>
+
+    <h2>Capability Manifest 示例</h2>
+    <p>Manifest 是包、模块或 agent 的静态声明文件，只描述“需要什么能力”和“默认收窄边界”，不直接授予生产权限。</p>
+    <pre><code>{
+  "schema": "zeta.capability.manifest.v1",
+  "name": "docs.summarizer",
+  "version": "0.3.0",
+  "owner": "ai-runtime",
+  "entry": "src/docs/summarizer.zeta",
+  "capabilities": [
+    {
+      "id": "fs.read",
+      "reason": "读取用户选择的文档片段",
+      "resources": {
+        "paths": ["./docs/**/*.md", "./data/public/**/*.txt"]
+      }
+    },
+    {
+      "id": "ai.chat",
+      "reason": "生成结构化摘要",
+      "resources": {
+        "models": ["fast"],
+        "max_tokens_per_call": 4096
+      }
+    }
+  ],
+  "tools": ["summarizeDoc"],
+  "trace": {
+    "redaction_profile": "standard",
+    "sample_policy": "error_100_success_10"
+  }
+}</code></pre>
+
+    <h2>Manifest 字段 Schema</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>字段</th>
+          <th>要求</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>schema</code></td>
+          <td>必填</td>
+          <td>Manifest schema 标识，例如 <code>zeta.capability.manifest.v1</code>。</td>
+        </tr>
+        <tr>
+          <td><code>name</code></td>
+          <td>必填</td>
+          <td>包、模块或 agent 稳定 ID，使用点分层级命名。</td>
+        </tr>
+        <tr>
+          <td><code>version</code></td>
+          <td>必填</td>
+          <td>Manifest 语义版本，能力边界收紧为 minor，放宽为 review-gated minor 或 major。</td>
+        </tr>
+        <tr>
+          <td><code>owner</code></td>
+          <td>必填</td>
+          <td>责任团队或组件名，用于审计和故障归属。</td>
+        </tr>
+        <tr>
+          <td><code>entry</code></td>
+          <td>必填</td>
+          <td>能力声明对应的入口文件或模块路径。</td>
+        </tr>
+        <tr>
+          <td><code>capabilities</code></td>
+          <td>必填</td>
+          <td>能力数组，每项必须包含 <code>id</code>、<code>reason</code> 和资源收窄字段。</td>
+        </tr>
+        <tr>
+          <td><code>tools</code></td>
+          <td>可选</td>
+          <td>本 manifest 暴露或依赖的 tool 名称白名单。</td>
+        </tr>
+        <tr>
+          <td><code>trace</code></td>
+          <td>必填</td>
+          <td>默认 trace 脱敏配置和采样策略，运行时配置只能进一步收紧。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>授权配置格式</h2>
+    <p>运行时授权配置描述“实际允许什么”。授权配置必须是 manifest 声明能力的子集，不能新增 manifest 未声明的 capability。</p>
+    <pre><code>{
+  "schema": "zeta.capability.authz.v1",
+  "target": "docs.summarizer",
+  "environment": "prod",
+  "grants": [
+    {
+      "capability": "fs.read",
+      "resources": {
+        "paths": ["./docs/releases/**/*.md"]
+      },
+      "expires_at": "2026-12-31T23:59:59Z"
+    },
+    {
+      "capability": "ai.chat",
+      "resources": {
+        "models": ["fast"],
+        "max_tokens_per_call": 2048,
+        "max_calls_per_minute": 30
+      }
+    }
+  ],
+  "deny": [
+    {
+      "capability": "process.spawn",
+      "reason": "文档摘要不需要执行进程"
+    }
+  ]
+}</code></pre>
+
+    <h2>权限匹配与收窄规则</h2>
+    <ul>
+      <li><strong>双重匹配：</strong>调用必须同时命中源码 <code>uses</code>、manifest <code>capabilities</code> 和运行时 <code>grants</code>。</li>
+      <li><strong>只允许收窄：</strong>运行时授权可以减少路径、域名、模型、token、次数和有效期，不能扩大 manifest 中的资源范围。</li>
+      <li><strong>显式 deny 优先：</strong><code>deny</code> 命中的 capability 必须拒绝，即使其他 grant 允许。</li>
+      <li><strong>资源规范化：</strong>路径匹配前必须解析 <code>.</code>、<code>..</code>、符号链接和大小写规则；网络匹配前必须规范化域名、端口和协议。</li>
+      <li><strong>最长前缀优先：</strong>多个 grant 同时命中时使用最具体资源规则，并选择更低的预算、超时和 token 上限。</li>
+      <li><strong>用户授权再收窄：</strong>用户选择的文件、账户或会话范围是最终边界；部署授权不能覆盖用户撤销。</li>
+    </ul>
+
+    <h2>通配符禁用</h2>
+    <p>Stable manifest 和生产授权禁止无边界通配符。开发环境可以使用临时宽授权，但必须带过期时间、审计标记和非生产环境约束。</p>
+    <table>
+      <thead>
+        <tr>
+          <th>写法</th>
+          <th>结论</th>
+          <th>替代方案</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>"*"</code></td>
+          <td>禁止</td>
+          <td>列出具体 capability，例如 <code>fs.read</code>、<code>ai.chat</code>。</td>
+        </tr>
+        <tr>
+          <td><code>fs.*</code></td>
+          <td>禁止</td>
+          <td>拆成 <code>fs.read</code>、<code>fs.write</code>，并分别声明路径。</td>
+        </tr>
+        <tr>
+          <td><code>./**</code></td>
+          <td>禁止用于生产</td>
+          <td>限制到业务目录，例如 <code>./docs/releases/**/*.md</code>。</td>
+        </tr>
+        <tr>
+          <td><code>*.example.com</code></td>
+          <td>默认禁止</td>
+          <td>列出具体主机；确需子域时必须绑定协议、端口和组织级审批。</td>
+        </tr>
+        <tr>
+          <td><code>models: ["*"]</code></td>
+          <td>禁止</td>
+          <td>列出允许模型族和最大 token、费用、调用次数。</td>
+        </tr>
+      </tbody>
+    </table>
 
     <h2>Schema 契约字段</h2>
     <table>
@@ -232,44 +401,295 @@ tool classify(input: String) -> Result&lt;Task, AIError&gt;
     <table>
       <thead>
         <tr>
-          <th>错误</th>
+          <th>错误码</th>
           <th>含义</th>
           <th>是否可恢复</th>
         </tr>
       </thead>
       <tbody>
         <tr>
-          <td><code>PermissionDenied</code></td>
+          <td><code>CAP_PERMISSION_DENIED</code></td>
           <td>未声明或未授权 capability。</td>
           <td>可通过配置或用户授权恢复。</td>
         </tr>
         <tr>
-          <td><code>SchemaInvalid</code></td>
+          <td><code>CAP_RESOURCE_OUT_OF_SCOPE</code></td>
+          <td>请求资源超出 manifest、授权配置或用户授权边界。</td>
+          <td>需要缩小请求范围或申请更具体授权。</td>
+        </tr>
+        <tr>
+          <td><code>CAP_WILDCARD_REJECTED</code></td>
+          <td>manifest 或授权配置包含禁止的通配符。</td>
+          <td>需要改为显式 capability 和资源列表。</td>
+        </tr>
+        <tr>
+          <td><code>CAP_SCHEMA_INVALID</code></td>
           <td>输入或输出不符合 schema。</td>
           <td>通常可通过重试、修复输入或降级恢复。</td>
         </tr>
         <tr>
-          <td><code>Timeout</code></td>
+          <td><code>CAP_TIMEOUT</code></td>
           <td>超过 tool 或 agent 的时间限制。</td>
           <td>可重试，但必须受预算限制。</td>
         </tr>
         <tr>
-          <td><code>ProviderUnavailable</code></td>
+          <td><code>CAP_PROVIDER_UNAVAILABLE</code></td>
           <td>外部模型、网络或工具服务不可用。</td>
           <td>可降级到备用 provider 或排队。</td>
         </tr>
         <tr>
-          <td><code>PolicyRejected</code></td>
+          <td><code>CAP_POLICY_REJECTED</code></td>
           <td>调用违反 agent policy 或部署策略。</td>
           <td>需要用户确认、策略变更或终止任务。</td>
         </tr>
         <tr>
-          <td><code>BudgetExceeded</code></td>
+          <td><code>CAP_BUDGET_EXCEEDED</code></td>
           <td>超过费用、token、调用次数或时间预算。</td>
           <td>需要新预算或人工确认。</td>
         </tr>
+        <tr>
+          <td><code>CAP_TRACE_REDACTION_FAILED</code></td>
+          <td>trace 脱敏失败或检测到敏感字段未被处理。</td>
+          <td>默认不可继续写入 trace；调用结果可返回但必须触发安全告警。</td>
+        </tr>
       </tbody>
     </table>
+
+    <h2>Trace Schema</h2>
+    <p>Trace 事件记录 capability 调用的可审计事实。Trace 不是原始 payload 存储，禁止默认保存完整输入、完整输出、secret、凭证和个人敏感信息。</p>
+    <table>
+      <thead>
+        <tr>
+          <th>字段</th>
+          <th>要求</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>trace_id</code></td>
+          <td>必填</td>
+          <td>全局调用链 ID，同一用户任务内保持稳定。</td>
+        </tr>
+        <tr>
+          <td><code>span_id</code></td>
+          <td>必填</td>
+          <td>单次 capability 调用 ID。</td>
+        </tr>
+        <tr>
+          <td><code>parent_span_id</code></td>
+          <td>可选</td>
+          <td>上游 tool、agent 或函数调用 ID。</td>
+        </tr>
+        <tr>
+          <td><code>timestamp</code></td>
+          <td>必填</td>
+          <td>UTC ISO-8601 时间戳。</td>
+        </tr>
+        <tr>
+          <td><code>caller</code></td>
+          <td>必填</td>
+          <td>调用方模块、函数、tool 或 agent 名称。</td>
+        </tr>
+        <tr>
+          <td><code>capability</code></td>
+          <td>必填</td>
+          <td>实际调用的 capability，例如 <code>ai.chat</code>。</td>
+        </tr>
+        <tr>
+          <td><code>resource</code></td>
+          <td>必填</td>
+          <td>规范化后的资源摘要，例如路径 hash、域名、模型名。</td>
+        </tr>
+        <tr>
+          <td><code>authz_decision</code></td>
+          <td>必填</td>
+          <td><code>allow</code>、<code>deny</code> 或 <code>narrowed</code>，并记录命中的 grant ID。</td>
+        </tr>
+        <tr>
+          <td><code>input_summary</code></td>
+          <td>必填</td>
+          <td>输入摘要，包含 schema 名称、字段计数、字节数、hash 和脱敏后的短摘要。</td>
+        </tr>
+        <tr>
+          <td><code>output_summary</code></td>
+          <td>成功必填</td>
+          <td>输出摘要，包含 schema 名称、字段计数、字节数、hash 和质量校验结果。</td>
+        </tr>
+        <tr>
+          <td><code>error</code></td>
+          <td>失败必填</td>
+          <td>错误码、可恢复性、provider 错误分类和脱敏后的 message。</td>
+        </tr>
+        <tr>
+          <td><code>duration_ms</code></td>
+          <td>必填</td>
+          <td>调用耗时，不包含排队前的用户等待时间。</td>
+        </tr>
+        <tr>
+          <td><code>budget</code></td>
+          <td>必填</td>
+          <td>本次消耗的 token、费用、调用次数和剩余额度。</td>
+        </tr>
+        <tr>
+          <td><code>redaction</code></td>
+          <td>必填</td>
+          <td>脱敏 profile、命中规则数量、是否有降级或失败。</td>
+        </tr>
+        <tr>
+          <td><code>sampled</code></td>
+          <td>必填</td>
+          <td>是否落盘、采样原因和采样策略版本。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>输入输出摘要</h2>
+    <ul>
+      <li><strong>结构摘要：</strong>记录 schema 名称、版本、字段数量、数组长度上限和 MIME 类型，不记录完整正文。</li>
+      <li><strong>内容摘要：</strong>默认记录前 160 个脱敏字符、字节数和稳定 hash；hash 使用部署级 salt，禁止跨环境关联用户数据。</li>
+      <li><strong>资源摘要：</strong>文件路径默认记录仓库相对路径或 hash，用户本地绝对路径必须脱敏用户名和临时目录。</li>
+      <li><strong>模型摘要：</strong>记录模型别名、provider、token 计数和参数范围，禁止记录完整 prompt 或 secret-bearing system message。</li>
+      <li><strong>失败摘要：</strong>记录错误码、错误分类和可恢复性；provider 原始错误只允许进入安全日志，不进入普通 trace。</li>
+    </ul>
+
+    <h2>脱敏策略</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>类别</th>
+          <th>处理规则</th>
+          <th>示例</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Secret</td>
+          <td>完全替换为 <code>[REDACTED_SECRET]</code>，不保留长度。</td>
+          <td>API key、cookie、OAuth token、SSH key。</td>
+        </tr>
+        <tr>
+          <td>个人身份信息</td>
+          <td>按类型替换并保留最小调试信息。</td>
+          <td>邮箱替换为 <code>[REDACTED_EMAIL]</code>，手机号替换为 <code>[REDACTED_PHONE]</code>。</td>
+        </tr>
+        <tr>
+          <td>本地路径</td>
+          <td>保留项目相对路径；用户目录、临时目录和下载目录替换。</td>
+          <td><code>/Users/alice/project/a.md</code> 记录为 <code>[USER_HOME]/project/a.md</code>。</td>
+        </tr>
+        <tr>
+          <td>业务正文</td>
+          <td>默认只保留短摘要和 hash；高敏 schema 只保留 hash。</td>
+          <td>合同、工单正文、用户上传文件内容。</td>
+        </tr>
+        <tr>
+          <td>安全失败</td>
+          <td>脱敏失败时 trace 写入失败事件，并禁止保存疑似原文。</td>
+          <td>返回 <code>CAP_TRACE_REDACTION_FAILED</code>。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>采样策略</h2>
+    <ul>
+      <li><strong>错误全采样：</strong>权限拒绝、schema 失败、provider 失败、预算耗尽和脱敏失败必须 100% 记录。</li>
+      <li><strong>成功按比例：</strong>生产成功调用默认 10% 采样；开发和测试环境可 100% 采样，但仍必须脱敏。</li>
+      <li><strong>高风险全采样：</strong><code>process.spawn</code>、<code>secret.read</code>、<code>fs.write</code> 和跨域网络写操作必须 100% 记录。</li>
+      <li><strong>高频限流：</strong>同一 trace 内相同成功事件超过阈值后只记录聚合计数、耗时分位和错误尾样本。</li>
+      <li><strong>采样可追溯：</strong>每条事件必须记录 <code>sample_policy</code>、策略版本和采样原因。</li>
+    </ul>
+
+    <h2>Trace 成功示例</h2>
+    <pre><code>{
+  "trace_id": "tr_01JX9B4R6M7V1A2B3C4D5E6F7G",
+  "span_id": "sp_01JX9B4R8K2N9P0Q1R2S3T4U5V",
+  "timestamp": "2026-05-28T08:30:00Z",
+  "caller": "tool.summarizeDoc",
+  "capability": "ai.chat",
+  "resource": {
+    "provider": "zeta-ai",
+    "model": "fast"
+  },
+  "authz_decision": {
+    "result": "narrowed",
+    "grant_id": "grant_docs_summarizer_ai_chat_prod",
+    "limits": {
+      "max_tokens_per_call": 2048
+    }
+  },
+  "input_summary": {
+    "schema": "DocSummaryInput@1.0.0",
+    "bytes": 18432,
+    "hash": "sha256:salted:4cb0...",
+    "preview": "发布说明摘要请求，包含 3 个 markdown 章节"
+  },
+  "output_summary": {
+    "schema": "DocSummary@1.0.0",
+    "bytes": 912,
+    "hash": "sha256:salted:8a91...",
+    "validation": "passed"
+  },
+  "duration_ms": 842,
+  "budget": {
+    "input_tokens": 3210,
+    "output_tokens": 238,
+    "remaining_calls": 27
+  },
+  "redaction": {
+    "profile": "standard",
+    "rules_matched": 2,
+    "status": "passed"
+  },
+  "sampled": {
+    "stored": true,
+    "sample_policy": "error_100_success_10@1",
+    "reason": "success_sample"
+  }
+}</code></pre>
+
+    <h2>Trace 失败示例</h2>
+    <pre><code>{
+  "trace_id": "tr_01JX9B5AZM3S6A7B8C9D0E1F2G",
+  "span_id": "sp_01JX9B5B1N4P5Q6R7S8T9U0V1W",
+  "timestamp": "2026-05-28T08:31:12Z",
+  "caller": "tool.summarizeDoc",
+  "capability": "fs.read",
+  "resource": {
+    "path_hash": "sha256:salted:bb71...",
+    "path_preview": "./private/[REDACTED_PATH]"
+  },
+  "authz_decision": {
+    "result": "deny",
+    "grant_id": "grant_docs_summarizer_fs_read_prod",
+    "reason": "resource_out_of_scope"
+  },
+  "input_summary": {
+    "schema": "ReadTextInput@1.0.0",
+    "bytes": 96,
+    "hash": "sha256:salted:112e...",
+    "preview": "读取超出授权目录的 markdown 文件"
+  },
+  "error": {
+    "code": "CAP_RESOURCE_OUT_OF_SCOPE",
+    "recoverable": true,
+    "message": "请求路径不在授权范围内"
+  },
+  "duration_ms": 3,
+  "budget": {
+    "remaining_calls": 29
+  },
+  "redaction": {
+    "profile": "standard",
+    "rules_matched": 1,
+    "status": "passed"
+  },
+  "sampled": {
+    "stored": true,
+    "sample_policy": "error_100_success_10@1",
+    "reason": "error_full_sample"
+  }
+}</code></pre>
 
     <h2>版本策略</h2>
     <ul>

@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+from html.parser import HTMLParser
+from pathlib import Path
+from urllib.parse import urldefrag, urlparse
+import re
+import sys
+
+
+ROOT = Path(__file__).resolve().parents[1]
+DOCS = ROOT / "docs"
+REQUIRED_METADATA = ("状态", "更新时间", "适用范围", "验收标准")
+
+
+class StackParser(HTMLParser):
+    VOID_TAGS = {
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
+    }
+
+    def __init__(self, path):
+        super().__init__()
+        self.path = path
+        self.stack = []
+        self.errors = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag not in self.VOID_TAGS:
+            self.stack.append(tag)
+
+    def handle_endtag(self, tag):
+        if not self.stack:
+            self.errors.append(f"{self.path}: unexpected </{tag}>")
+            return
+        if self.stack[-1] == tag:
+            self.stack.pop()
+            return
+        self.errors.append(f"{self.path}: expected </{self.stack[-1]}> before </{tag}>")
+        if tag in self.stack:
+            while self.stack and self.stack[-1] != tag:
+                self.stack.pop()
+            if self.stack:
+                self.stack.pop()
+
+
+class LinkParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.links = []
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        for key in ("href", "src"):
+            if key in attrs:
+                self.links.append(attrs[key])
+
+
+def is_external(link):
+    return urlparse(link).scheme in ("http", "https", "mailto")
+
+
+def check_html_balance(path):
+    parser = StackParser(path.relative_to(ROOT))
+    parser.feed(path.read_text(encoding="utf-8"))
+    if parser.stack:
+        parser.errors.append(f"{path.relative_to(ROOT)}: unclosed tags: {parser.stack}")
+    return parser.errors
+
+
+def check_metadata(path):
+    text = path.read_text(encoding="utf-8")
+    return [
+        f"{path.relative_to(ROOT)}: missing {field}"
+        for field in REQUIRED_METADATA
+        if field not in text
+    ]
+
+
+def check_html_links(path):
+    parser = LinkParser()
+    parser.feed(path.read_text(encoding="utf-8"))
+    errors = []
+    for link in parser.links:
+        clean = urldefrag(link)[0]
+        if not clean or is_external(clean):
+            continue
+        target = (path.parent / clean).resolve()
+        try:
+            target.relative_to(ROOT)
+        except ValueError:
+            errors.append(f"{path.relative_to(ROOT)}: link escapes repo: {link}")
+            continue
+        if not target.exists():
+            errors.append(f"{path.relative_to(ROOT)}: missing link target: {link}")
+    return errors
+
+
+def check_readme_links():
+    readme = ROOT / "README.md"
+    if not readme.exists():
+        return []
+    errors = []
+    text = readme.read_text(encoding="utf-8")
+    for match in re.finditer(r"\[[^\]]+\]\(([^)]+)\)", text):
+        link = match.group(1)
+        clean = urldefrag(link)[0]
+        if not clean or is_external(clean):
+            continue
+        target = (readme.parent / clean).resolve()
+        if not target.exists():
+            errors.append(f"README.md: missing link target: {link}")
+    return errors
+
+
+def main():
+    errors = []
+    html_files = sorted(DOCS.rglob("*.html"))
+    for path in html_files:
+        errors.extend(check_html_balance(path))
+        errors.extend(check_metadata(path))
+        errors.extend(check_html_links(path))
+    errors.extend(check_readme_links())
+
+    if errors:
+        print("\n".join(errors), file=sys.stderr)
+        return 1
+
+    print(f"checked {len(html_files)} HTML files and README.md links: ok")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

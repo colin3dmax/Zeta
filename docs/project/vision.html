@@ -11,15 +11,28 @@
     <h1>Zeta 语言定位与产品原则</h1>
     <p><strong>状态：</strong>draft</p>
     <p><strong>更新时间：</strong>2026-05-28</p>
+    <p><strong>适用范围：</strong>Zeta 的产品定位、设计目标、非目标和 MVP 能力摘要。</p>
+    <p><strong>验收标准：</strong>本文件只给产品层摘要；完整 MVP 边界必须链接到 baseline 文档并与其保持一致。</p>
 
     <h2>一句话定位</h2>
-    <p>Zeta 是一门默认安全、可脚本化、可编译部署、可自举、自编译，并面向 AI 原生应用的系统应用语言。</p>
+    <p>Zeta 是一门低门槛、高上限的严肃工程编程语言：语法体验尽量接近 JavaScript 的直观性，同时具备系统级性能、内存控制、跨平台部署、AI 原生能力、小体积产物和自举演进路线。</p>
+
+    <h2>产品原则</h2>
+    <ul>
+      <li><strong>像 JavaScript 一样容易开始：</strong>基础语法、脚本运行、模块、函数、集合和错误处理必须让新学习者快速写出可运行程序。</li>
+      <li><strong>不像 JavaScript 一样隐式失控：</strong>核心语义拒绝隐式类型转换、运行时边界不清和生产环境不可审计的动态行为。</li>
+      <li><strong>像系统语言一样有上限：</strong>性能敏感、操作系统、嵌入式、硬件软件和高性能模块必须能显式控制内存、ABI、panic、allocator、runtime 和产物体积。</li>
+      <li><strong>一门语言覆盖多层应用：</strong>同一套语言从脚本、服务端、桌面、移动端、WASM、AI agent 延伸到系统级和硬件侧软件，但通过 core/alloc/std/runtime 分层控制能力边界。</li>
+      <li><strong>小体积是默认工程目标：</strong>release 产物不应隐式携带完整 runtime、AI 能力、调试元数据或未使用的标准库模块。</li>
+      <li><strong>专业而非玩具：</strong>错误模型、诊断、测试、CI、文档、权限、trace 和兼容策略必须作为语言工程的一部分，而不是后补工具。</li>
+    </ul>
 
     <h2>设计目标</h2>
     <ul>
-      <li>让脚本、服务端、桌面、移动端、WebAssembly、嵌入式和 AI agent 共享同一套语言与工具链。</li>
+      <li>让脚本、服务端、桌面、移动端、WebAssembly、操作系统、嵌入式、硬件软件和 AI agent 共享同一套语言与工具链。</li>
       <li>在默认模式下提供安全、清晰、快速的工程体验。</li>
       <li>在高性能模块中提供接近 Rust/C/C++ 的控制能力。</li>
+      <li>让 release 构建具备小体积、可裁剪、可审计的交付特性。</li>
       <li>用 capability、schema、tool、agent 和 trace 建立 AI 时代的应用安全边界。</li>
     </ul>
 
@@ -28,13 +41,15 @@
       <li>第一阶段不追求完整替代 Rust、C++、Go、JavaScript 或 Python。</li>
       <li>第一阶段不内建完整 UI 框架，优先保证语言、编译器、运行时和 WASM 输出。</li>
       <li>第一阶段不把所有权模型强制暴露给所有业务代码，性能敏感模块使用可选 owned 模式。</li>
+      <li>第一阶段不以简单语法为理由牺牲静态检查、诊断质量、性能边界、产物体积或系统级可扩展性。</li>
     </ul>
 
     <h2>MVP 能力</h2>
+    <p>完整 MVP 冻结边界以 <a href="mvp-baseline.html">Zeta MVP Baseline 与冻结边界</a> 为准；本节只列出产品层摘要。</p>
     <ul>
       <li>基础语法、函数、模块、结构体、枚举、模式匹配。</li>
       <li>静态类型、局部类型推导、Option、Result。</li>
-      <li>解释执行和 LLVM AOT 编译路径。</li>
+      <li>MIR interpreter、WASM/WASI smoke 和 LLVM AOT smoke。</li>
       <li>HTML 文档、CLI、formatter、最小 LSP 和测试框架。</li>
       <li>DevGame 任务流、review 闸门和 done 验收证据。</li>
     </ul>

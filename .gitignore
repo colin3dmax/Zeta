@@ -1,0 +1,6 @@
+.codex-session.json
+.vscode/
+codex-resume-current.sh
+target/
+website/dist/
+website/node_modules/
