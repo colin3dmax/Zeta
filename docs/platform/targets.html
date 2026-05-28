@@ -12,6 +12,14 @@
     <p><strong>状态：</strong>draft</p>
     <p><strong>更新时间：</strong>2026-05-28</p>
 
+    <h2>设计目标</h2>
+    <ul>
+      <li>统一 Script Mode、AOT Build Mode 和 Component Mode 的 target 选择模型。</li>
+      <li>明确 desktop、server、mobile、web、embedded 的能力不是等价的，文档必须标注 full、partial、build-only 或 unsupported。</li>
+      <li>让 core/alloc/std/runtime 分层成为跨平台设计边界，避免平台条件编译散落在业务代码中。</li>
+      <li>坚持 capability-first：文件、网络、进程、AI 调用等平台能力必须显式声明和授权。</li>
+    </ul>
+
     <h2>目标平台</h2>
     <ul>
       <li>Desktop / Server：macOS、Linux、Windows，x64、arm64、riscv64。</li>
@@ -20,31 +28,244 @@
       <li>Embedded：arm-none-eabi、riscv32-none，支持 no_std 和可选 alloc。</li>
     </ul>
 
+    <h2>Target 命名规范</h2>
+    <p>Zeta target 命名优先兼容通用 target triple，并在需要时追加运行时或环境后缀。</p>
+    <pre><code>x86_64-linux-gnu
+aarch64-apple-darwin
+x86_64-pc-windows-msvc
+aarch64-apple-ios
+aarch64-linux-android
+wasm32-wasi
+wasm32-browser
+wasm32-component
+arm-none-eabi
+riscv32-none-elf</code></pre>
+
+    <h2>MVP Target Set</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Target</th>
+          <th>Tier</th>
+          <th>Build Mode</th>
+          <th>Artifact</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>x86_64-linux-gnu</code></td>
+          <td>tier-1</td>
+          <td>script, aot</td>
+          <td>exe</td>
+          <td>首个 CI 主目标和服务器部署目标。</td>
+        </tr>
+        <tr>
+          <td><code>aarch64-apple-darwin</code></td>
+          <td>tier-1</td>
+          <td>script, aot</td>
+          <td>exe, staticlib, cdylib</td>
+          <td>Mac 开发主机和桌面目标。</td>
+        </tr>
+        <tr>
+          <td><code>x86_64-pc-windows-msvc</code></td>
+          <td>tier-1</td>
+          <td>script, aot</td>
+          <td>exe, staticlib, cdylib</td>
+          <td>Windows 开发和桌面目标。</td>
+        </tr>
+        <tr>
+          <td><code>wasm32-wasi</code></td>
+          <td>tier-1</td>
+          <td>aot, component</td>
+          <td>wasm</td>
+          <td>WASM CLI 和跨平台 smoke 目标。</td>
+        </tr>
+        <tr>
+          <td><code>wasm32-component</code></td>
+          <td>tier-1</td>
+          <td>component</td>
+          <td>component</td>
+          <td>插件、AI tool sandbox 和跨语言 SDK 目标。</td>
+        </tr>
+        <tr>
+          <td><code>arm-none-eabi</code></td>
+          <td>tier-2</td>
+          <td>aot</td>
+          <td>firmware</td>
+          <td>嵌入式 no_std build-only smoke。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Target Capability Matrix</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>字段</th>
+          <th>含义</th>
+          <th>取值</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><code>target</code></td><td>target triple 或 Zeta target 名。</td><td>例如 <code>wasm32-component</code>。</td></tr>
+        <tr><td><code>tier</code></td><td>支持等级。</td><td>tier-1、tier-2、experimental。</td></tr>
+        <tr><td><code>build modes</code></td><td>支持的构建模式。</td><td>script、aot、component。</td></tr>
+        <tr><td><code>core</code></td><td>是否支持 core。</td><td>所有 target 必须支持。</td></tr>
+        <tr><td><code>alloc</code></td><td>是否支持堆分配。</td><td>required、optional、unsupported。</td></tr>
+        <tr><td><code>std</code></td><td>标准库支持等级。</td><td>full、partial、unsupported。</td></tr>
+        <tr><td><code>runtime</code></td><td>可用 runtime 档位。</td><td>none、core、alloc、async、std、ai。</td></tr>
+        <tr><td><code>threads</code></td><td>线程模型。</td><td>native、web-worker、unsupported。</td></tr>
+        <tr><td><code>filesystem</code></td><td>文件系统能力。</td><td>full、sandboxed、virtual、unsupported。</td></tr>
+        <tr><td><code>network</code></td><td>网络能力。</td><td>full、capability-gated、host-provided、unsupported。</td></tr>
+        <tr><td><code>process</code></td><td>进程能力。</td><td>supported、unsupported。</td></tr>
+        <tr><td><code>ffi</code></td><td>外部接口。</td><td>C ABI、platform ABI、wasm imports、unsupported。</td></tr>
+        <tr><td><code>component model</code></td><td>是否支持 WASM Component。</td><td>yes、no。</td></tr>
+        <tr><td><code>ci level</code></td><td>CI 覆盖等级。</td><td>unit、smoke、build-only、nightly。</td></tr>
+      </tbody>
+    </table>
+
     <h2>标准库分层</h2>
     <pre><code>std
   -> alloc
     -> core</code></pre>
     <ul>
-      <li><strong>core：</strong>基础类型、Option、Result、panic 抽象，无操作系统和堆依赖。</li>
-      <li><strong>alloc：</strong>堆分配、字符串、数组、集合和智能指针。</li>
-      <li><strong>std：</strong>文件、网络、线程、时间、环境变量和平台集成。</li>
+      <li><strong>core：</strong>基础类型、Option、Result、panic 抽象，无操作系统、堆、线程、时间和 I/O 依赖。</li>
+      <li><strong>alloc：</strong>堆分配、字符串、数组、集合和智能指针，只依赖 allocator contract。</li>
+      <li><strong>std：</strong>文件、网络、线程、时间、环境变量、进程、动态库和平台集成。</li>
+      <li><strong>硬规则：</strong>只允许 <code>std -> alloc -> core</code>，禁止反向依赖。</li>
     </ul>
 
     <h2>Runtime 裁剪</h2>
-    <ul>
-      <li>runtime-none：裸机和极小嵌入式。</li>
-      <li>runtime-core：基础 panic、入口、内存和错误处理。</li>
-      <li>runtime-async：异步调度和事件循环。</li>
-      <li>runtime-std：文件、网络、线程、进程。</li>
-      <li>runtime-ai：schema、tool、agent、trace、policy。</li>
-    </ul>
+    <table>
+      <thead>
+        <tr>
+          <th>Runtime</th>
+          <th>依赖</th>
+          <th>能力</th>
+          <th>限制</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>runtime-none</code></td>
+          <td><code>core</code></td>
+          <td>无 heap、无 OS、无 thread、无 file、无 network。</td>
+          <td>入口、panic、allocator 由用户或 board support package 提供。</td>
+        </tr>
+        <tr>
+          <td><code>runtime-core</code></td>
+          <td><code>core</code></td>
+          <td>入口 glue、panic 策略、基础错误处理。</td>
+          <td>仍不要求 heap。</td>
+        </tr>
+        <tr>
+          <td><code>runtime-alloc</code></td>
+          <td><code>alloc</code></td>
+          <td>allocator contract、String、动态数组、集合、智能指针。</td>
+          <td>不自动启用文件、网络、线程。</td>
+        </tr>
+        <tr>
+          <td><code>runtime-async</code></td>
+          <td><code>alloc</code></td>
+          <td>future、task、executor 抽象。</td>
+          <td>事件源由 target adapter 提供。</td>
+        </tr>
+        <tr>
+          <td><code>runtime-std</code></td>
+          <td><code>std</code></td>
+          <td>文件、网络、线程、时间、环境变量、进程。</td>
+          <td>mobile 和 wasm 只能标注 partial。</td>
+        </tr>
+        <tr>
+          <td><code>runtime-ai</code></td>
+          <td>schema/tool/agent/trace/policy</td>
+          <td>AI 原生契约、调用追踪、策略检查。</td>
+          <td>不隐式授予网络、文件或模型权限，必须经过 capability。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Build Mode 与 Target 兼容性</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Build Mode</th>
+          <th>优先 target</th>
+          <th>不适合目标</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Script Mode</td>
+          <td>host/native desktop 和 server。</td>
+          <td>embedded、多数 mobile 发布包。</td>
+        </tr>
+        <tr>
+          <td>AOT Build Mode</td>
+          <td>native、server、mobile library、embedded firmware。</td>
+          <td>需要 host 动态能力的脚本任务。</td>
+        </tr>
+        <tr>
+          <td>Component Mode</td>
+          <td>wasm32-wasi、wasm32-browser、wasm32-component。</td>
+          <td>直接访问原生进程、裸硬件或未声明 host imports 的环境。</td>
+        </tr>
+      </tbody>
+    </table>
 
     <h2>CI Matrix</h2>
+    <h3>PR 必跑</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Host</th>
+          <th>Target</th>
+          <th>Runtime</th>
+          <th>Check</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Linux x64</td><td>native</td><td>std</td><td>format, lint, unit</td></tr>
+        <tr><td>Linux x64</td><td>wasm32-wasi</td><td>alloc/std partial</td><td>build smoke</td></tr>
+        <tr><td>Linux x64</td><td>wasm32-component</td><td>alloc</td><td>component build smoke</td></tr>
+        <tr><td>Linux x64</td><td>arm-none-eabi</td><td>no_std/core</td><td>build-only</td></tr>
+        <tr><td>macOS arm64</td><td>native</td><td>std</td><td>unit smoke</td></tr>
+        <tr><td>Windows x64</td><td>native</td><td>std</td><td>unit smoke</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Nightly</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Host</th>
+          <th>Target</th>
+          <th>Runtime</th>
+          <th>Check</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Linux x64</td><td>x86_64-linux-gnu</td><td>std/async/ai</td><td>full test</td></tr>
+        <tr><td>macOS arm64</td><td>aarch64-apple-darwin</td><td>std/async</td><td>full test</td></tr>
+        <tr><td>Windows x64</td><td>x86_64-pc-windows-msvc</td><td>std</td><td>full test</td></tr>
+        <tr><td>Linux x64</td><td>aarch64-linux-android</td><td>std partial</td><td>build-only</td></tr>
+        <tr><td>macOS arm64</td><td>aarch64-apple-ios</td><td>std partial</td><td>build-only</td></tr>
+        <tr><td>Linux x64</td><td>riscv32-none-elf</td><td>core/alloc</td><td>build-only</td></tr>
+        <tr><td>Linux x64</td><td>wasm32-browser</td><td>alloc/async</td><td>artifact size + smoke</td></tr>
+      </tbody>
+    </table>
+
+    <h2>风险与约束</h2>
     <ul>
-      <li>Host：Linux、macOS、Windows。</li>
-      <li>Target：native、wasm32、mobile build-only、embedded no_std。</li>
-      <li>Runtime：std、alloc、no_std、minimal。</li>
-      <li>检查：format、lint、unit、cross-compile smoke、runtime feature matrix、WASM artifact size。</li>
+      <li><code>std</code> 如果过早承诺 full cross-platform，会在 browser、mobile、embedded 上失真。</li>
+      <li><code>runtime-ai</code> 不能和网络权限混为一谈，模型调用必须走 capability。</li>
+      <li>Script Mode 不适合 embedded 和多数 mobile 发布目标，应优先 host/native。</li>
+      <li>CI matrix 不应一次性全量阻塞 PR，必须区分 PR 必跑和 nightly。</li>
+      <li>allocator contract 必须先定义，否则 embedded、wasm、component 行为会不一致。</li>
+      <li>WASM browser、WASI、WASM Component 是三个不同环境，不应合并成一个能力描述。</li>
+      <li>iOS 动态库、JIT、进程和文件访问限制较多，必须以 partial std 表达。</li>
+      <li>panic unwind 在 embedded、wasm、mobile 上不一定成立，target matrix 必须单独列 panic 策略。</li>
     </ul>
   </main>
 </body>
