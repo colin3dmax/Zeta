@@ -10,7 +10,7 @@
   <main>
     <h1>Zeta 编程语言</h1>
     <p><strong>状态：</strong>draft</p>
-    <p><strong>更新时间：</strong>2026-05-28</p>
+    <p><strong>更新时间：</strong>2026-05-29</p>
     <p><strong>适用范围：</strong>Zeta 官网首页、用户入口、文档导航、在线 playground 和教程入口。</p>
     <p><strong>验收标准：</strong>用户可以从本页进入快速开始、在线 playground、教程、设计文档和编辑器支持页面。</p>
 
@@ -19,7 +19,7 @@
       <h2>像 JavaScript 一样容易开始，像系统语言一样能抵达底层。</h2>
       <p>Zeta 是一门严肃的专业编程语言，面向上层应用、服务端、桌面、移动端、WASM、操作系统、嵌入式和硬件软件。核心内核保持小而强，外围能力通过标准库和第三方模块按需扩展。</p>
       <p>
-        <a class="button" href="playground.html">打开 Playground</a>
+        <a class="button" href="../#playground">打开 Playground</a>
         <a class="button secondary" href="user/getting-started.html">快速开始</a>
         <a class="button secondary" href="tutorial/index.html">在线教程</a>
       </p>
@@ -32,6 +32,7 @@
         <ul>
           <li><code>zeta ast-dump</code>：输出 AST dump。</li>
           <li><code>zeta check</code>：执行 parse、name resolution 和基础 typecheck。</li>
+          <li><code>zeta run</code>：执行无参数 <code>main</code> 的 Stage 0 原型。</li>
           <li><code>zeta repl</code>：交互式语法终端，支持 <code>:help</code>、<code>:doc</code>、<code>:complete</code>。</li>
         </ul>
       </section>
@@ -39,7 +40,7 @@
         <h3>语言前端</h3>
         <ul>
           <li>模块、import/export、函数、struct、enum。</li>
-          <li>let、return、if/else、while、match。</li>
+          <li><code>let</code>、<code>let mut</code>、赋值、return、if/else、while、match。</li>
           <li>Int、String、Bool 和基础算术表达式。</li>
         </ul>
       </section>
@@ -57,7 +58,7 @@
     <ul>
       <li><a href="user/getting-started.html">用户快速开始</a></li>
       <li><a href="user/vscode.html">VS Code 插件使用说明</a></li>
-      <li><a href="playground.html">在线 Playground</a></li>
+      <li><a href="../#playground">在线 Playground</a></li>
       <li><a href="tutorial/index.html">在线教程</a></li>
     </ul>
 

@@ -9,6 +9,11 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 REQUIRED_METADATA = ("状态", "更新时间", "适用范围", "验收标准")
+METADATA_PATTERN = re.compile(
+    r"<p>\s*<strong>(状态|更新时间|适用范围|验收标准)：</strong>\s*(.*?)\s*</p>",
+    re.DOTALL,
+)
+VALID_STATUSES = {"draft", "accepted", "stable", "deprecated"}
 
 
 class StackParser(HTMLParser):
@@ -80,11 +85,22 @@ def check_html_balance(path):
 
 def check_metadata(path):
     text = path.read_text(encoding="utf-8")
-    return [
-        f"{path.relative_to(ROOT)}: missing {field}"
-        for field in REQUIRED_METADATA
-        if field not in text
-    ]
+    errors = []
+    metadata = {
+        match.group(1): re.sub(r"<[^>]+>", "", match.group(2)).strip()
+        for match in METADATA_PATTERN.finditer(text)
+    }
+    for field in REQUIRED_METADATA:
+        value = metadata.get(field)
+        if not value:
+            errors.append(f"{path.relative_to(ROOT)}: missing metadata field: {field}")
+    status = metadata.get("状态")
+    if status and status not in VALID_STATUSES:
+        errors.append(f"{path.relative_to(ROOT)}: invalid status: {status}")
+    updated_at = metadata.get("更新时间")
+    if updated_at and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", updated_at):
+        errors.append(f"{path.relative_to(ROOT)}: invalid 更新时间: {updated_at}")
+    return errors
 
 
 def check_html_links(path):
