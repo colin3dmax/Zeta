@@ -85,11 +85,12 @@
     <h2>MVP Support</h2>
     <p>这些能力可以作为实现支撑出现，但不得扩大语言表面积或改变 baseline。</p>
     <ul>
-      <li>Rust Stage 0 宿主语言、Cargo 包管理、测试框架和 CI。</li>
+      <li>Rust Stage 0 宿主语言、Cargo 包管理、测试框架和 CI；Zig 暂不进入当前必需依赖。</li>
+      <li>早期后端验证顺序固定为 MIR interpreter、WASM/WASI smoke、LLVM native smoke，WASM Component backend 在 capability/plugin 场景成熟后再扩展。</li>
       <li>用于调试的 AST/HIR/MIR dump、trace dump 和 corpus runner。</li>
       <li>仅服务 smoke 的最小 runtime shim、WASI adapter 和 native ABI glue。</li>
       <li>面向文档预览的静态服务器、链接检查和 HTML 结构检查。</li>
-      <li>Zig 可以作为未来 Android/iOS native glue、C ABI、allocator、panic 或 cross-linker adapter 的候选工具，但不进入当前 Stage 0 必需依赖。</li>
+      <li>Zig 可以作为未来 Android/iOS native glue、C ABI、allocator、panic 或 cross-linker adapter 的候选工具，但必须通过独立任务重新评估。</li>
     </ul>
 
     <h2>Deferred</h2>

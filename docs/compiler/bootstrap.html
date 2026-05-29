@@ -10,7 +10,7 @@
   <main>
     <h1>Zeta 编译器与自举路线</h1>
     <p><strong>状态：</strong>draft</p>
-    <p><strong>更新时间：</strong>2026-05-28</p>
+    <p><strong>更新时间：</strong>2026-05-29</p>
     <p><strong>适用范围：</strong>Zeta Stage 0 到 Stage 3 的编译器实现、自举替换路径、MIR 语义基线和 backend 优先级。</p>
     <p><strong>验收标准：</strong>Stage 0 能运行 MVP corpus；parser、typechecker、HIR、MIR、backend 和 bootstrap 均有明确质量闸门。</p>
 
@@ -18,6 +18,7 @@
     <p>自编译是最终目标，但第一版编译器必须使用成熟宿主语言实现。Stage 0 主体采用 Rust，以降低早期调试、包管理、测试和 golden corpus 维护成本。</p>
 
     <h2>宿主技术栈决策</h2>
+    <p>Stage 0 冻结决策：编译器主体使用 Rust；Zig 不进入当前必需依赖。该决策只覆盖 bootstrap 阶段，不否定后续在平台 glue、allocator/panic adapter 或 cross-linker 中按需引入 Zig。</p>
     <table>
       <thead>
         <tr>
@@ -49,6 +50,22 @@
         </tr>
       </tbody>
     </table>
+
+    <h2>早期后端顺序</h2>
+    <p>早期语义验证按可调试性优先排序，不把 LLVM 作为唯一真相源。所有 backend 必须通过同一 corpus，行为差异必须先在 MIR 层解释清楚。</p>
+    <ol>
+      <li><strong>MIR interpreter：</strong>作为第一语义基线，服务 golden tests、REPL/run 原型和错误定位。</li>
+      <li><strong>WASM/WASI smoke：</strong>验证跨平台、沙箱和浏览器/命令行最小运行路径。</li>
+      <li><strong>LLVM native smoke：</strong>验证原生 AOT、target triple、ABI 和 release 产物。</li>
+      <li><strong>WASM Component backend：</strong>在 tool/plugin/capability sandbox 需求稳定后接入，不阻塞 Stage 0。</li>
+    </ol>
+
+    <h2>决策退出条件</h2>
+    <ul>
+      <li>如果 Rust 工具链无法稳定覆盖目标平台 smoke、WASM 产物、CI 或诊断/golden 流程，必须重新评估宿主语言。</li>
+      <li>如果出现 Android/iOS native glue、C ABI、allocator、panic 或 cross-linker 需求，且 Rust 实现会显著扩大维护成本，可以开启 Zig adapter 评估任务。</li>
+      <li>如果 LLVM native smoke 与 MIR interpreter 对同一 corpus 行为不一致，以 MIR 语义和规范文档为裁决依据，不能让 backend 反向定义语言语义。</li>
+    </ul>
 
     <h2>路线目标与非目标</h2>
     <ul>
@@ -197,15 +214,6 @@
       <li>IR 样例：函数调用、短路逻辑、结构体构造、enum 分支、早返回。</li>
       <li>自举样例：lexer、token、span、diagnostic、AST 节点等编译器自身子模块。</li>
     </ul>
-
-    <h2>Backend 优先级</h2>
-    <p>早期不应把 LLVM 作为唯一语义验证路径。推荐先建立 MIR interpreter 或 WASM/WASI smoke 作为可快速调试的语义基线，再接入 LLVM native backend。</p>
-    <ol>
-      <li>MIR interpreter：最快验证语义，适合 golden tests 和错误定位。</li>
-      <li>WASM/WASI backend：便于跨平台 smoke 和沙箱运行。</li>
-      <li>LLVM native backend：用于原生性能和生产 AOT。</li>
-      <li>WASM Component backend：用于插件、AI tool sandbox 和跨语言组件。</li>
-    </ol>
 
     <h2>主要风险</h2>
     <ul>
