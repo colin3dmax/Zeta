@@ -33,9 +33,7 @@ fn ast_dump(path: &str) {
     match zeta::dump_ast(&source) {
         Ok(dump) => print!("{dump}"),
         Err(diagnostics) => {
-            for diagnostic in diagnostics {
-                eprintln!("{diagnostic}");
-            }
+            print_diagnostics(&diagnostics, &source, path);
             process::exit(1);
         }
     }
@@ -53,9 +51,7 @@ fn check(path: &str) {
     match zeta::check_source(&source) {
         Ok(()) => println!("ok"),
         Err(diagnostics) => {
-            for diagnostic in diagnostics {
-                eprintln!("{diagnostic}");
-            }
+            print_diagnostics(&diagnostics, &source, path);
             process::exit(1);
         }
     }
@@ -73,11 +69,15 @@ fn run(path: &str) {
     match zeta::run_source(&source) {
         Ok(value) => println!("{value}"),
         Err(diagnostics) => {
-            for diagnostic in diagnostics {
-                eprintln!("{diagnostic}");
-            }
+            print_diagnostics(&diagnostics, &source, path);
             process::exit(1);
         }
+    }
+}
+
+fn print_diagnostics(diagnostics: &[zeta::diagnostic::Diagnostic], source: &str, path: &str) {
+    for diagnostic in diagnostics {
+        eprintln!("{}", diagnostic.render(source, path));
     }
 }
 
