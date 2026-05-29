@@ -49,6 +49,21 @@ fn main() {
 }
 
 #[test]
+fn dumps_comparison_expressions() {
+    let dump = zeta::dump_ast(
+        r#"
+fn main() -> Bool {
+  return 1 + 1 == 2;
+}
+"#,
+    )
+    .expect("source should parse");
+
+    assert!(dump.contains("Binary op=eq"));
+    assert!(dump.contains("Binary op=add"));
+}
+
+#[test]
 fn repl_parses_interactive_lines() {
     let binary = env!("CARGO_BIN_EXE_zeta");
     let mut child = std::process::Command::new(binary)

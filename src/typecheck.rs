@@ -258,6 +258,33 @@ fn infer_expr(
                     );
                     Type::Int
                 }
+                BinaryOp::Eq | BinaryOp::NotEq => {
+                    expect_type(
+                        &right_type,
+                        &left_type,
+                        "TYPE_EQUALITY_OPERAND",
+                        right.span(),
+                        diagnostics,
+                    );
+                    Type::Bool
+                }
+                BinaryOp::Lt | BinaryOp::Lte | BinaryOp::Gt | BinaryOp::Gte => {
+                    expect_type(
+                        &left_type,
+                        &Type::Int,
+                        "TYPE_ORDERING_OPERAND",
+                        left.span(),
+                        diagnostics,
+                    );
+                    expect_type(
+                        &right_type,
+                        &Type::Int,
+                        "TYPE_ORDERING_OPERAND",
+                        right.span(),
+                        diagnostics,
+                    );
+                    Type::Bool
+                }
             }
         }
         Expr::Call {

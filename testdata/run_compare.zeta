@@ -1,0 +1,11 @@
+fn main() -> Int {
+  let mut count: Int = 0;
+  while count < 3 {
+    count = count + 1;
+  }
+  if count == 3 {
+    return 42;
+  } else {
+    return 0;
+  }
+}

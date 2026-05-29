@@ -425,21 +425,43 @@ enum Control {
 }
 
 fn eval_binary(op: BinaryOp, left: Value, right: Value) -> Result<Value, Diagnostic> {
-    let (Value::Int(left), Value::Int(right)) = (left, right) else {
-        return Err(runtime_error(
-            "RUNTIME_BINARY_OPERAND",
-            "binary arithmetic operands must evaluate to Int",
-        ));
-    };
     match op {
-        BinaryOp::Add => Ok(Value::Int(left + right)),
-        BinaryOp::Sub => Ok(Value::Int(left - right)),
-        BinaryOp::Mul => Ok(Value::Int(left * right)),
-        BinaryOp::Div => {
-            if right == 0 {
-                Err(runtime_error("RUNTIME_DIVIDE_BY_ZERO", "division by zero"))
-            } else {
-                Ok(Value::Int(left / right))
+        BinaryOp::Eq => Ok(Value::Bool(left == right)),
+        BinaryOp::NotEq => Ok(Value::Bool(left != right)),
+        BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+            let (Value::Int(left), Value::Int(right)) = (left, right) else {
+                return Err(runtime_error(
+                    "RUNTIME_BINARY_OPERAND",
+                    "binary arithmetic operands must evaluate to Int",
+                ));
+            };
+            match op {
+                BinaryOp::Add => Ok(Value::Int(left + right)),
+                BinaryOp::Sub => Ok(Value::Int(left - right)),
+                BinaryOp::Mul => Ok(Value::Int(left * right)),
+                BinaryOp::Div => {
+                    if right == 0 {
+                        Err(runtime_error("RUNTIME_DIVIDE_BY_ZERO", "division by zero"))
+                    } else {
+                        Ok(Value::Int(left / right))
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+        BinaryOp::Lt | BinaryOp::Lte | BinaryOp::Gt | BinaryOp::Gte => {
+            let (Value::Int(left), Value::Int(right)) = (left, right) else {
+                return Err(runtime_error(
+                    "RUNTIME_BINARY_OPERAND",
+                    "binary ordering operands must evaluate to Int",
+                ));
+            };
+            match op {
+                BinaryOp::Lt => Ok(Value::Bool(left < right)),
+                BinaryOp::Lte => Ok(Value::Bool(left <= right)),
+                BinaryOp::Gt => Ok(Value::Bool(left > right)),
+                BinaryOp::Gte => Ok(Value::Bool(left >= right)),
+                _ => unreachable!(),
             }
         }
     }

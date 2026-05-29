@@ -27,6 +27,13 @@ fn run_executes_mutable_assignment() {
 }
 
 #[test]
+fn run_executes_comparison_conditions() {
+    let value =
+        zeta::run_source(include_str!("../testdata/run_compare.zeta")).expect("program should run");
+    assert_eq!(value.to_string(), "42");
+}
+
+#[test]
 fn mir_interpreter_executes_lowered_program() {
     let source = include_str!("../testdata/run_mut.zeta");
     let module = zeta::parse_source(source).expect("source should parse");

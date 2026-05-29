@@ -55,5 +55,14 @@
       "let mut ${1:name}: ${2:Type} = ${3:value};"
     ],
     "description": "Declare a mutable local binding"
+  },
+  "while count": {
+    "prefix": "whilecmp",
+    "body": [
+      "while ${1:count} < ${2:limit} {",
+      "  ${1:count} = ${1:count} + 1;",
+      "}"
+    ],
+    "description": "Loop with an Int comparison condition"
   }
 }

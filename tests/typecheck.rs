@@ -50,6 +50,20 @@ fn main() {
 }
 
 #[test]
+fn check_rejects_non_int_ordering_operands() {
+    let source = r#"
+fn main() {
+  if "a" < "b" {
+    return;
+  }
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("ordering strings should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_ORDERING_OPERAND");
+    assert_eq!(diagnostics[0].span, span_of(source, "\"a\""));
+}
+
+#[test]
 fn cli_check_renders_line_column_and_source_snippet() {
     let source = r#"
 fn main() {

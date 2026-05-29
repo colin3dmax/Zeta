@@ -102,7 +102,7 @@ cargo run -- run testdata/run_basic.zeta
 cargo run -- repl
 ```
 
-当前 `check` 会执行 parse、最小 name resolution 和基础 typecheck，覆盖重复定义、未知名字、`Int`/`String`/`Bool` 字面量、算术表达式、let 注解、`let mut` 可变绑定、赋值语句、if/while 条件、函数调用和 return 类型。`hir-dump` 会在 check 通过后输出稳定 HIR 文本，作为后续 MIR/golden tests 的输入基线。`mir-dump` 当前覆盖 Stage 0 可运行子集，输出 locals、temps、store、return、call 和基础控制流的稳定 MIR 文本。`run` 会先 lower 到结构化 MIR，再通过 Stage 0 MIR interpreter 执行无参数 `main`；当前支持整数算术、函数调用、`let`、`let mut`、赋值、`return` 和基础 `if/while`。`repl` 当前可以直接计算表达式，例如输入 `40 + 2` 返回 `42`；真实 TTY 下提供无依赖 line editor，支持输入时语法高亮、Tab 补全、hint、历史上下切换和左右光标移动。
+当前 `check` 会执行 parse、最小 name resolution 和基础 typecheck，覆盖重复定义、未知名字、`Int`/`String`/`Bool` 字面量、算术表达式、比较表达式、let 注解、`let mut` 可变绑定、赋值语句、if/while 条件、函数调用和 return 类型。`hir-dump` 会在 check 通过后输出稳定 HIR 文本，作为后续 MIR/golden tests 的输入基线。`mir-dump` 当前覆盖 Stage 0 可运行子集，输出 locals、temps、store、return、call 和基础控制流的稳定 MIR 文本。`run` 会先 lower 到结构化 MIR，再通过 Stage 0 MIR interpreter 执行无参数 `main`；当前支持整数算术、比较运算、函数调用、`let`、`let mut`、赋值、`return` 和基础 `if/while`。`repl` 当前可以直接计算表达式，例如输入 `40 + 2` 返回 `42`；真实 TTY 下提供无依赖 line editor，支持输入时语法高亮、Tab 补全、hint、历史上下切换和左右光标移动。
 
 REPL 默认会按语言偏好显示中文或英文：`ZETA_LANG` 环境变量优先，其次读取 `~/.zeta/config.toml` 的 `language` 或 `lang`，最后根据系统 `LANG` / `LC_ALL` 判断。简体中文环境默认中文；会话内可用 `:lang zh` / `:lang en` 临时切换。终端内置学习入口包括 `:help`、`:api`、`:topics`、`:examples` 和 `:doc <topic>`。
 

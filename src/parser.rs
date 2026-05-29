@@ -302,7 +302,37 @@ impl Parser {
     }
 
     fn parse_expr(&mut self) -> Result<Expr, Diagnostic> {
-        self.parse_additive()
+        self.parse_comparison()
+    }
+
+    fn parse_comparison(&mut self) -> Result<Expr, Diagnostic> {
+        let mut expr = self.parse_additive()?;
+        loop {
+            let op = if self.consume_symbol(Symbol::EqEq).is_some() {
+                BinaryOp::Eq
+            } else if self.consume_symbol(Symbol::BangEq).is_some() {
+                BinaryOp::NotEq
+            } else if self.consume_symbol(Symbol::Lte).is_some() {
+                BinaryOp::Lte
+            } else if self.consume_symbol(Symbol::Lt).is_some() {
+                BinaryOp::Lt
+            } else if self.consume_symbol(Symbol::Gte).is_some() {
+                BinaryOp::Gte
+            } else if self.consume_symbol(Symbol::Gt).is_some() {
+                BinaryOp::Gt
+            } else {
+                break;
+            };
+            let right = self.parse_additive()?;
+            let span = Span::new(expr.span().start, right.span().end);
+            expr = Expr::Binary {
+                op,
+                left: Box::new(expr),
+                right: Box::new(right),
+                span,
+            };
+        }
+        Ok(expr)
     }
 
     fn parse_additive(&mut self) -> Result<Expr, Diagnostic> {

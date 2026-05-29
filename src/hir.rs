@@ -166,6 +166,12 @@ fn binary_op_text(op: BinaryOp) -> &'static str {
         BinaryOp::Sub => "sub",
         BinaryOp::Mul => "mul",
         BinaryOp::Div => "div",
+        BinaryOp::Eq => "eq",
+        BinaryOp::NotEq => "not_eq",
+        BinaryOp::Lt => "lt",
+        BinaryOp::Lte => "lte",
+        BinaryOp::Gt => "gt",
+        BinaryOp::Gte => "gte",
     }
 }
 

@@ -49,6 +49,12 @@ pub enum Symbol {
     Dot,
     Arrow,
     Eq,
+    EqEq,
+    BangEq,
+    Lt,
+    Lte,
+    Gt,
+    Gte,
     Plus,
     Minus,
     Star,
@@ -218,7 +224,25 @@ impl<'a> Lexer<'a> {
             ';' => Some(TokenKind::Symbol(Symbol::Semicolon)),
             ',' => Some(TokenKind::Symbol(Symbol::Comma)),
             '.' => Some(TokenKind::Symbol(Symbol::Dot)),
+            '=' if self.peek_char() == Some('=') => {
+                self.bump_char();
+                Some(TokenKind::Symbol(Symbol::EqEq))
+            }
             '=' => Some(TokenKind::Symbol(Symbol::Eq)),
+            '!' if self.peek_char() == Some('=') => {
+                self.bump_char();
+                Some(TokenKind::Symbol(Symbol::BangEq))
+            }
+            '<' if self.peek_char() == Some('=') => {
+                self.bump_char();
+                Some(TokenKind::Symbol(Symbol::Lte))
+            }
+            '<' => Some(TokenKind::Symbol(Symbol::Lt)),
+            '>' if self.peek_char() == Some('=') => {
+                self.bump_char();
+                Some(TokenKind::Symbol(Symbol::Gte))
+            }
+            '>' => Some(TokenKind::Symbol(Symbol::Gt)),
             '+' => Some(TokenKind::Symbol(Symbol::Plus)),
             '*' => Some(TokenKind::Symbol(Symbol::Star)),
             '/' => Some(TokenKind::Symbol(Symbol::Slash)),
