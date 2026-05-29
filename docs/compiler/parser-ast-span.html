@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zeta Parser / AST / Span 第一版规格</title>
+  <link rel="stylesheet" href="../shared.css">
+</head>
+<body>
+  <main>
+    <h1>Zeta Parser / AST / Span 第一版规格</h1>
+    <p><strong>状态：</strong>draft</p>
+    <p><strong>更新时间：</strong>2026-05-29</p>
+    <p><strong>适用范围：</strong>Zeta Stage 0 lexer、parser、AST 节点、source span、诊断和 AST golden dump。</p>
+    <p><strong>验收标准：</strong>worker 可以据此实现或审查 Stage 0 parser 原型；语法范围与 MVP baseline 一致；非 MVP 语法必须标记 deferred。</p>
+
+    <h2>范围边界</h2>
+    <p>本规格冻结 Stage 0 第一版 parser 表面，不定义完整语言。任何新增语法必须先更新本文件、compiler corpus 和对应 golden dump，再进入实现。</p>
+    <ul>
+      <li><strong>Included：</strong>module/import/export、struct、enum、fn、参数、返回类型、let/let mut、赋值、return、if/else、while、match、函数调用、基础字面量和整数算术。</li>
+      <li><strong>Deferred：</strong>宏、泛型参数、trait/impl、闭包、async/await、for、完整 pattern matching、字段访问、数组/slice 字面量、错误恢复型 AST 节点。</li>
+    </ul>
+
+    <h2>Token 与 Span</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>项目</th>
+          <th>规则</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Span 单位</td>
+          <td><code>Span.start</code> 与 <code>Span.end</code> 使用源文件 UTF-8 byte offset，半开区间 <code>[start, end)</code>。</td>
+        </tr>
+        <tr>
+          <td>Token span</td>
+          <td>每个 token 保留原始源码范围；字符串 token 的 span 覆盖引号；EOF span 位于源码末尾。</td>
+        </tr>
+        <tr>
+          <td>Diagnostic span</td>
+          <td>parser 诊断指向当前 token；lexer 诊断指向非法 token；resolver/typecheck 暂可使用 <code>0..0</code>，后续 symbol span 任务再收紧。</td>
+        </tr>
+        <tr>
+          <td>路径 span</td>
+          <td>module/import path 在 AST 中先保存规范化字符串或字符串数组；完整 path span 后续随 symbol table 引入。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>AST 节点</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>层级</th>
+          <th>节点</th>
+          <th>字段</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Module</td>
+          <td><code>Module</code></td>
+          <td><code>items: Vec&lt;Item&gt;</code></td>
+        </tr>
+        <tr>
+          <td>Item</td>
+          <td><code>ModuleDecl</code> / <code>Import</code></td>
+          <td><code>name: String</code>；<code>path: Vec&lt;String&gt;</code></td>
+        </tr>
+        <tr>
+          <td>Item</td>
+          <td><code>Struct</code> / <code>Enum</code></td>
+          <td><code>exported</code>、<code>name</code>、<code>fields</code> 或 <code>variants</code></td>
+        </tr>
+        <tr>
+          <td>Item</td>
+          <td><code>Function</code></td>
+          <td><code>exported</code>、<code>name</code>、<code>params</code>、<code>return_type</code>、<code>body</code></td>
+        </tr>
+        <tr>
+          <td>Stmt</td>
+          <td><code>Let</code> / <code>Assign</code></td>
+          <td><code>mutable</code>、<code>name</code>、<code>ty</code>、<code>value</code>；赋值只允许 identifier target。</td>
+        </tr>
+        <tr>
+          <td>Stmt</td>
+          <td><code>If</code> / <code>While</code> / <code>Match</code></td>
+          <td><code>condition</code>、<code>then_body</code>、<code>else_body</code>、<code>body</code>、<code>arms</code></td>
+        </tr>
+        <tr>
+          <td>Stmt</td>
+          <td><code>Return</code> / <code>Expr</code></td>
+          <td><code>Return(None)</code> 表示无值 return；表达式语句必须以分号结束。</td>
+        </tr>
+        <tr>
+          <td>Expr</td>
+          <td><code>Name</code>、<code>Int</code>、<code>String</code>、<code>Bool</code>、<code>Binary</code>、<code>Call</code></td>
+          <td>二元操作支持 <code>+</code>、<code>-</code>、<code>*</code>、<code>/</code>；call callee 当前只允许函数名。</td>
+        </tr>
+        <tr>
+          <td>Pattern</td>
+          <td><code>Name</code>、<code>Int</code>、<code>String</code>、<code>Bool</code>、<code>Wildcard</code></td>
+          <td>Stage 0 match arm pattern 不做解构；复杂 pattern deferred。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>表达式优先级</h2>
+    <ol>
+      <li>primary：identifier、literal、parenthesized expression。</li>
+      <li>call：<code>callee(args...)</code>，callee 必须是 <code>Name</code>。</li>
+      <li>multiplicative：<code>*</code>、<code>/</code>，左结合。</li>
+      <li>additive：<code>+</code>、<code>-</code>，左结合。</li>
+    </ol>
+
+    <h2>错误恢复策略</h2>
+    <ul>
+      <li>Stage 0 parser 默认 fail-fast：遇到 parser diagnostic 后返回单个错误，不构造部分 AST。</li>
+      <li>REPL 输入先包装成临时函数；空行、顶层 item 和表达式行使用不同包装策略。</li>
+      <li>后续错误恢复必须以 corpus 证明：同文件后续顶层 item 可以继续解析，且不会吞掉有效诊断。</li>
+      <li>错误恢复节点、missing token 节点和 trivia 保留不进入当前 AST。</li>
+    </ul>
+
+    <h2>AST Golden Dump</h2>
+    <p>AST dump 是 Stage 0 parser 的稳定外部契约。字段顺序、缩进和节点名变更必须进入 review。</p>
+    <pre><code>Module
+  Function name=main exported=false
+    Let name=value type=Int mutable=true
+      Int 1
+    Assign name=value
+      Binary op=add
+        Name value
+        Int 1</code></pre>
+    <ul>
+      <li>缩进固定为两个空格。</li>
+      <li>每个节点独占一行；子节点按源码顺序输出。</li>
+      <li>布尔字段显式输出 <code>true</code> / <code>false</code>；<code>mutable=false</code> 可省略。</li>
+      <li>字符串使用 debug 转义格式，避免换行和引号破坏 golden。</li>
+      <li>dump 禁止包含内存地址、hash map 遍历顺序、本地路径和当前时间。</li>
+    </ul>
+
+    <h2>质量闸门</h2>
+    <ul>
+      <li><code>cargo test</code> 必须覆盖核心 AST dump、错误诊断、REPL 包装和新语法节点。</li>
+      <li><code>python3 tools/check-docs.py</code> 必须验证本文链接和元信息。</li>
+      <li>新增 AST 节点必须同步更新 parser、dump、resolver/typecheck 处理策略和文档。</li>
+      <li>任何 deferred 语法只能出现在设计讨论中，不得进入 Stage 0 parser 接受路径。</li>
+    </ul>
+  </main>
+</body>
+</html>
