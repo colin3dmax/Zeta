@@ -9,12 +9,14 @@ fn main() {
     match args.get(1).map(String::as_str) {
         Some("ast-dump") if args.len() == 3 => ast_dump(&args[2]),
         Some("hir-dump") if args.len() == 3 => hir_dump(&args[2]),
+        Some("mir-dump") if args.len() == 3 => mir_dump(&args[2]),
         Some("check") if args.len() == 3 => check(&args[2]),
         Some("run") if args.len() == 3 => run(&args[2]),
         Some("repl") if args.len() == 2 => repl(),
         _ => {
             eprintln!("usage: zeta ast-dump <path>");
             eprintln!("       zeta hir-dump <path>");
+            eprintln!("       zeta mir-dump <path>");
             eprintln!("       zeta check <path>");
             eprintln!("       zeta run <path>");
             eprintln!("       zeta repl");
@@ -51,6 +53,24 @@ fn hir_dump(path: &str) {
     };
 
     match zeta::dump_hir(&source) {
+        Ok(dump) => print!("{dump}"),
+        Err(diagnostics) => {
+            print_diagnostics(&diagnostics, &source, path);
+            process::exit(1);
+        }
+    }
+}
+
+fn mir_dump(path: &str) {
+    let source = match fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(err) => {
+            eprintln!("failed to read {path}: {err}");
+            process::exit(1);
+        }
+    };
+
+    match zeta::dump_mir(&source) {
         Ok(dump) => print!("{dump}"),
         Err(diagnostics) => {
             print_diagnostics(&diagnostics, &source, path);

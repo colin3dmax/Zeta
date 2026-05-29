@@ -34,6 +34,10 @@ python3 tools/check-vscode-extension.py</code></pre>
     <p><code>hir-dump</code> 会先通过 name resolution 和 typecheck，再输出稳定 HIR 文本，作为后续 MIR 和 backend golden tests 的输入基线。</p>
     <pre><code>cargo run -- hir-dump testdata/core_items.zeta</code></pre>
 
+    <h2>查看 MIR</h2>
+    <p><code>mir-dump</code> 当前覆盖 Stage 0 可运行子集，会输出 locals、temps、store、return、call 和基础控制流的稳定 MIR 文本。</p>
+    <pre><code>cargo run -- mir-dump testdata/run_mut.zeta</code></pre>
+
     <h2>检查源码</h2>
     <p><code>check</code> 当前执行 parser、最小 name resolution 和基础 typecheck。</p>
     <pre><code>cargo run -- check testdata/core_items.zeta</code></pre>

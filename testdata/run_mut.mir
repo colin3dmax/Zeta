@@ -1,0 +1,12 @@
+MirModule
+  fn main -> Int
+    block entry
+      local answer: Int mutability=mutable
+      _t0 = const Int 40
+      store answer, _t0
+      _t1 = load answer
+      _t2 = const Int 2
+      _t3 = binary add _t1, _t2
+      store answer, _t3
+      _t4 = load answer
+      return _t4

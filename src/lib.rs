@@ -3,6 +3,7 @@ pub mod diagnostic;
 pub mod hir;
 pub mod lexer;
 pub mod line_editor;
+pub mod mir;
 pub mod parser;
 pub mod repl;
 pub mod resolver;
@@ -27,6 +28,13 @@ pub fn dump_hir(source: &str) -> Result<String, Vec<Diagnostic>> {
     resolver::resolve(&module)?;
     typecheck::check(&module)?;
     Ok(hir::dump(&module))
+}
+
+pub fn dump_mir(source: &str) -> Result<String, Vec<Diagnostic>> {
+    let module = parse_source(source)?;
+    resolver::resolve(&module)?;
+    typecheck::check(&module)?;
+    Ok(mir::dump(&module))
 }
 
 pub fn check_source(source: &str) -> Result<(), Vec<Diagnostic>> {
