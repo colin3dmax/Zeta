@@ -11,7 +11,7 @@
     <h1>Zeta 用户快速开始</h1>
     <p><strong>状态：</strong>draft</p>
     <p><strong>更新时间：</strong>2026-05-29</p>
-    <p><strong>适用范围：</strong>Zeta Stage 0 CLI、AST dump、语义检查、执行原型、REPL 原型和本地示例文件。</p>
+    <p><strong>适用范围：</strong>Zeta Stage 0 CLI、AST/HIR/MIR dump、语义检查、MIR interpreter、REPL 原型和本地示例文件。</p>
     <p><strong>验收标准：</strong>用户可以运行示例、检查源码、执行无参数 <code>main</code>，并在 REPL 里直接计算表达式。</p>
 
     <h2>安装前提</h2>
@@ -44,7 +44,7 @@ python3 tools/check-vscode-extension.py</code></pre>
     <p>当前检查范围包括重复定义、未知名字、<code>Int</code> / <code>String</code> / <code>Bool</code>、算术表达式、函数调用、<code>let</code> 注解、<code>let mut</code> 可变绑定、赋值语句、<code>if</code> / <code>while</code> 条件和 <code>return</code> 类型。</p>
 
     <h2>执行程序</h2>
-    <p><code>run</code> 当前可以执行无参数 <code>main</code>，支持整数算术、函数调用、<code>let</code>、<code>let mut</code>、赋值、<code>return</code> 和基础 <code>if</code> / <code>while</code>。</p>
+    <p><code>run</code> 会先 lower 到结构化 MIR，再通过 Stage 0 MIR interpreter 执行无参数 <code>main</code>；当前支持整数算术、函数调用、<code>let</code>、<code>let mut</code>、赋值、<code>return</code> 和基础 <code>if</code> / <code>while</code>。</p>
     <pre><code>cargo run -- run testdata/run_basic.zeta
 cargo run -- run testdata/run_call.zeta</code></pre>
 
@@ -179,8 +179,8 @@ count = count + 1;
       <li>默认 REPL 使用无依赖 line editor；启用 <code>repl-rich</code> feature 后会使用 <code>reedline</code>。</li>
       <li>管道输入和非 TTY 环境会自动退回普通行输入。</li>
       <li>类型检查只覆盖 Stage 0 的最小标量、函数调用和控制流。</li>
-      <li>错误 span 仍是早期实现，后续会补充源码位置。</li>
-      <li>当前执行器仍是 Stage 0 AST interpreter，后续会下沉为 HIR/MIR interpreter。</li>
+      <li>诊断已经输出行列和源码片段；跨文件诊断和更复杂恢复策略仍会继续补齐。</li>
+      <li>当前 <code>run</code> 已使用 Stage 0 MIR interpreter；REPL 会话仍保留 AST session，以维持跨行局部变量状态。</li>
     </ul>
   </main>
 </body>

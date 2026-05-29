@@ -27,6 +27,19 @@ fn run_executes_mutable_assignment() {
 }
 
 #[test]
+fn mir_interpreter_executes_lowered_program() {
+    let source = include_str!("../testdata/run_mut.zeta");
+    let module = zeta::parse_source(source).expect("source should parse");
+    zeta::resolver::resolve(&module).expect("source should resolve");
+    zeta::typecheck::check(&module).expect("source should typecheck");
+
+    let program = zeta::mir::lower(&module);
+    let value = zeta::runtime::run_mir(&program).expect("MIR program should run");
+
+    assert_eq!(value.to_string(), "42");
+}
+
+#[test]
 fn cli_runs_program() {
     let binary = env!("CARGO_BIN_EXE_zeta");
     let output = std::process::Command::new(binary)
