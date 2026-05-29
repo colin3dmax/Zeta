@@ -355,15 +355,19 @@ python3 tools/check-vscode-extension.py</code></pre>
           {/each}
           <div class="terminal-input-row">
             <span class="prompt">zeta&gt;</span>
-            <input
-              bind:this={replInputEl}
-              bind:value={replInput}
-              on:input={onReplInput}
-              on:keydown={onReplKeydown}
-              spellcheck="false"
-              placeholder="40 + 2"
-              aria-label="REPL input"
-            />
+            <div class="terminal-input-wrap">
+              <pre class="terminal-input-highlight" aria-hidden="true"><code>{@html replInput
+                ? highlightCode(replInput)
+                : '<span class="terminal-placeholder">40 + 2</span>'}</code></pre>
+              <input
+                bind:this={replInputEl}
+                bind:value={replInput}
+                on:input={onReplInput}
+                on:keydown={onReplKeydown}
+                spellcheck="false"
+                aria-label="REPL input"
+              />
+            </div>
           </div>
           {#if replCompletionOpen && replSuggestions.length}
             <div class="completion-panel terminal-completion">

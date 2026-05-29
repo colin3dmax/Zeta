@@ -343,27 +343,28 @@ textarea {
   text-transform: uppercase;
 }
 
-.tok-keyword,
+.tok-keyword {
+  font-weight: 800;
+  color: #0b5cad;
+}
+
 .tok-command {
   font-weight: 800;
-  color: #111;
-  text-decoration: underline;
-  text-decoration-thickness: 2px;
-  text-underline-offset: 3px;
+  color: #b45309;
 }
 
 .tok-type {
   font-weight: 800;
-  color: #333;
+  color: #7c3aed;
 }
 
 .tok-string {
-  color: #555;
+  color: #0f7a3a;
 }
 
 .tok-number {
-  color: #000;
-  background: #eee;
+  color: #9f1239;
+  background: transparent;
 }
 
 .output {
@@ -556,15 +557,47 @@ textarea {
   min-height: 24px;
 }
 
-.terminal-input-row input {
+.terminal-input-wrap {
+  position: relative;
   flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+}
+
+.terminal-input-highlight {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #f5f5f5;
+  font: inherit;
+  line-height: 24px;
+  pointer-events: none;
+  white-space: pre;
+}
+
+.terminal-input-highlight code {
+  font: inherit;
+}
+
+.terminal-placeholder {
+  color: #666;
+}
+
+.terminal-input-row input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
   min-width: 0;
   height: 24px;
   padding: 0;
   border: 0;
   outline: 0;
   background: transparent;
-  color: #fff;
+  color: transparent;
   font: inherit;
   line-height: 24px;
   caret-color: #fff;
@@ -580,24 +613,28 @@ textarea {
   outline: 0;
 }
 
-.terminal-body .tok-keyword,
+.terminal-body .tok-keyword {
+  color: #6ee7f9;
+  text-decoration: none;
+}
+
 .terminal-body .tok-command {
-  color: #fff;
-  text-decoration-color: #fff;
+  color: #fbbf24;
+  text-decoration: none;
 }
 
 .terminal-body .tok-type {
-  color: #fff;
-  text-decoration: underline;
+  color: #c4b5fd;
+  text-decoration: none;
 }
 
 .terminal-body .tok-number {
-  background: #fff;
-  color: #111;
+  background: transparent;
+  color: #fda4af;
 }
 
 .terminal-body .tok-string {
-  color: #ccc;
+  color: #86efac;
 }
 
 .completion-panel {

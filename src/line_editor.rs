@@ -157,11 +157,11 @@ impl reedline::Highlighter for ZetaHighlighter {
         let mut styled = reedline::StyledText::new();
         for part in zeta_tokens(line) {
             let style = if is_keyword(part.trim) {
-                nu_ansi_term::Style::new().bold()
+                nu_ansi_term::Color::Cyan.bold()
             } else if is_type(part.trim) {
-                nu_ansi_term::Style::new().underline()
+                nu_ansi_term::Color::LightPurple.bold()
             } else if is_command(part.trim) {
-                nu_ansi_term::Style::new().bold().underline()
+                nu_ansi_term::Color::LightYellow.bold()
             } else {
                 nu_ansi_term::Style::new()
             };

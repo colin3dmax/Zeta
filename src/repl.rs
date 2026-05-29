@@ -495,12 +495,12 @@ pub enum Style {
 pub fn color(text: impl AsRef<str>, style: Style) -> String {
     let code = match style {
         Style::Bold => "1",
-        Style::Command => "1;4",
-        Style::Error => "1;7",
-        Style::Keyword => "1",
-        Style::Type => "4",
-        Style::Value => "7",
-        Style::Hint => "2",
+        Style::Command => "1;38;5;214",
+        Style::Error => "1;38;5;196",
+        Style::Keyword => "1;38;5;81",
+        Style::Type => "1;38;5;141",
+        Style::Value => "1;38;5;120",
+        Style::Hint => "38;5;245",
     };
     format!("\x1b[{code}m{}\x1b[0m", text.as_ref())
 }

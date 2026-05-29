@@ -135,3 +135,12 @@ fn repl_supports_help_doc_and_completion() {
     assert!(stdout.contains("standard API surface"));
     assert!(stdout.contains("struct"));
 }
+
+#[test]
+fn repl_highlight_uses_color_ansi_codes() {
+    let highlighted = zeta::repl::highlight_zeta(":help let answer: Int = 40;");
+
+    assert!(highlighted.contains("\x1b[1;38;5;214m:help\x1b[0m"));
+    assert!(highlighted.contains("\x1b[1;38;5;81mlet\x1b[0m"));
+    assert!(highlighted.contains("\x1b[1;38;5;141mInt\x1b[0m"));
+}
