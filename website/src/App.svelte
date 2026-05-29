@@ -361,7 +361,7 @@ python3 tools/check-vscode-extension.py</code></pre>
               on:input={onReplInput}
               on:keydown={onReplKeydown}
               spellcheck="false"
-              placeholder="输入 40 + 2 或 :help"
+              placeholder="40 + 2"
               aria-label="REPL input"
             />
           </div>
