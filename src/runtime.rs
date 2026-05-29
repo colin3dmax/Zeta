@@ -137,7 +137,7 @@ impl Runtime {
                 locals.insert(name.clone(), value);
                 Ok(Control::Continue)
             }
-            Stmt::Assign { name, value } => {
+            Stmt::Assign { name, value, .. } => {
                 let value = self.eval_expr(value, locals)?;
                 if !locals.contains_key(name) {
                     return Err(runtime_error(
@@ -211,23 +211,25 @@ impl Runtime {
         locals: &HashMap<String, Value>,
     ) -> Result<Value, Diagnostic> {
         match expr {
-            Expr::Name(name) => locals.get(name).cloned().ok_or_else(|| {
+            Expr::Name { name, .. } => locals.get(name).cloned().ok_or_else(|| {
                 runtime_error("RUNTIME_UNKNOWN_NAME", format!("unknown name `{name}`"))
             }),
-            Expr::Int(value) => value.parse::<i64>().map(Value::Int).map_err(|_| {
+            Expr::Int { value, .. } => value.parse::<i64>().map(Value::Int).map_err(|_| {
                 runtime_error(
                     "RUNTIME_INT_PARSE",
                     format!("invalid Int literal `{value}`"),
                 )
             }),
-            Expr::String(value) => Ok(Value::String(value.clone())),
-            Expr::Bool(value) => Ok(Value::Bool(*value)),
-            Expr::Binary { op, left, right } => {
+            Expr::String { value, .. } => Ok(Value::String(value.clone())),
+            Expr::Bool { value, .. } => Ok(Value::Bool(*value)),
+            Expr::Binary {
+                op, left, right, ..
+            } => {
                 let left = self.eval_expr(left, locals)?;
                 let right = self.eval_expr(right, locals)?;
                 eval_binary(*op, left, right)
             }
-            Expr::Call { callee, args } => {
+            Expr::Call { callee, args, .. } => {
                 let Some(function) = self.functions.get(callee).cloned() else {
                     return Err(runtime_error(
                         "RUNTIME_UNKNOWN_FUNCTION",

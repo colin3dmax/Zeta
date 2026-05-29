@@ -39,6 +39,7 @@ fn main() {
 "#;
     let diagnostics = zeta::check_source(source).expect_err("unknown name should fail");
     assert_eq!(diagnostics[0].code, "RESOLVE_UNKNOWN_NAME");
+    assert_eq!(diagnostics[0].span, span_of(source, "missing"));
 }
 
 #[test]
@@ -62,6 +63,11 @@ fn main() {
 "#;
     let diagnostics = zeta::check_source(source).expect_err("immutable assignment should fail");
     assert_eq!(diagnostics[0].code, "RESOLVE_ASSIGN_IMMUTABLE");
+    let assignment = source.find("value = 2").expect("assignment should exist");
+    assert_eq!(
+        diagnostics[0].span,
+        zeta::diagnostic::Span::new(assignment, assignment + "value".len())
+    );
 }
 
 #[test]
@@ -73,4 +79,9 @@ fn main() {
 }
 "#;
     zeta::check_source(source).expect("mutable assignment should resolve");
+}
+
+fn span_of(source: &str, needle: &str) -> zeta::diagnostic::Span {
+    let start = source.find(needle).expect("needle should exist");
+    zeta::diagnostic::Span::new(start, start + needle.len())
 }

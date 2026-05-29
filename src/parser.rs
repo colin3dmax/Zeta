@@ -67,15 +67,16 @@ impl Parser {
     }
 
     fn parse_struct(&mut self, exported: bool) -> Result<StructDecl, Diagnostic> {
-        let name = self.expect_ident("expected struct name")?;
+        let (name, name_span) = self.expect_ident_span("expected struct name")?;
         self.expect_symbol(Symbol::LBrace, "expected `{` after struct name")?;
         let mut fields = Vec::new();
         while !self.check_symbol(Symbol::RBrace) && !self.at_eof() {
-            let field_name = self.expect_ident("expected field name")?;
+            let (field_name, field_name_span) = self.expect_ident_span("expected field name")?;
             self.expect_symbol(Symbol::Colon, "expected `:` after field name")?;
             let ty = self.expect_ident("expected field type")?;
             fields.push(Field {
                 name: field_name,
+                name_span: field_name_span,
                 ty,
             });
             if self.consume_symbol(Symbol::Comma).is_none() {
@@ -86,12 +87,13 @@ impl Parser {
         Ok(StructDecl {
             exported,
             name,
+            name_span,
             fields,
         })
     }
 
     fn parse_enum(&mut self, exported: bool) -> Result<EnumDecl, Diagnostic> {
-        let name = self.expect_ident("expected enum name")?;
+        let (name, name_span) = self.expect_ident_span("expected enum name")?;
         self.expect_symbol(Symbol::LBrace, "expected `{` after enum name")?;
         let mut variants = Vec::new();
         while !self.check_symbol(Symbol::RBrace) && !self.at_eof() {
@@ -104,12 +106,13 @@ impl Parser {
         Ok(EnumDecl {
             exported,
             name,
+            name_span,
             variants,
         })
     }
 
     fn parse_function(&mut self, exported: bool) -> Result<Function, Diagnostic> {
-        let name = self.expect_ident("expected function name")?;
+        let (name, name_span) = self.expect_ident_span("expected function name")?;
         self.expect_symbol(Symbol::LParen, "expected `(` after function name")?;
         let params = self.parse_params()?;
         self.expect_symbol(Symbol::RParen, "expected `)` after parameters")?;
@@ -123,6 +126,7 @@ impl Parser {
         Ok(Function {
             exported,
             name,
+            name_span,
             params,
             return_type,
             body,
@@ -135,10 +139,14 @@ impl Parser {
             return Ok(params);
         }
         loop {
-            let name = self.expect_ident("expected parameter name")?;
+            let (name, name_span) = self.expect_ident_span("expected parameter name")?;
             self.expect_symbol(Symbol::Colon, "expected `:` after parameter name")?;
             let ty = self.expect_ident("expected parameter type")?;
-            params.push(Param { name, ty });
+            params.push(Param {
+                name,
+                name_span,
+                ty,
+            });
             if self.consume_symbol(Symbol::Comma).is_none() {
                 break;
             }
@@ -166,7 +174,7 @@ impl Parser {
     fn parse_stmt(&mut self) -> Result<Stmt, Diagnostic> {
         if self.consume_keyword(Keyword::Let).is_some() {
             let mutable = self.consume_keyword(Keyword::Mut).is_some();
-            let name = self.expect_ident("expected local name")?;
+            let (name, name_span) = self.expect_ident_span("expected local name")?;
             let ty = if self.consume_symbol(Symbol::Colon).is_some() {
                 Some(self.expect_ident("expected local type")?)
             } else {
@@ -178,6 +186,7 @@ impl Parser {
             return Ok(Stmt::Let {
                 mutable,
                 name,
+                name_span,
                 ty,
                 value,
             });
@@ -230,11 +239,16 @@ impl Parser {
         if let TokenKind::Ident(name) = self.peek_kind() {
             if matches!(self.peek_kind_at(1), TokenKind::Symbol(Symbol::Eq)) {
                 let name = name.clone();
+                let name_span = self.peek().span;
                 self.pos += 1;
                 self.expect_symbol(Symbol::Eq, "expected `=` in assignment")?;
                 let value = self.parse_expr()?;
                 self.expect_symbol(Symbol::Semicolon, "expected `;` after assignment")?;
-                return Ok(Stmt::Assign { name, value });
+                return Ok(Stmt::Assign {
+                    name,
+                    name_span,
+                    value,
+                });
             }
         }
 
@@ -302,10 +316,12 @@ impl Parser {
                 break;
             };
             let right = self.parse_multiplicative()?;
+            let span = Span::new(expr.span().start, right.span().end);
             expr = Expr::Binary {
                 op,
                 left: Box::new(expr),
                 right: Box::new(right),
+                span,
             };
         }
         Ok(expr)
@@ -322,10 +338,12 @@ impl Parser {
                 break;
             };
             let right = self.parse_call()?;
+            let span = Span::new(expr.span().start, right.span().end);
             expr = Expr::Binary {
                 op,
                 left: Box::new(expr),
                 right: Box::new(right),
+                span,
             };
         }
         Ok(expr)
@@ -337,14 +355,24 @@ impl Parser {
             if self.consume_symbol(Symbol::LParen).is_none() {
                 return Ok(expr);
             }
-            let Expr::Name(callee) = expr else {
+            let Expr::Name {
+                name: callee,
+                span: callee_span,
+            } = expr
+            else {
                 return Err(self.error_here(
                     "PARSE_EXPECTED_CALL_TARGET",
                     "expected function name before call arguments",
                 ));
             };
             let args = self.parse_call_args()?;
-            expr = Expr::Call { callee, args };
+            let end = self.previous_span().end;
+            expr = Expr::Call {
+                callee,
+                callee_span,
+                args,
+                span: Span::new(callee_span.start, end),
+            };
         }
     }
 
@@ -367,26 +395,31 @@ impl Parser {
         match self.peek_kind() {
             TokenKind::Ident(name) => {
                 let name = name.clone();
+                let span = self.peek().span;
                 self.pos += 1;
-                Ok(Expr::Name(name))
+                Ok(Expr::Name { name, span })
             }
             TokenKind::Int(value) => {
                 let value = value.clone();
+                let span = self.peek().span;
                 self.pos += 1;
-                Ok(Expr::Int(value))
+                Ok(Expr::Int { value, span })
             }
             TokenKind::String(value) => {
                 let value = value.clone();
+                let span = self.peek().span;
                 self.pos += 1;
-                Ok(Expr::String(value))
+                Ok(Expr::String { value, span })
             }
             TokenKind::Keyword(Keyword::True) => {
+                let span = self.peek().span;
                 self.pos += 1;
-                Ok(Expr::Bool(true))
+                Ok(Expr::Bool { value: true, span })
             }
             TokenKind::Keyword(Keyword::False) => {
+                let span = self.peek().span;
                 self.pos += 1;
-                Ok(Expr::Bool(false))
+                Ok(Expr::Bool { value: false, span })
             }
             TokenKind::Symbol(Symbol::LParen) => {
                 self.pos += 1;
@@ -419,11 +452,16 @@ impl Parser {
     }
 
     fn expect_ident(&mut self, message: &'static str) -> Result<String, Diagnostic> {
+        self.expect_ident_span(message).map(|(name, _)| name)
+    }
+
+    fn expect_ident_span(&mut self, message: &'static str) -> Result<(String, Span), Diagnostic> {
         match self.peek_kind() {
             TokenKind::Ident(name) => {
                 let name = name.clone();
+                let span = self.peek().span;
                 self.pos += 1;
-                Ok(name)
+                Ok((name, span))
             }
             _ => Err(self.error_here("PARSE_EXPECTED_IDENT", message)),
         }
@@ -482,6 +520,13 @@ impl Parser {
             .get(self.pos + offset)
             .map(|token| &token.kind)
             .unwrap_or_else(|| &self.tokens[self.tokens.len() - 1].kind)
+    }
+
+    fn previous_span(&self) -> Span {
+        self.tokens
+            .get(self.pos.saturating_sub(1))
+            .map(|token| token.span)
+            .unwrap_or_else(|| self.peek().span)
     }
 
     fn error_here(&self, code: &'static str, message: &'static str) -> Diagnostic {

@@ -40,7 +40,7 @@
         </tr>
         <tr>
           <td>Diagnostic span</td>
-          <td>parser 诊断指向当前 token；lexer 诊断指向非法 token；resolver/typecheck 暂可使用 <code>0..0</code>，后续 symbol span 任务再收紧。</td>
+          <td>parser 诊断指向当前 token；lexer 诊断指向非法 token；resolver/typecheck 对已有 AST span 的名字、赋值目标和表达式报错必须指向真实源码范围；尚未携带 span 的聚合错误才允许临时使用 <code>0..0</code>。</td>
         </tr>
         <tr>
           <td>路径 span</td>

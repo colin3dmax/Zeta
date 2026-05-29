@@ -7,6 +7,7 @@ fn main() {
 "#;
     let diagnostics = zeta::check_source(source).expect_err("type mismatch should fail");
     assert_eq!(diagnostics[0].code, "TYPE_LET_MISMATCH");
+    assert_eq!(diagnostics[0].span, span_of(source, "\"not int\""));
 }
 
 #[test]
@@ -18,6 +19,7 @@ fn main() -> Int {
 "#;
     let diagnostics = zeta::check_source(source).expect_err("return mismatch should fail");
     assert_eq!(diagnostics[0].code, "TYPE_RETURN_MISMATCH");
+    assert_eq!(diagnostics[0].span, span_of(source, "\"not int\""));
 }
 
 #[test]
@@ -31,6 +33,7 @@ fn main() {
 "#;
     let diagnostics = zeta::check_source(source).expect_err("if condition mismatch should fail");
     assert_eq!(diagnostics[0].code, "TYPE_IF_CONDITION");
+    assert_eq!(diagnostics[0].span, span_of(source, "1"));
 }
 
 #[test]
@@ -43,4 +46,10 @@ fn main() {
 "#;
     let diagnostics = zeta::check_source(source).expect_err("assignment mismatch should fail");
     assert_eq!(diagnostics[0].code, "TYPE_ASSIGN_MISMATCH");
+    assert_eq!(diagnostics[0].span, span_of(source, "\"not int\""));
+}
+
+fn span_of(source: &str, needle: &str) -> zeta::diagnostic::Span {
+    let start = source.find(needle).expect("needle should exist");
+    zeta::diagnostic::Span::new(start, start + needle.len())
 }

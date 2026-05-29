@@ -1,3 +1,5 @@
+use crate::diagnostic::Span;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Module {
     pub items: Vec<Item>,
@@ -16,12 +18,14 @@ pub enum Item {
 pub struct StructDecl {
     pub exported: bool,
     pub name: String,
+    pub name_span: Span,
     pub fields: Vec<Field>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Field {
     pub name: String,
+    pub name_span: Span,
     pub ty: String,
 }
 
@@ -29,6 +33,7 @@ pub struct Field {
 pub struct EnumDecl {
     pub exported: bool,
     pub name: String,
+    pub name_span: Span,
     pub variants: Vec<String>,
 }
 
@@ -36,6 +41,7 @@ pub struct EnumDecl {
 pub struct Function {
     pub exported: bool,
     pub name: String,
+    pub name_span: Span,
     pub params: Vec<Param>,
     pub return_type: Option<String>,
     pub body: Vec<Stmt>,
@@ -44,6 +50,7 @@ pub struct Function {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Param {
     pub name: String,
+    pub name_span: Span,
     pub ty: String,
 }
 
@@ -52,11 +59,13 @@ pub enum Stmt {
     Let {
         mutable: bool,
         name: String,
+        name_span: Span,
         ty: Option<String>,
         value: Expr,
     },
     Assign {
         name: String,
+        name_span: Span,
         value: Expr,
     },
     If {
@@ -93,18 +102,33 @@ pub enum Pattern {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
-    Name(String),
-    Int(String),
-    String(String),
-    Bool(bool),
+    Name {
+        name: String,
+        span: Span,
+    },
+    Int {
+        value: String,
+        span: Span,
+    },
+    String {
+        value: String,
+        span: Span,
+    },
+    Bool {
+        value: bool,
+        span: Span,
+    },
     Binary {
         op: BinaryOp,
         left: Box<Expr>,
         right: Box<Expr>,
+        span: Span,
     },
     Call {
         callee: String,
+        callee_span: Span,
         args: Vec<Expr>,
+        span: Span,
     },
 }
 
@@ -188,6 +212,7 @@ impl Stmt {
                 name,
                 ty,
                 value,
+                ..
             } => {
                 out.push_str(&format!("{pad}Let name={name}"));
                 if let Some(ty) = ty {
@@ -199,7 +224,7 @@ impl Stmt {
                 out.push('\n');
                 value.dump(indent + 1, out);
             }
-            Stmt::Assign { name, value } => {
+            Stmt::Assign { name, value, .. } => {
                 out.push_str(&format!("{pad}Assign name={name}\n"));
                 value.dump(indent + 1, out);
             }
@@ -270,19 +295,32 @@ impl Pattern {
 }
 
 impl Expr {
+    pub fn span(&self) -> Span {
+        match self {
+            Expr::Name { span, .. }
+            | Expr::Int { span, .. }
+            | Expr::String { span, .. }
+            | Expr::Bool { span, .. }
+            | Expr::Binary { span, .. }
+            | Expr::Call { span, .. } => *span,
+        }
+    }
+
     fn dump(&self, indent: usize, out: &mut String) {
         let pad = "  ".repeat(indent);
         match self {
-            Expr::Name(name) => out.push_str(&format!("{pad}Name {name}\n")),
-            Expr::Int(value) => out.push_str(&format!("{pad}Int {value}\n")),
-            Expr::String(value) => out.push_str(&format!("{pad}String {value:?}\n")),
-            Expr::Bool(value) => out.push_str(&format!("{pad}Bool {value}\n")),
-            Expr::Binary { op, left, right } => {
+            Expr::Name { name, .. } => out.push_str(&format!("{pad}Name {name}\n")),
+            Expr::Int { value, .. } => out.push_str(&format!("{pad}Int {value}\n")),
+            Expr::String { value, .. } => out.push_str(&format!("{pad}String {value:?}\n")),
+            Expr::Bool { value, .. } => out.push_str(&format!("{pad}Bool {value}\n")),
+            Expr::Binary {
+                op, left, right, ..
+            } => {
                 out.push_str(&format!("{pad}Binary op={}\n", op.as_str()));
                 left.dump(indent + 1, out);
                 right.dump(indent + 1, out);
             }
-            Expr::Call { callee, args } => {
+            Expr::Call { callee, args, .. } => {
                 out.push_str(&format!("{pad}Call callee={callee}\n"));
                 for arg in args {
                     arg.dump(indent + 1, out);

@@ -72,6 +72,7 @@ fn check_stmts(
                 name,
                 ty,
                 value,
+                ..
             } => {
                 let value_type = infer_expr(value, locals, functions, diagnostics);
                 let declared_type = ty.as_deref().map(parse_type);
@@ -80,6 +81,7 @@ fn check_stmts(
                         &value_type,
                         &declared_type,
                         "TYPE_LET_MISMATCH",
+                        value.span(),
                         diagnostics,
                     );
                     locals.insert(
@@ -99,7 +101,11 @@ fn check_stmts(
                     );
                 }
             }
-            Stmt::Assign { name, value } => {
+            Stmt::Assign {
+                name,
+                name_span,
+                value,
+            } => {
                 let value_type = infer_expr(value, locals, functions, diagnostics);
                 match locals.get(name) {
                     Some(binding) if binding.mutable => {
@@ -107,6 +113,7 @@ fn check_stmts(
                             &value_type,
                             &binding.ty,
                             "TYPE_ASSIGN_MISMATCH",
+                            value.span(),
                             diagnostics,
                         );
                     }
@@ -115,12 +122,12 @@ fn check_stmts(
                         format!(
                             "cannot assign to immutable local `{name}`; declare it with `let mut`"
                         ),
-                        Span::new(0, 0),
+                        *name_span,
                     )),
                     None => diagnostics.push(Diagnostic::new(
                         "TYPE_UNKNOWN_NAME",
                         format!("unknown name `{name}`"),
-                        Span::new(0, 0),
+                        *name_span,
                     )),
                 }
             }
@@ -134,6 +141,7 @@ fn check_stmts(
                     &condition_type,
                     &Type::Bool,
                     "TYPE_IF_CONDITION",
+                    condition.span(),
                     diagnostics,
                 );
                 let mut then_locals = locals.clone();
@@ -161,6 +169,7 @@ fn check_stmts(
                     &condition_type,
                     &Type::Bool,
                     "TYPE_WHILE_CONDITION",
+                    condition.span(),
                     diagnostics,
                 );
                 let mut loop_locals = locals.clone();
@@ -194,13 +203,14 @@ fn check_stmts(
                 } else {
                     "TYPE_RETURN_MISMATCH"
                 };
-                expect_type(&value_type, return_type, code, diagnostics);
+                expect_type(&value_type, return_type, code, value.span(), diagnostics);
             }
             Stmt::Return(None) => {
                 expect_type(
                     &Type::Unit,
                     return_type,
                     "TYPE_RETURN_MISMATCH",
+                    Span::new(0, 0),
                     diagnostics,
                 );
             }
@@ -218,25 +228,44 @@ fn infer_expr(
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Type {
     match expr {
-        Expr::Name(name) => locals
+        Expr::Name { name, .. } => locals
             .get(name)
             .map(|binding| binding.ty.clone())
             .unwrap_or(Type::Named(name.clone())),
-        Expr::Int(_) => Type::Int,
-        Expr::String(_) => Type::String,
-        Expr::Bool(_) => Type::Bool,
-        Expr::Binary { op, left, right } => {
+        Expr::Int { .. } => Type::Int,
+        Expr::String { .. } => Type::String,
+        Expr::Bool { .. } => Type::Bool,
+        Expr::Binary {
+            op, left, right, ..
+        } => {
             let left_type = infer_expr(left, locals, functions, diagnostics);
             let right_type = infer_expr(right, locals, functions, diagnostics);
             match op {
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
-                    expect_type(&left_type, &Type::Int, "TYPE_BINARY_OPERAND", diagnostics);
-                    expect_type(&right_type, &Type::Int, "TYPE_BINARY_OPERAND", diagnostics);
+                    expect_type(
+                        &left_type,
+                        &Type::Int,
+                        "TYPE_BINARY_OPERAND",
+                        left.span(),
+                        diagnostics,
+                    );
+                    expect_type(
+                        &right_type,
+                        &Type::Int,
+                        "TYPE_BINARY_OPERAND",
+                        right.span(),
+                        diagnostics,
+                    );
                     Type::Int
                 }
             }
         }
-        Expr::Call { callee, args } => {
+        Expr::Call {
+            callee,
+            callee_span,
+            args,
+            ..
+        } => {
             let Some(signature) = functions.get(callee) else {
                 return Type::Named(callee.clone());
             };
@@ -248,13 +277,19 @@ fn infer_expr(
                         signature.params.len(),
                         args.len()
                     ),
-                    Span::new(0, 0),
+                    *callee_span,
                 ));
                 return signature.return_type.clone();
             }
             for (arg, expected) in args.iter().zip(&signature.params) {
                 let found = infer_expr(arg, locals, functions, diagnostics);
-                expect_type(&found, expected, "TYPE_CALL_ARGUMENT", diagnostics);
+                expect_type(
+                    &found,
+                    expected,
+                    "TYPE_CALL_ARGUMENT",
+                    arg.span(),
+                    diagnostics,
+                );
             }
             signature.return_type.clone()
         }
@@ -311,6 +346,7 @@ fn expect_type(
     found: &Type,
     expected: &Type,
     code: &'static str,
+    span: Span,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     if found == expected {
@@ -319,7 +355,7 @@ fn expect_type(
     diagnostics.push(Diagnostic::new(
         code,
         format!("expected {}, found {}", expected.display(), found.display()),
-        Span::new(0, 0),
+        span,
     ));
 }
 

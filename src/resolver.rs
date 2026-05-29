@@ -22,14 +22,14 @@ pub fn resolve(module: &Module) -> Result<(), Vec<Diagnostic>> {
 fn check_top_level(module: &Module, diagnostics: &mut Vec<Diagnostic>) {
     let mut names = HashSet::new();
     for item in &module.items {
-        let Some(name) = item_name(item) else {
+        let Some((name, span)) = item_name(item) else {
             continue;
         };
         if !names.insert(name.to_string()) {
             diagnostics.push(Diagnostic::new(
                 "RESOLVE_DUPLICATE_ITEM",
                 format!("duplicate top-level item `{name}`"),
-                Span::new(0, 0),
+                span,
             ));
         }
     }
@@ -52,7 +52,7 @@ fn check_function(
                     "duplicate local `{}` in function `{}`",
                     param.name, function.name
                 ),
-                Span::new(0, 0),
+                param.name_span,
             ));
         }
     }
@@ -77,6 +77,7 @@ fn check_stmts(
             Stmt::Let {
                 mutable,
                 name,
+                name_span,
                 value,
                 ..
             } => {
@@ -88,11 +89,15 @@ fn check_stmts(
                     diagnostics.push(Diagnostic::new(
                         "RESOLVE_DUPLICATE_LOCAL",
                         format!("duplicate local `{name}` in function `{function_name}`"),
-                        Span::new(0, 0),
+                        *name_span,
                     ));
                 }
             }
-            Stmt::Assign { name, value } => {
+            Stmt::Assign {
+                name,
+                name_span,
+                value,
+            } => {
                 check_expr(value, locals, functions, function_name, diagnostics);
                 match locals.get(name) {
                     Some(binding) if binding.mutable => {}
@@ -101,12 +106,12 @@ fn check_stmts(
                         format!(
                             "cannot assign to immutable local `{name}`; declare it with `let mut`"
                         ),
-                        Span::new(0, 0),
+                        *name_span,
                     )),
                     None => diagnostics.push(Diagnostic::new(
                         "RESOLVE_UNKNOWN_NAME",
                         format!("unknown name `{name}` in function `{function_name}`"),
-                        Span::new(0, 0),
+                        *name_span,
                     )),
                 }
             }
@@ -174,12 +179,12 @@ fn check_expr(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     match expr {
-        Expr::Name(name) => {
+        Expr::Name { name, span } => {
             if !locals.contains_key(name) {
                 diagnostics.push(Diagnostic::new(
                     "RESOLVE_UNKNOWN_NAME",
                     format!("unknown name `{name}` in function `{function_name}`"),
-                    Span::new(0, 0),
+                    *span,
                 ));
             }
         }
@@ -187,19 +192,24 @@ fn check_expr(
             check_expr(left, locals, functions, function_name, diagnostics);
             check_expr(right, locals, functions, function_name, diagnostics);
         }
-        Expr::Call { callee, args } => {
+        Expr::Call {
+            callee,
+            callee_span,
+            args,
+            ..
+        } => {
             if !functions.contains(callee) {
                 diagnostics.push(Diagnostic::new(
                     "RESOLVE_UNKNOWN_FUNCTION",
                     format!("unknown function `{callee}` in function `{function_name}`"),
-                    Span::new(0, 0),
+                    *callee_span,
                 ));
             }
             for arg in args {
                 check_expr(arg, locals, functions, function_name, diagnostics);
             }
         }
-        Expr::Int(_) | Expr::String(_) | Expr::Bool(_) => {}
+        Expr::Int { .. } | Expr::String { .. } | Expr::Bool { .. } => {}
     }
 }
 
@@ -219,11 +229,11 @@ fn function_names(module: &Module) -> HashSet<String> {
         .collect()
 }
 
-fn item_name(item: &Item) -> Option<&str> {
+fn item_name(item: &Item) -> Option<(&str, Span)> {
     match item {
-        Item::Struct(decl) => Some(&decl.name),
-        Item::Enum(decl) => Some(&decl.name),
-        Item::Function(function) => Some(&function.name),
+        Item::Struct(decl) => Some((&decl.name, decl.name_span)),
+        Item::Enum(decl) => Some((&decl.name, decl.name_span)),
+        Item::Function(function) => Some((&function.name, function.name_span)),
         Item::ModuleDecl { .. } | Item::Import { .. } => None,
     }
 }
