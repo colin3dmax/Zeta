@@ -1,0 +1,46 @@
+HirModule
+  module demo
+  import std.io
+  type struct User visibility=exported
+    field name: String
+    field age: Int
+  type enum ResultTag visibility=private
+    variant Ok
+    variant Err
+  fn main visibility=exported -> Int
+    param name: String
+    body
+      let base: Int mutability=immutable
+        binary add
+          const Int 1
+          binary mul
+            const Int 2
+            const Int 3
+      if
+        condition
+          const Bool true
+        then
+          let label: String mutability=immutable
+            const String "ready"
+        else
+          let label: String mutability=immutable
+            const String "skip"
+      while
+        condition
+          const Bool false
+        body
+          let next: Int mutability=immutable
+            binary add
+              local base
+              const Int 1
+      match
+        value
+          local base
+        arm int:0
+          return
+            const Int 0
+        arm _
+          return
+            local base
+      return
+        local base

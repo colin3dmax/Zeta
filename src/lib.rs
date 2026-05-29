@@ -1,5 +1,6 @@
 pub mod ast;
 pub mod diagnostic;
+pub mod hir;
 pub mod lexer;
 pub mod line_editor;
 pub mod parser;
@@ -19,6 +20,13 @@ pub fn parse_source(source: &str) -> Result<ast::Module, Vec<Diagnostic>> {
 pub fn dump_ast(source: &str) -> Result<String, Vec<Diagnostic>> {
     let module = parse_source(source)?;
     Ok(module.dump())
+}
+
+pub fn dump_hir(source: &str) -> Result<String, Vec<Diagnostic>> {
+    let module = parse_source(source)?;
+    resolver::resolve(&module)?;
+    typecheck::check(&module)?;
+    Ok(hir::dump(&module))
 }
 
 pub fn check_source(source: &str) -> Result<(), Vec<Diagnostic>> {

@@ -30,6 +30,10 @@ python3 tools/check-vscode-extension.py</code></pre>
     <p><code>ast-dump</code> 会解析 Zeta 源码并输出稳定 AST dump，适合调试 parser 和 golden corpus。</p>
     <pre><code>cargo run -- ast-dump testdata/core_items.zeta</code></pre>
 
+    <h2>查看 HIR</h2>
+    <p><code>hir-dump</code> 会先通过 name resolution 和 typecheck，再输出稳定 HIR 文本，作为后续 MIR 和 backend golden tests 的输入基线。</p>
+    <pre><code>cargo run -- hir-dump testdata/core_items.zeta</code></pre>
+
     <h2>检查源码</h2>
     <p><code>check</code> 当前执行 parser、最小 name resolution 和基础 typecheck。</p>
     <pre><code>cargo run -- check testdata/core_items.zeta</code></pre>
