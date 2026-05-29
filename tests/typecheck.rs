@@ -32,3 +32,15 @@ fn main() {
     let diagnostics = zeta::check_source(source).expect_err("if condition mismatch should fail");
     assert_eq!(diagnostics[0].code, "TYPE_IF_CONDITION");
 }
+
+#[test]
+fn check_rejects_assignment_type_mismatch() {
+    let source = r#"
+fn main() {
+  let mut value: Int = 1;
+  value = "not int";
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("assignment mismatch should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_ASSIGN_MISMATCH");
+}

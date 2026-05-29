@@ -1,10 +1,13 @@
 pub mod ast;
 pub mod diagnostic;
 pub mod lexer;
-pub mod resolver;
+pub mod line_editor;
 pub mod parser;
 pub mod repl;
+pub mod resolver;
+pub mod runtime;
 pub mod typecheck;
+pub mod wasm;
 
 use diagnostic::Diagnostic;
 
@@ -24,12 +27,45 @@ pub fn check_source(source: &str) -> Result<(), Vec<Diagnostic>> {
     typecheck::check(&module)
 }
 
+pub fn run_source(source: &str) -> Result<runtime::Value, Vec<Diagnostic>> {
+    let module = parse_source(source)?;
+    resolver::resolve(&module)?;
+    typecheck::check(&module)?;
+    runtime::run(&module)
+}
+
+pub fn run_repl_source(source: &str) -> Result<runtime::Value, Vec<Diagnostic>> {
+    let module = parse_source(source)?;
+    resolver::resolve(&module)?;
+    runtime::run(&module)
+}
+
+pub fn eval_repl_source(
+    session: &mut runtime::ReplSession,
+    source: &str,
+) -> Result<runtime::Value, Vec<Diagnostic>> {
+    let module = parse_source(source)?;
+    session.eval_module(&module)
+}
+
 pub fn repl_source_for_line(line: &str) -> String {
     let trimmed = line.trim();
     if starts_with_top_level_item(trimmed) {
         trimmed.to_string()
     } else {
         format!("fn repl() {{\n  {trimmed}\n}}")
+    }
+}
+
+pub fn repl_run_source_for_line(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || starts_with_top_level_item(trimmed) {
+        return None;
+    }
+    if trimmed.ends_with(';') {
+        Some(format!("fn main() {{\n  {trimmed}\n}}"))
+    } else {
+        Some(format!("fn main() {{\n  return {trimmed};\n}}"))
     }
 }
 

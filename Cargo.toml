@@ -6,7 +6,17 @@ edition = "2021"
 [lib]
 name = "zeta"
 path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
 
 [[bin]]
 name = "zeta"
 path = "src/main.rs"
+
+[dependencies]
+nu-ansi-term = { version = "0.50.3", optional = true }
+reedline = { version = "0.48.0", optional = true }
+
+[features]
+default = []
+repl-rich = ["dep:nu-ansi-term", "dep:reedline"]
+nu-ansi-term = ["dep:nu-ansi-term"]

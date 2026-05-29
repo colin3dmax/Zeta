@@ -48,5 +48,12 @@
       "let ${1:name}: ${2:Type} = ${3:value};"
     ],
     "description": "Declare a local binding"
+  },
+  "let mut": {
+    "prefix": "letmut",
+    "body": [
+      "let mut ${1:name}: ${2:Type} = ${3:value};"
+    ],
+    "description": "Declare a mutable local binding"
   }
 }

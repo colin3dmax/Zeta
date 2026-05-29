@@ -23,6 +23,7 @@ pub enum Keyword {
     Export,
     Fn,
     Let,
+    Mut,
     Return,
     If,
     Else,
@@ -114,6 +115,7 @@ impl<'a> Lexer<'a> {
             "export" => TokenKind::Keyword(Keyword::Export),
             "fn" => TokenKind::Keyword(Keyword::Fn),
             "let" => TokenKind::Keyword(Keyword::Let),
+            "mut" => TokenKind::Keyword(Keyword::Mut),
             "return" => TokenKind::Keyword(Keyword::Return),
             "if" => TokenKind::Keyword(Keyword::If),
             "else" => TokenKind::Keyword(Keyword::Else),
@@ -136,6 +138,18 @@ impl<'a> Lexer<'a> {
         self.bump_char();
         while matches!(self.peek_char(), Some(c) if c.is_ascii_digit()) {
             self.bump_char();
+        }
+        if self.peek_char() == Some('.') {
+            self.bump_char();
+            while matches!(self.peek_char(), Some(c) if c.is_ascii_digit()) {
+                self.bump_char();
+            }
+            self.diagnostics.push(Diagnostic::new(
+                "LEX_FLOAT_UNSUPPORTED",
+                "floating-point literals are not supported in Stage 0; use Int arithmetic for now",
+                Span::new(start, self.pos),
+            ));
+            return;
         }
         self.tokens.push(Token {
             kind: TokenKind::Int(self.source[start..self.pos].to_string()),

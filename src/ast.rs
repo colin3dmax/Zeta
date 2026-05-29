@@ -50,8 +50,13 @@ pub struct Param {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stmt {
     Let {
+        mutable: bool,
         name: String,
         ty: Option<String>,
+        value: Expr,
+    },
+    Assign {
+        name: String,
         value: Expr,
     },
     If {
@@ -97,6 +102,10 @@ pub enum Expr {
         left: Box<Expr>,
         right: Box<Expr>,
     },
+    Call {
+        callee: String,
+        args: Vec<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,7 +142,10 @@ impl Item {
                     decl.name, decl.exported
                 ));
                 for field in &decl.fields {
-                    out.push_str(&format!("{pad}  Field name={} type={}\n", field.name, field.ty));
+                    out.push_str(&format!(
+                        "{pad}  Field name={} type={}\n",
+                        field.name, field.ty
+                    ));
                 }
             }
             Item::Enum(decl) => {
@@ -151,7 +163,10 @@ impl Item {
                     function.name, function.exported
                 ));
                 for param in &function.params {
-                    out.push_str(&format!("{pad}  Param name={} type={}\n", param.name, param.ty));
+                    out.push_str(&format!(
+                        "{pad}  Param name={} type={}\n",
+                        param.name, param.ty
+                    ));
                 }
                 if let Some(return_type) = &function.return_type {
                     out.push_str(&format!("{pad}  Return type={return_type}\n"));
@@ -168,12 +183,24 @@ impl Stmt {
     fn dump(&self, indent: usize, out: &mut String) {
         let pad = "  ".repeat(indent);
         match self {
-            Stmt::Let { name, ty, value } => {
+            Stmt::Let {
+                mutable,
+                name,
+                ty,
+                value,
+            } => {
                 out.push_str(&format!("{pad}Let name={name}"));
                 if let Some(ty) = ty {
                     out.push_str(&format!(" type={ty}"));
                 }
+                if *mutable {
+                    out.push_str(" mutable=true");
+                }
                 out.push('\n');
+                value.dump(indent + 1, out);
+            }
+            Stmt::Assign { name, value } => {
+                out.push_str(&format!("{pad}Assign name={name}\n"));
                 value.dump(indent + 1, out);
             }
             Stmt::If {
@@ -254,6 +281,12 @@ impl Expr {
                 out.push_str(&format!("{pad}Binary op={}\n", op.as_str()));
                 left.dump(indent + 1, out);
                 right.dump(indent + 1, out);
+            }
+            Expr::Call { callee, args } => {
+                out.push_str(&format!("{pad}Call callee={callee}\n"));
+                for arg in args {
+                    arg.dump(indent + 1, out);
+                }
             }
         }
     }

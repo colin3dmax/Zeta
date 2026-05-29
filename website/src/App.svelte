@@ -1,4 +1,51 @@
 <script>
+  import { onMount } from "svelte";
+  import { runZeta } from "./wasm-playground.js";
+
+  const keywords = new Set(["module", "import", "export", "fn", "let", "mut", "return", "if", "else", "while", "match", "struct", "enum"]);
+  const types = new Set(["Int", "String", "Bool"]);
+  const commands = [":help", ":api", ":topics", ":examples", ":doc", ":complete", ":quit"];
+  const topics = [
+    "getting-started",
+    "tutorial",
+    "api",
+    "std",
+    "playground",
+    "module",
+    "import",
+    "fn",
+    "let",
+    "mut",
+    "if",
+    "while",
+    "match",
+    "struct",
+    "enum",
+    "Int",
+    "String",
+    "Bool"
+  ];
+  const docs = {
+    "getting-started": "从表达式开始：输入 40 + 2 可以直接执行；使用 let 声明局部绑定；需要重新赋值时使用 let mut；使用 fn main() 组织完整程序。",
+    tutorial: "推荐路径：表达式 -> let/let mut -> fn -> if/while -> struct/enum -> check/run -> Playground/REPL。",
+    api: "Stage 0 API 覆盖 Int、String、Bool、module/import、fn、let/let mut、赋值、return、if/while、match、struct、enum 和 std 命名空间占位。",
+    std: "std 是标准库命名空间占位。当前可用 import std.io; 验证 import 语法，具体 IO API 后续接入。",
+    playground: "Playground 通过 zeta.wasm 运行真实编译器前端，支持 AST、Check 和 Run。",
+    module: "module 声明当前源码模块，例如 module demo.core;",
+    import: "import 引入模块路径，例如 import std.io;",
+    fn: "fn 声明函数，例如 fn main() -> Int { return 42; }",
+    let: "let 声明局部绑定，例如 let answer: Int = 40 + 2; 需要重新赋值时写 let mut answer: Int = 40;",
+    mut: "mut 标记可变局部绑定，之后可以执行 answer = answer + 2;",
+    if: "if 使用 Bool 条件分支。",
+    while: "while 使用 Bool 条件循环，当前执行器有循环步数保护。",
+    match: "match 对简单模式分支。",
+    struct: "struct 声明记录类型。",
+    enum: "enum 声明标签集合。",
+    Int: "Int 是当前 Stage 0 的整数标量类型。",
+    String: "String 是当前 Stage 0 的字符串标量类型。",
+    Bool: "Bool 是 if/while 条件使用的布尔类型。"
+  };
+
   const navItems = [
     { id: "overview", label: "概览" },
     { id: "start", label: "快速开始" },
@@ -12,62 +59,197 @@
   const sample = `module demo.core;
 
 export fn main() -> Int {
-  let answer: Int = 40 + 2;
+  let mut answer: Int = 40;
+  answer = answer + 2;
   return answer;
 }`;
 
   let active = "overview";
   let source = sample;
-  let output = "选择 AST 或 Check 查看结果。";
+  let output = "选择 AST、Check 或 Run 查看真实 Zeta 编译器前端结果。";
+  let runningMode = "";
+  let sourceScrollTop = 0;
+  let sourceScrollLeft = 0;
+  let sourceCompletionOpen = false;
+  let sourceCompletionPrefix = "";
+  let replInput = "";
+  let replRunning = false;
+  let replCompletionOpen = false;
+  let replCompletionPrefix = "";
+  let replInputEl;
+  let replLines = [
+    { kind: "system", text: "Zeta Web REPL · 输入 :help 查看命令，输入 40 + 2 直接运行。" }
+  ];
 
-  function roughAst(text) {
-    const lines = text.split(/\r?\n/);
-    const out = ["Module"];
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith("module ")) {
-        out.push(`  ModuleDecl name=${trimmed.replace(/^module\s+/, "").replace(/;$/, "")}`);
-      } else if (trimmed.startsWith("import ")) {
-        out.push(`  Import path=${trimmed.replace(/^import\s+/, "").replace(/;$/, "")}`);
-      } else if (trimmed.includes("struct ")) {
-        out.push(`  Struct ${trimmed.replace(/\{$/, "").trim()}`);
-      } else if (trimmed.includes("enum ")) {
-        out.push(`  Enum ${trimmed.replace(/\{$/, "").trim()}`);
-      } else if (trimmed.includes("fn ")) {
-        out.push(`  Function ${trimmed.replace(/\{$/, "").trim()}`);
-      } else if (trimmed.startsWith("let ")) {
-        out.push(`    Let ${trimmed.replace(/;$/, "")}`);
-      } else if (trimmed.startsWith("return")) {
-        out.push(`    Return ${trimmed.replace(/;$/, "")}`);
-      } else if (trimmed.startsWith("if ")) {
-        out.push(`    If ${trimmed.replace(/\{$/, "").trim()}`);
-      } else if (trimmed.startsWith("while ")) {
-        out.push(`    While ${trimmed.replace(/\{$/, "").trim()}`);
-      } else if (trimmed.startsWith("match ")) {
-        out.push(`    Match ${trimmed.replace(/\{$/, "").trim()}`);
-      }
+  async function runPlayground(mode) {
+    runningMode = mode;
+    output = "running...";
+    try {
+      const result = await runZeta(mode, source);
+      output = result.output;
+    } catch (error) {
+      output = `Playground failed: ${error.message}`;
+    } finally {
+      runningMode = "";
     }
-    return out.join("\n");
   }
 
-  function roughCheck(text) {
-    const messages = [];
-    if (!text.includes("fn ")) messages.push("warning: no function declaration found");
-    if (text.includes("if 1")) messages.push("TYPE_IF_CONDITION: if condition should be Bool");
-    if (text.includes('return "')) messages.push("TYPE_RETURN_MISMATCH: return String where Int may be expected");
-    if (messages.length === 0) messages.push("ok");
-    messages.push("");
-    messages.push("Browser playground is a prototype. Run cargo run -- check for compiler-backed diagnostics.");
-    return messages.join("\n");
+  function escapeHtml(value) {
+    return value
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
   }
 
-  function showAst() {
-    output = roughAst(source);
+  function highlightCode(value) {
+    return escapeHtml(value).replace(/(:[a-z-]+|"(?:[^"\\]|\\.)*"|\b[A-Za-z_][A-Za-z0-9_]*\b|\b\d+\b)/g, (part) => {
+      if (commands.includes(part)) return `<span class="tok-command">${part}</span>`;
+      if (keywords.has(part)) return `<span class="tok-keyword">${part}</span>`;
+      if (types.has(part)) return `<span class="tok-type">${part}</span>`;
+      if (/^"/.test(part)) return `<span class="tok-string">${part}</span>`;
+      if (/^\d+$/.test(part)) return `<span class="tok-number">${part}</span>`;
+      return part;
+    });
   }
 
-  function showCheck() {
-    output = roughCheck(source);
+  function syncSourceScroll(event) {
+    sourceScrollTop = event.currentTarget.scrollTop;
+    sourceScrollLeft = event.currentTarget.scrollLeft;
   }
+
+  function completionPrefix(value) {
+    const match = value.match(/(:?[A-Za-z0-9_-]+)$/);
+    return match ? match[1] : "";
+  }
+
+  function completions(prefix) {
+    if (!prefix) return [];
+    const words = [...commands, ...topics, ...keywords, ...types].sort();
+    return [...new Set(words)].filter((word) => word.startsWith(prefix)).slice(0, 8);
+  }
+
+  $: sourceSuggestions = completions(sourceCompletionPrefix);
+  $: replSuggestions = completions(replCompletionPrefix);
+
+  function showSourceCompletion() {
+    sourceCompletionPrefix = completionPrefix(source.slice(0, document.activeElement?.selectionStart ?? source.length));
+    sourceCompletionOpen = sourceSuggestions.length > 0;
+  }
+
+  function onSourceKeydown(event) {
+    if (event.key === "Tab") {
+      event.preventDefault();
+      const prefix = completionPrefix(source.slice(0, event.currentTarget.selectionStart));
+      const match = completions(prefix)[0];
+      if (match) {
+        applyTextareaCompletion(event.currentTarget, prefix, match);
+      }
+      sourceCompletionPrefix = prefix;
+      sourceCompletionOpen = completions(prefix).length > 1;
+    }
+  }
+
+  function applyTextareaCompletion(textarea, prefix, value) {
+    const start = textarea.selectionStart - prefix.length;
+    const end = textarea.selectionStart;
+    source = source.slice(0, start) + value + source.slice(end);
+    requestAnimationFrame(() => {
+      const pos = start + value.length;
+      textarea.setSelectionRange(pos, pos);
+      textarea.focus();
+    });
+  }
+
+  function applyReplCompletion(value) {
+    const prefix = completionPrefix(replInput);
+    replInput = replInput.slice(0, replInput.length - prefix.length) + value;
+    replCompletionOpen = false;
+  }
+
+  function replHelp() {
+    return [
+      ":help                 显示命令和学习路径",
+      ":api                  查看 Stage 0 API / 标准库概览",
+      ":topics               列出终端内置文档主题",
+      ":examples             显示可直接运行的示例",
+      ":doc <topic>          查询主题文档",
+      ":complete <prefix>    查看补全候选",
+      ":quit                 清空当前输入"
+    ].join("\n");
+  }
+
+  function replExamples() {
+    return ["40 + 2", "let mut answer: Int = 40;", "answer = answer + 2;", "fn main() -> Int { return 42; }", "module demo.core;", ":doc mut"].join("\n");
+  }
+
+  function replApi() {
+    return "Zeta Stage 0 API\nInt/String/Bool\nmodule/import/fn/let/let mut/assignment/return/if/while/match/struct/enum\nstd: 标准库命名空间占位，当前示例 import std.io;";
+  }
+
+  async function submitRepl() {
+    const input = replInput.trim();
+    if (!input || replRunning) return;
+    replLines = [...replLines, { kind: "input", text: input }];
+    replInput = "";
+    replCompletionOpen = false;
+
+    if (input === ":help") return pushRepl("system", replHelp());
+    if (input === ":api") return pushRepl("system", replApi());
+    if (input === ":topics") return pushRepl("system", topics.join(", "));
+    if (input === ":examples") return pushRepl("system", replExamples());
+    if (input === ":quit") return pushRepl("system", "Web REPL 会话已清空。");
+    if (input.startsWith(":doc ")) return pushRepl("system", docs[input.slice(5).trim()] ?? `unknown doc topic ${input.slice(5).trim()}`);
+    if (input.startsWith(":complete ")) return pushRepl("system", completions(input.slice(10).trim()).join(" ") || "no completions");
+
+    replRunning = true;
+    try {
+      const result = await runZeta("run", replSourceFor(input));
+      pushRepl(result.ok ? "value" : "error", result.output);
+    } catch (error) {
+      pushRepl("error", error.message);
+    } finally {
+      replRunning = false;
+    }
+  }
+
+  function pushRepl(kind, text) {
+    replLines = [...replLines, { kind, text }];
+  }
+
+  function replSourceFor(input) {
+    if (/^(module|import|export|fn|struct|enum)\b/.test(input)) {
+      return input;
+    }
+    if (input.endsWith(";")) {
+      return `fn main() {\n  ${input}\n}`;
+    }
+    return `fn main() -> Int {\n  return ${input};\n}`;
+  }
+
+  function onReplInput() {
+    replCompletionPrefix = completionPrefix(replInput);
+    replCompletionOpen = replSuggestions.length > 0;
+  }
+
+  function onReplKeydown(event) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      submitRepl();
+    } else if (event.key === "Tab") {
+      event.preventDefault();
+      if (replSuggestions[0]) applyReplCompletion(replSuggestions[0]);
+    }
+  }
+
+  function focusRepl() {
+    replInputEl?.focus();
+  }
+
+  onMount(() => {
+    if (location.hash === "#repl") {
+      focusRepl();
+    }
+  });
 </script>
 
 <svelte:head>
@@ -104,7 +286,7 @@ export fn main() -> Int {
     <section class="band">
       <div>
         <span class="metric">Stage 0</span>
-        <p>当前原型覆盖 parser、AST dump、基础 name resolution 和 typecheck。</p>
+        <p>当前原型覆盖 parser、AST dump、基础 name resolution、typecheck 和 Stage 0 执行。</p>
       </div>
       <div>
         <span class="metric">Small Core</span>
@@ -134,6 +316,10 @@ python3 tools/check-vscode-extension.py</code></pre>
           <h3>检查源码</h3>
           <pre><code>cargo run -- check testdata/core_items.zeta</code></pre>
         </article>
+        <article>
+          <h3>执行程序</h3>
+          <pre><code>cargo run -- run testdata/run_call.zeta</code></pre>
+        </article>
       </div>
     </section>
 
@@ -151,25 +337,107 @@ python3 tools/check-vscode-extension.py</code></pre>
           <tr><td><code>:quit</code></td><td>退出 REPL。</td><td><code>:quit</code></td></tr>
         </tbody>
       </table>
-      <p>当前 REPL 是 Stage 0 交互式语法终端：实时解析输入并输出 AST dump。真正执行 Zeta 代码需要后续 MIR interpreter。</p>
+      <p>当前 REPL 是 Stage 0 交互式语法终端：输入 <code>40 + 2</code> 会直接返回 <code>42</code>，语句执行成功会返回 <code>ok</code>。真实 TTY 下提供输入时语法着色、Tab 补全、hint、历史上下切换和左右光标移动；启用 <code>repl-rich</code> feature 后会优先使用 <code>reedline</code>，不可用时自动退回内置 line editor。</p>
+      <div class="tool-window web-repl" aria-label="Zeta Web REPL">
+        <div class="window-chrome">
+          <div class="window-controls" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+          <span class="window-title">Zeta Web REPL</span>
+          <small class="window-status">docs · api · run</small>
+        </div>
+        <div class="terminal-body">
+          {#each replLines as line}
+            <div class={`terminal-line ${line.kind}`}>
+              {#if line.kind === "input"}<span class="prompt">zeta&gt;</span>{/if}
+              <code>{@html highlightCode(line.text)}</code>
+            </div>
+          {/each}
+          <div class="terminal-input-row">
+            <span class="prompt">zeta&gt;</span>
+            <input
+              bind:this={replInputEl}
+              bind:value={replInput}
+              on:input={onReplInput}
+              on:keydown={onReplKeydown}
+              spellcheck="false"
+              placeholder="输入 40 + 2 或 :help"
+              aria-label="REPL input"
+            />
+          </div>
+          {#if replCompletionOpen && replSuggestions.length}
+            <div class="completion-panel terminal-completion">
+              {#each replSuggestions as item}
+                <button type="button" on:click={() => applyReplCompletion(item)}>{item}</button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+        <div class="window-statusbar">
+          <span>Stage 0</span>
+          <span>{replRunning ? "running" : "ready"}</span>
+          <span>Tab completion</span>
+        </div>
+      </div>
     </section>
 
     <section id="playground">
       <p class="kicker">Online Playground</p>
       <h2>在线使用</h2>
-      <div class="playground">
-        <label>
-          <span>Source</span>
-          <textarea bind:value={source} spellcheck="false"></textarea>
-        </label>
-        <div>
-          <div class="toolbar">
-            <button on:click={showAst}>AST</button>
-            <button on:click={showCheck}>Check</button>
+      <div class="tool-window playground-panel">
+        <div class="window-chrome light">
+          <div class="window-controls" aria-hidden="true">
+            <span></span><span></span><span></span>
           </div>
-          <pre class="output"><code>{output}</code></pre>
+          <span class="window-title">Zeta Playground</span>
+          <small class="window-status">source · output · wasm</small>
+        </div>
+        <div class="playground">
+          <div class="pane source-pane">
+            <div class="pane-head">
+              <span>Source</span>
+              <small>main.zeta</small>
+            </div>
+            <div class="code-editor">
+              <textarea
+                bind:value={source}
+                on:scroll={syncSourceScroll}
+                on:input={showSourceCompletion}
+                on:keydown={onSourceKeydown}
+                spellcheck="false"
+              ></textarea>
+              <div class="code-preview" aria-label="Highlighted source preview">
+                <span>Preview</span>
+                <pre class="code-highlight"><code>{@html highlightCode(source)}</code></pre>
+              </div>
+              {#if sourceCompletionOpen && sourceSuggestions.length}
+                <div class="completion-panel editor-completion">
+                  {#each sourceSuggestions as item}
+                    <button type="button" on:click={(event) => applyTextareaCompletion(event.currentTarget.closest(".code-editor").querySelector("textarea"), sourceCompletionPrefix, item)}>{item}</button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          </div>
+          <div class="pane playground-output">
+            <div class="pane-head">
+              <span>Output</span>
+              <div class="toolbar compact">
+                <button disabled={runningMode !== ""} on:click={() => runPlayground("ast")}>AST</button>
+                <button disabled={runningMode !== ""} on:click={() => runPlayground("check")}>Check</button>
+                <button disabled={runningMode !== ""} on:click={() => runPlayground("run")}>Run</button>
+              </div>
+            </div>
+            <pre class="output"><code>{output}</code></pre>
+          </div>
+        </div>
+        <div class="window-statusbar light">
+          <span>wasm frontend</span>
+          <span>{runningMode || "idle"}</span>
+          <span>AST · Check · Run</span>
         </div>
       </div>
+      <p class="note">Playground 直接加载 Zeta 编译器前端编译出的 <code>zeta.wasm</code>，AST、Check 和 Run 都执行当前仓库里的真实 Stage 0 编译器逻辑。</p>
     </section>
 
     <section id="tutorial">

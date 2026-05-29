@@ -10,9 +10,9 @@
   <main>
     <h1>Zeta 用户快速开始</h1>
     <p><strong>状态：</strong>draft</p>
-    <p><strong>更新时间：</strong>2026-05-28</p>
-    <p><strong>适用范围：</strong>Zeta Stage 0 CLI、AST dump、语义检查、REPL 原型和本地示例文件。</p>
-    <p><strong>验收标准：</strong>用户可以运行示例、检查源码、进入 REPL，并知道当前 REPL 只解析和检查语法，不执行程序。</p>
+    <p><strong>更新时间：</strong>2026-05-29</p>
+    <p><strong>适用范围：</strong>Zeta Stage 0 CLI、AST dump、语义检查、执行原型、REPL 原型和本地示例文件。</p>
+    <p><strong>验收标准：</strong>用户可以运行示例、检查源码、执行无参数 <code>main</code>，并在 REPL 里直接计算表达式。</p>
 
     <h2>安装前提</h2>
     <ul>
@@ -33,11 +33,76 @@ python3 tools/check-vscode-extension.py</code></pre>
     <h2>检查源码</h2>
     <p><code>check</code> 当前执行 parser、最小 name resolution 和基础 typecheck。</p>
     <pre><code>cargo run -- check testdata/core_items.zeta</code></pre>
-    <p>当前检查范围包括重复定义、未知名字、<code>Int</code> / <code>String</code> / <code>Bool</code>、算术表达式、<code>let</code> 注解、<code>if</code> / <code>while</code> 条件和 <code>return</code> 类型。</p>
+    <p>当前检查范围包括重复定义、未知名字、<code>Int</code> / <code>String</code> / <code>Bool</code>、算术表达式、函数调用、<code>let</code> 注解、<code>let mut</code> 可变绑定、赋值语句、<code>if</code> / <code>while</code> 条件和 <code>return</code> 类型。</p>
+
+    <h2>执行程序</h2>
+    <p><code>run</code> 当前可以执行无参数 <code>main</code>，支持整数算术、函数调用、<code>let</code>、<code>let mut</code>、赋值、<code>return</code> 和基础 <code>if</code> / <code>while</code>。</p>
+    <pre><code>cargo run -- run testdata/run_basic.zeta
+cargo run -- run testdata/run_call.zeta</code></pre>
+
+    <h2>可变绑定和赋值</h2>
+    <p>Zeta 默认局部绑定不可变。需要在后续语句里重新赋值时，声明时必须写 <code>let mut</code>；否则 <code>check</code> 会报告 <code>RESOLVE_ASSIGN_IMMUTABLE</code>。</p>
+    <pre><code>fn main() -&gt; Int {
+  let mut answer: Int = 40;
+  answer = answer + 2;
+  return answer;
+}</code></pre>
+    <pre><code>cargo run -- run testdata/run_mut.zeta</code></pre>
+
+    <h2>在线 Playground</h2>
+    <p>官网的 Playground 直接加载 Zeta 编译器前端编译出的 <code>zeta.wasm</code>，不是 JavaScript 模拟器。当前支持三个模式：</p>
+    <table>
+      <thead>
+        <tr>
+          <th>按钮</th>
+          <th>能力</th>
+          <th>适用场景</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>AST</code></td>
+          <td>解析源码并输出 AST dump。</td>
+          <td>确认语法结构和 parser 行为。</td>
+        </tr>
+        <tr>
+          <td><code>Check</code></td>
+          <td>执行 parser、name resolution 和基础 typecheck。</td>
+          <td>检查重复定义、未知名字、类型不匹配和 return 类型。</td>
+        </tr>
+        <tr>
+          <td><code>Run</code></td>
+          <td>执行无参数 <code>main</code> 并返回 Stage 0 interpreter 结果。</td>
+          <td>在线试运行整数算术、函数调用和基础控制流。</td>
+        </tr>
+      </tbody>
+    </table>
+    <pre><code>module demo.core;
+
+export fn main() -> Int {
+  let mut answer: Int = 40;
+  answer = answer + 2;
+  return answer;
+}</code></pre>
 
     <h2>进入 REPL</h2>
     <pre><code>cargo run -- repl</code></pre>
-    <p>当前 REPL 是 Stage 0 交互式语法终端：它实时解析输入，并输出 AST dump。真正执行 Zeta 代码需要后续 MIR interpreter。</p>
+    <p>当前 REPL 是 Stage 0 交互式语法终端：表达式会直接执行并返回结果，语句会执行并输出 <code>ok</code>。真实 TTY 下会启用无依赖 line editor，支持输入时语法高亮、Tab 补全、hint、历史上下切换和左右光标移动。</p>
+    <p>REPL 默认会根据语言偏好显示中文或英文：优先读取 <code>ZETA_LANG</code> 环境变量，其次读取 <code>~/.zeta/config.toml</code> 里的 <code>language</code> 或 <code>lang</code>，最后根据系统 <code>LANG</code> / <code>LC_ALL</code> 判断。简体中文环境默认显示中文。会话内可以用 <code>:lang zh</code> 或 <code>:lang en</code> 临时切换。</p>
+    <pre><code>export ZETA_LANG=zh
+cargo run -- repl</code></pre>
+    <pre><code>mkdir -p ~/.zeta
+printf 'language = "zh"\n' &gt; ~/.zeta/config.toml</code></pre>
+
+    <h2>高级 REPL</h2>
+    <p>高级 REPL 使用可选 <code>reedline</code> 依赖，默认不启用，避免影响离线和跨平台基础构建。</p>
+    <pre><code>cargo run --features repl-rich -- repl</code></pre>
+    <p>如果当前终端不支持 <code>reedline</code> 需要的 cursor 查询，高级 REPL 会自动退回内置 line editor，继续保留基础高亮、补全和历史能力。</p>
+    <p>需要通过代理安装依赖时，可以先设置代理环境变量：</p>
+    <pre><code>export https_proxy=http://127.0.0.1:33210
+export http_proxy=http://127.0.0.1:33210
+export all_proxy=socks5://127.0.0.1:33211
+cargo test --features repl-rich</code></pre>
 
     <h2>REPL 命令</h2>
     <table>
@@ -65,6 +130,26 @@ python3 tools/check-vscode-extension.py</code></pre>
           <td><code>:complete st</code></td>
         </tr>
         <tr>
+          <td><code>:api</code></td>
+          <td>查看当前 Stage 0 API 和标准库命名空间概览。</td>
+          <td><code>:api</code></td>
+        </tr>
+        <tr>
+          <td><code>:topics</code></td>
+          <td>列出终端内置文档主题。</td>
+          <td><code>:topics</code></td>
+        </tr>
+        <tr>
+          <td><code>:examples</code></td>
+          <td>显示可直接运行的示例。</td>
+          <td><code>:examples</code></td>
+        </tr>
+        <tr>
+          <td><code>:lang zh|en</code></td>
+          <td>切换当前 REPL 会话语言。</td>
+          <td><code>:lang zh</code></td>
+        </tr>
+        <tr>
           <td><code>:quit</code></td>
           <td>退出 REPL。</td>
           <td><code>:quit</code></td>
@@ -73,17 +158,21 @@ python3 tools/check-vscode-extension.py</code></pre>
     </table>
 
     <h2>示例输入</h2>
-    <pre><code>let answer: Int = 40 + 2;
+    <pre><code>40 + 2
+let answer: Int = 40 + 2;
+let mut count: Int = 1;
+count = count + 1;
 :doc struct
 :complete Str
 :quit</code></pre>
 
     <h2>当前限制</h2>
     <ul>
-      <li>REPL 当前不执行 Zeta 程序，只输出 AST dump。</li>
-      <li>类型检查只覆盖 Stage 0 的最小标量和控制流。</li>
+      <li>默认 REPL 使用无依赖 line editor；启用 <code>repl-rich</code> feature 后会使用 <code>reedline</code>。</li>
+      <li>管道输入和非 TTY 环境会自动退回普通行输入。</li>
+      <li>类型检查只覆盖 Stage 0 的最小标量、函数调用和控制流。</li>
       <li>错误 span 仍是早期实现，后续会补充源码位置。</li>
-      <li>真正的实时运行需要 HIR/MIR lowering 和 MIR interpreter。</li>
+      <li>当前执行器仍是 Stage 0 AST interpreter，后续会下沉为 HIR/MIR interpreter。</li>
     </ul>
   </main>
 </body>

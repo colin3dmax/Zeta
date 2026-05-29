@@ -71,12 +71,52 @@ python3 tools/serve-docs.py
 
 打开 `http://127.0.0.1:8765/docs/index.html`。服务会监听文档、源码、示例和工具文件变化，并自动刷新浏览器。
 
+## 官网与 Playground
+
+官网使用 Svelte + Vite，在线 Playground 通过 `wasm32-unknown-unknown` 运行真实 Zeta 编译器前端。
+
+```sh
+sh tools/build-website.sh
+cd website
+npm run dev
+```
+
+发布官网：
+
+```sh
+sh tools/deploy-website.sh
+```
+
+脚本会构建 Zeta WebAssembly、构建 Svelte 官网、同步到 `zeta.jennieapp.com`，再测试 Nginx 配置并 reload。SSH 默认关闭 `ProxyCommand` 和 `ProxyJump`。
+
+官网 Playground 加载真实的 `zeta.wasm`，当前提供 AST、Check 和 Run 三个模式；官网也提供 Web REPL，支持在线输入表达式、查询 `:help` / `:api` / `:doc` / `:examples`，并共享同一套 WASM 执行路径。每次新增语言、REPL、编译或 Playground 能力时，需要同步更新 `website/src/App.svelte` 和 `docs/user/getting-started.html` 里的用户说明与示例。
+
 ## 当前 CLI
 
 ```sh
 cargo run -- ast-dump testdata/core_items.zeta
 cargo run -- check testdata/core_items.zeta
+cargo run -- run testdata/run_basic.zeta
 cargo run -- repl
 ```
 
-当前 `check` 会执行 parse、最小 name resolution 和基础 typecheck，覆盖重复定义、未知名字、`Int`/`String`/`Bool` 字面量、算术表达式、let 注解、if/while 条件和 return 类型。`repl` 是 Stage 0 语法交互终端：它实时解析输入并输出 AST dump。真正执行 Zeta 代码需要后续 MIR interpreter。
+当前 `check` 会执行 parse、最小 name resolution 和基础 typecheck，覆盖重复定义、未知名字、`Int`/`String`/`Bool` 字面量、算术表达式、let 注解、`let mut` 可变绑定、赋值语句、if/while 条件、函数调用和 return 类型。`run` 是 Stage 0 执行原型：它可以执行无参数 `main`、整数算术、函数调用、`let`、`let mut`、赋值、`return` 和基础 `if/while`。`repl` 当前可以直接计算表达式，例如输入 `40 + 2` 返回 `42`；真实 TTY 下提供无依赖 line editor，支持输入时语法高亮、Tab 补全、hint、历史上下切换和左右光标移动。
+
+REPL 默认会按语言偏好显示中文或英文：`ZETA_LANG` 环境变量优先，其次读取 `~/.zeta/config.toml` 的 `language` 或 `lang`，最后根据系统 `LANG` / `LC_ALL` 判断。简体中文环境默认中文；会话内可用 `:lang zh` / `:lang en` 临时切换。终端内置学习入口包括 `:help`、`:api`、`:topics`、`:examples` 和 `:doc <topic>`。
+
+高级 REPL 使用可选依赖 `reedline`，默认不启用，避免影响离线和跨平台基础构建：
+
+```sh
+cargo run --features repl-rich -- repl
+```
+
+如果当前终端不支持 `reedline` 需要的 cursor 查询，高级 REPL 会自动退回内置 line editor。
+
+如需通过代理安装或更新依赖：
+
+```sh
+export https_proxy=http://127.0.0.1:33210
+export http_proxy=http://127.0.0.1:33210
+export all_proxy=socks5://127.0.0.1:33211
+cargo test --features repl-rich
+```

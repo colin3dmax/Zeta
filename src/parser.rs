@@ -38,7 +38,7 @@ impl Parser {
 
     fn parse_item(&mut self) -> Result<Item, Diagnostic> {
         if self.consume_keyword(Keyword::Module).is_some() {
-            let name = self.expect_ident("expected module name")?;
+            let name = self.parse_path()?.join(".");
             self.expect_symbol(Symbol::Semicolon, "expected `;` after module declaration")?;
             return Ok(Item::ModuleDecl { name });
         }
@@ -147,7 +147,7 @@ impl Parser {
     }
 
     fn parse_path(&mut self) -> Result<Vec<String>, Diagnostic> {
-        let mut path = vec![self.expect_ident("expected import path")?];
+        let mut path = vec![self.expect_ident("expected module path")?];
         while self.consume_symbol(Symbol::Dot).is_some() {
             path.push(self.expect_ident("expected name after `.`")?);
         }
@@ -165,6 +165,7 @@ impl Parser {
 
     fn parse_stmt(&mut self) -> Result<Stmt, Diagnostic> {
         if self.consume_keyword(Keyword::Let).is_some() {
+            let mutable = self.consume_keyword(Keyword::Mut).is_some();
             let name = self.expect_ident("expected local name")?;
             let ty = if self.consume_symbol(Symbol::Colon).is_some() {
                 Some(self.expect_ident("expected local type")?)
@@ -174,7 +175,12 @@ impl Parser {
             self.expect_symbol(Symbol::Eq, "expected `=` in let statement")?;
             let value = self.parse_expr()?;
             self.expect_symbol(Symbol::Semicolon, "expected `;` after let statement")?;
-            return Ok(Stmt::Let { name, ty, value });
+            return Ok(Stmt::Let {
+                mutable,
+                name,
+                ty,
+                value,
+            });
         }
 
         if self.consume_keyword(Keyword::If).is_some() {
@@ -219,6 +225,17 @@ impl Parser {
             let value = self.parse_expr()?;
             self.expect_symbol(Symbol::Semicolon, "expected `;` after return statement")?;
             return Ok(Stmt::Return(Some(value)));
+        }
+
+        if let TokenKind::Ident(name) = self.peek_kind() {
+            if matches!(self.peek_kind_at(1), TokenKind::Symbol(Symbol::Eq)) {
+                let name = name.clone();
+                self.pos += 1;
+                self.expect_symbol(Symbol::Eq, "expected `=` in assignment")?;
+                let value = self.parse_expr()?;
+                self.expect_symbol(Symbol::Semicolon, "expected `;` after assignment")?;
+                return Ok(Stmt::Assign { name, value });
+            }
         }
 
         let value = self.parse_expr()?;
@@ -295,7 +312,7 @@ impl Parser {
     }
 
     fn parse_multiplicative(&mut self) -> Result<Expr, Diagnostic> {
-        let mut expr = self.parse_primary()?;
+        let mut expr = self.parse_call()?;
         loop {
             let op = if self.consume_symbol(Symbol::Star).is_some() {
                 BinaryOp::Mul
@@ -304,7 +321,7 @@ impl Parser {
             } else {
                 break;
             };
-            let right = self.parse_primary()?;
+            let right = self.parse_call()?;
             expr = Expr::Binary {
                 op,
                 left: Box::new(expr),
@@ -312,6 +329,38 @@ impl Parser {
             };
         }
         Ok(expr)
+    }
+
+    fn parse_call(&mut self) -> Result<Expr, Diagnostic> {
+        let mut expr = self.parse_primary()?;
+        loop {
+            if self.consume_symbol(Symbol::LParen).is_none() {
+                return Ok(expr);
+            }
+            let Expr::Name(callee) = expr else {
+                return Err(self.error_here(
+                    "PARSE_EXPECTED_CALL_TARGET",
+                    "expected function name before call arguments",
+                ));
+            };
+            let args = self.parse_call_args()?;
+            expr = Expr::Call { callee, args };
+        }
+    }
+
+    fn parse_call_args(&mut self) -> Result<Vec<Expr>, Diagnostic> {
+        let mut args = Vec::new();
+        if self.consume_symbol(Symbol::RParen).is_some() {
+            return Ok(args);
+        }
+        loop {
+            args.push(self.parse_expr()?);
+            if self.consume_symbol(Symbol::Comma).is_none() {
+                break;
+            }
+        }
+        self.expect_symbol(Symbol::RParen, "expected `)` after call arguments")?;
+        Ok(args)
     }
 
     fn parse_primary(&mut self) -> Result<Expr, Diagnostic> {
@@ -426,6 +475,13 @@ impl Parser {
 
     fn peek_kind(&self) -> &TokenKind {
         &self.peek().kind
+    }
+
+    fn peek_kind_at(&self, offset: usize) -> &TokenKind {
+        self.tokens
+            .get(self.pos + offset)
+            .map(|token| &token.kind)
+            .unwrap_or_else(|| &self.tokens[self.tokens.len() - 1].kind)
     }
 
     fn error_here(&self, code: &'static str, message: &'static str) -> Diagnostic {
