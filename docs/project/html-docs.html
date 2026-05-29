@@ -9,8 +9,8 @@
 <body>
   <main>
     <h1>Zeta HTML 文档规范</h1>
-    <p><strong>状态：</strong>draft</p>
-    <p><strong>更新时间：</strong>2026-05-28</p>
+    <p><strong>状态：</strong>accepted</p>
+    <p><strong>更新时间：</strong>2026-05-29</p>
     <p><strong>适用范围：</strong>Zeta 仓库内正式设计文档的 HTML 格式、元信息、链接和交付规则。</p>
     <p><strong>验收标准：</strong>新增正式文档必须包含 title、h1、状态、更新时间、适用范围和验收标准，并使用相对链接。</p>
 
@@ -47,6 +47,59 @@
       <li>任务进入 done 前必须处理 review 评论并记录最终验收证据。</li>
       <li>跨模块任务必须先定 schema 和规范，再实现 tool、agent 或 runtime 行为。</li>
     </ul>
+
+    <h2>Owner 角色</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Owner</th>
+          <th>职责</th>
+          <th>交付证据</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>project-lead</code></td>
+          <td>拆分任务、裁决范围、处理 review/done 闸门和跨角色交接。</td>
+          <td>DevGame 最终验收记录、关键提交、发布或回归证据。</td>
+        </tr>
+        <tr>
+          <td><code>compiler-architect</code></td>
+          <td>语言前端、诊断、AST/HIR/MIR、编译器 corpus 和 bootstrap 路线。</td>
+          <td>golden tests、CLI 输出、源码和规格文档链接。</td>
+        </tr>
+        <tr>
+          <td><code>runtime-platform-architect</code></td>
+          <td>target matrix、runtime 分层、panic、allocator、CI 和平台适配。</td>
+          <td>target 表、CI matrix、build/smoke 记录和风险说明。</td>
+        </tr>
+        <tr>
+          <td><code>ai-runtime-architect</code></td>
+          <td>capability、schema、tool、agent、policy、budget 和 trace 契约。</td>
+          <td>成功/失败示例、权限边界、脱敏规则和审计字段。</td>
+        </tr>
+        <tr>
+          <td><code>tech-writer</code></td>
+          <td>README、用户文档、HTML 规范、链接和术语一致性。</td>
+          <td>文档链接、状态/更新时间、检查命令输出。</td>
+        </tr>
+        <tr>
+          <td><code>qa-release</code></td>
+          <td>发布前验收、线上 smoke、回归矩阵和发布记录。</td>
+          <td>测试命令、截图、线上 URL、版本或 artifact hash。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>任务流转</h2>
+    <ol>
+      <li><strong>pending：</strong>任务已创建但未开始，必须包含目标、交付物和验收标准。</li>
+      <li><strong>assigned：</strong>任务已指定 owner，开始前确认影响范围、风险和验证方式。</li>
+      <li><strong>in_progress：</strong>正在实施，跨文件或跨模块改动必须持续记录关键决策。</li>
+      <li><strong>review：</strong>实现或文档已完成，必须附带测试结果、文档链接、风险和人工验收步骤。</li>
+      <li><strong>done：</strong>review 已处理，必须记录最终验收证据、关键文件、提交、PR、发布链接或截图。</li>
+      <li><strong>blocked：</strong>无法继续时必须说明阻塞原因、需要谁决策以及恢复条件。</li>
+    </ol>
   </main>
 </body>
 </html>
