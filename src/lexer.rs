@@ -50,7 +50,10 @@ pub enum Symbol {
     Arrow,
     Eq,
     EqEq,
+    Bang,
     BangEq,
+    AndAnd,
+    OrOr,
     Lt,
     Lte,
     Gt,
@@ -232,6 +235,15 @@ impl<'a> Lexer<'a> {
             '!' if self.peek_char() == Some('=') => {
                 self.bump_char();
                 Some(TokenKind::Symbol(Symbol::BangEq))
+            }
+            '!' => Some(TokenKind::Symbol(Symbol::Bang)),
+            '&' if self.peek_char() == Some('&') => {
+                self.bump_char();
+                Some(TokenKind::Symbol(Symbol::AndAnd))
+            }
+            '|' if self.peek_char() == Some('|') => {
+                self.bump_char();
+                Some(TokenKind::Symbol(Symbol::OrOr))
             }
             '<' if self.peek_char() == Some('=') => {
                 self.bump_char();

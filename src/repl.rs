@@ -157,13 +157,13 @@ pub const TOPICS: &[ReplTopic] = &[
     },
     ReplTopic {
         name: "if",
-        summary: "Branch on a Bool condition.",
-        example: "if true { return 1; } else { return 0; }",
+        summary: "Branch on a Bool condition. Comparisons and boolean logic return Bool.",
+        example: "if ready && !done { return 1; } else { return 0; }",
     },
     ReplTopic {
         name: "while",
         summary: "Loop while a Bool condition is true.",
-        example: "while ready { count = count + 1; }",
+        example: "while count < 3 && ready { count = count + 1; }",
     },
     ReplTopic {
         name: "match",
@@ -192,8 +192,8 @@ pub const TOPICS: &[ReplTopic] = &[
     },
     ReplTopic {
         name: "Bool",
-        summary: "Boolean scalar type used by if and while conditions.",
-        example: "let ready: Bool = true;",
+        summary: "Boolean scalar type used by if and while conditions. Use &&, ||, and ! to combine Bool values.",
+        example: "let ready: Bool = true && !false;",
     },
 ];
 
@@ -325,6 +325,7 @@ pub fn examples_text_colored_lang(language: Language) -> String {
             ("表达式", "40 + 2"),
             ("绑定", "let answer: Int = 40 + 2;"),
             ("可变绑定", "let mut answer: Int = 40;"),
+            ("布尔逻辑", "true && !false"),
             ("函数", "fn main() -> Int { return 42; }"),
             ("模块", "module demo.core;"),
             ("文档", ":doc let"),
@@ -335,6 +336,7 @@ pub fn examples_text_colored_lang(language: Language) -> String {
             ("Expression", "40 + 2"),
             ("Binding", "let answer: Int = 40 + 2;"),
             ("Mutable", "let mut answer: Int = 40;"),
+            ("Boolean", "true && !false"),
             ("Function", "fn main() -> Int { return 42; }"),
             ("Module", "module demo.core;"),
             ("Doc", ":doc let"),
@@ -362,7 +364,7 @@ Zeta Stage 0 API
   {}  标准库命名空间占位，当前用于 import 示例
 
 语言表面
-  module/import, fn, let/let mut, assignment, return, if/else, while, match, struct, enum
+  module/import, fn, let/let mut, assignment, comparison, boolean logic, return, if/else, while, match, struct, enum
 
 试试
   {}
@@ -389,7 +391,7 @@ Zeta Stage 0 API
   {}  namespace placeholder used by import examples
 
 Language surface
-  module/import, fn, let/let mut, assignment, return, if/else, while, match, struct, enum
+  module/import, fn, let/let mut, assignment, comparison, boolean logic, return, if/else, while, match, struct, enum
 
 Try
   {}
@@ -433,14 +435,14 @@ fn topic_summary(topic: &ReplTopic, language: Language) -> &'static str {
         "fn" => "声明函数。REPL 中语句会被包进临时函数执行。",
         "let" => "声明局部绑定，可以带类型注解；需要重新赋值时使用 let mut。",
         "mut" => "标记局部绑定可变，允许后续赋值语句更新它。",
-        "if" => "基于 Bool 条件分支。",
-        "while" => "当 Bool 条件为 true 时循环。",
+        "if" => "基于 Bool 条件分支；条件可以使用比较、&&、|| 和 !。",
+        "while" => "当 Bool 条件为 true 时循环；条件可以使用比较、&&、|| 和 !。",
         "match" => "对值进行简单模式匹配。",
         "struct" => "声明记录类型。",
         "enum" => "声明标签集合。",
         "Int" => "当前 Stage 0 checker 支持的整数标量类型。",
         "String" => "当前 Stage 0 checker 支持的字符串标量类型。",
-        "Bool" => "if 和 while 条件使用的布尔类型。",
+        "Bool" => "if 和 while 条件使用的布尔类型；&&、|| 和 ! 用于组合或取反 Bool。",
         _ => topic.summary,
     }
 }
@@ -462,7 +464,7 @@ pub fn welcome_banner_lang(language: Language) -> String {
             color(":examples", Style::Command),
             color(":lang en", Style::Command),
             highlight_zeta("40 + 2"),
-            highlight_zeta("let mut answer: Int = 40;")
+            highlight_zeta("true && !false")
         );
     }
 
@@ -477,7 +479,7 @@ Try: {}    {}
         color(":examples", Style::Command),
         color(":lang zh", Style::Command),
         highlight_zeta("40 + 2"),
-        highlight_zeta("let mut answer: Int = 40;")
+        highlight_zeta("true && !false")
     )
 }
 
@@ -487,6 +489,7 @@ pub enum Style {
     Command,
     Error,
     Keyword,
+    Operator,
     Type,
     Value,
     Hint,
@@ -498,6 +501,7 @@ pub fn color(text: impl AsRef<str>, style: Style) -> String {
         Style::Command => "1;38;5;214",
         Style::Error => "1;38;5;196",
         Style::Keyword => "1;38;5;81",
+        Style::Operator => "1;38;5;213",
         Style::Type => "1;38;5;141",
         Style::Value => "1;38;5;120",
         Style::Hint => "38;5;245",
@@ -509,16 +513,27 @@ pub fn highlight_zeta(source: &str) -> String {
     let mut out = String::new();
     let mut token = String::new();
     for ch in source.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '_' || ch == ':' {
+        if ch.is_ascii_alphanumeric() || ch == '_' || (ch == ':' && token.is_empty()) {
             token.push(ch);
         } else {
             push_highlighted_token(&mut out, &token);
             token.clear();
-            out.push(ch);
+            push_highlighted_operator(&mut out, ch);
         }
     }
     push_highlighted_token(&mut out, &token);
     out
+}
+
+fn push_highlighted_operator(out: &mut String, ch: char) {
+    if matches!(
+        ch,
+        '=' | '!' | '<' | '>' | '+' | '-' | '*' | '/' | '&' | '|' | ':'
+    ) {
+        out.push_str(&color(ch.to_string(), Style::Operator));
+    } else {
+        out.push(ch);
+    }
 }
 
 fn push_highlighted_token(out: &mut String, token: &str) {
@@ -544,6 +559,8 @@ fn push_highlighted_token(out: &mut String, token: &str) {
         out.push_str(&color(token, Style::Keyword));
     } else if matches!(token, "Int" | "String" | "Bool") {
         out.push_str(&color(token, Style::Type));
+    } else if matches!(token, "true" | "false") {
+        out.push_str(&color(token, Style::Value));
     } else if matches!(
         token,
         ":help"

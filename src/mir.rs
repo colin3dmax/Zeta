@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, Function, Item, Module, Param, Stmt};
+use crate::ast::{BinaryOp, Expr, Function, Item, Module, Param, Stmt, UnaryOp};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
@@ -49,6 +49,10 @@ pub enum MirExpr {
         op: BinaryOp,
         left: Box<MirExpr>,
         right: Box<MirExpr>,
+    },
+    Unary {
+        op: UnaryOp,
+        expr: Box<MirExpr>,
     },
     Call {
         callee: String,
@@ -139,6 +143,10 @@ fn lower_expr(expr: &Expr) -> MirExpr {
             op: *op,
             left: Box::new(lower_expr(left)),
             right: Box::new(lower_expr(right)),
+        },
+        Expr::Unary { op, expr, .. } => MirExpr::Unary {
+            op: *op,
+            expr: Box::new(lower_expr(expr)),
         },
         Expr::Call { callee, args, .. } => MirExpr::Call {
             callee: callee.clone(),
@@ -266,6 +274,15 @@ impl DumpCtx {
                 ));
                 temp
             }
+            MirExpr::Unary { op, expr } => {
+                let expr_temp = self.dump_expr(expr, indent, out);
+                let temp = self.temp();
+                out.push_str(&format!(
+                    "{pad}{temp} = unary {} {expr_temp}\n",
+                    unary_op_text(*op)
+                ));
+                temp
+            }
             MirExpr::Call { callee, args } => {
                 let mut arg_temps = Vec::new();
                 for arg in args {
@@ -294,11 +311,19 @@ pub fn binary_op_text(op: BinaryOp) -> &'static str {
         BinaryOp::Sub => "sub",
         BinaryOp::Mul => "mul",
         BinaryOp::Div => "div",
+        BinaryOp::And => "and",
+        BinaryOp::Or => "or",
         BinaryOp::Eq => "eq",
         BinaryOp::NotEq => "not_eq",
         BinaryOp::Lt => "lt",
         BinaryOp::Lte => "lte",
         BinaryOp::Gt => "gt",
         BinaryOp::Gte => "gte",
+    }
+}
+
+pub fn unary_op_text(op: UnaryOp) -> &'static str {
+    match op {
+        UnaryOp::Not => "not",
     }
 }

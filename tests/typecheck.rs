@@ -64,6 +64,34 @@ fn main() {
 }
 
 #[test]
+fn check_rejects_non_bool_logical_operands() {
+    let source = r#"
+fn main() {
+  if 1 && true {
+    return;
+  }
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("logical Int should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_LOGICAL_OPERAND");
+    assert_eq!(diagnostics[0].span, span_of(source, "1"));
+}
+
+#[test]
+fn check_rejects_non_bool_not_operand() {
+    let source = r#"
+fn main() {
+  if !1 {
+    return;
+  }
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("not Int should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_UNARY_OPERAND");
+    assert_eq!(diagnostics[0].span, span_of(source, "1"));
+}
+
+#[test]
 fn cli_check_renders_line_column_and_source_snippet() {
     let source = r#"
 fn main() {

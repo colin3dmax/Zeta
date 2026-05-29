@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, Item, Module, Pattern, Stmt};
+use crate::ast::{BinaryOp, Expr, Item, Module, Pattern, Stmt, UnaryOp};
 
 pub fn dump(module: &Module) -> String {
     let mut out = String::from("HirModule\n");
@@ -141,6 +141,10 @@ fn dump_expr(expr: &Expr, indent: usize, out: &mut String) {
             dump_expr(left, indent + 1, out);
             dump_expr(right, indent + 1, out);
         }
+        Expr::Unary { op, expr, .. } => {
+            out.push_str(&format!("{pad}unary {}\n", unary_op_text(*op)));
+            dump_expr(expr, indent + 1, out);
+        }
         Expr::Call { callee, args, .. } => {
             out.push_str(&format!("{pad}call {callee}\n"));
             for arg in args {
@@ -166,12 +170,20 @@ fn binary_op_text(op: BinaryOp) -> &'static str {
         BinaryOp::Sub => "sub",
         BinaryOp::Mul => "mul",
         BinaryOp::Div => "div",
+        BinaryOp::And => "and",
+        BinaryOp::Or => "or",
         BinaryOp::Eq => "eq",
         BinaryOp::NotEq => "not_eq",
         BinaryOp::Lt => "lt",
         BinaryOp::Lte => "lte",
         BinaryOp::Gt => "gt",
         BinaryOp::Gte => "gte",
+    }
+}
+
+fn unary_op_text(op: UnaryOp) -> &'static str {
+    match op {
+        UnaryOp::Not => "not",
     }
 }
 

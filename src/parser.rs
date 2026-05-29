@@ -1,6 +1,6 @@
 use crate::ast::{
     BinaryOp, EnumDecl, Expr, Field, Function, Item, MatchArm, Module, Param, Pattern, Stmt,
-    StructDecl,
+    StructDecl, UnaryOp,
 };
 use crate::diagnostic::{Diagnostic, Span};
 use crate::lexer::{Keyword, Symbol, Token, TokenKind};
@@ -302,7 +302,37 @@ impl Parser {
     }
 
     fn parse_expr(&mut self) -> Result<Expr, Diagnostic> {
-        self.parse_comparison()
+        self.parse_logical_or()
+    }
+
+    fn parse_logical_or(&mut self) -> Result<Expr, Diagnostic> {
+        let mut expr = self.parse_logical_and()?;
+        while self.consume_symbol(Symbol::OrOr).is_some() {
+            let right = self.parse_logical_and()?;
+            let span = Span::new(expr.span().start, right.span().end);
+            expr = Expr::Binary {
+                op: BinaryOp::Or,
+                left: Box::new(expr),
+                right: Box::new(right),
+                span,
+            };
+        }
+        Ok(expr)
+    }
+
+    fn parse_logical_and(&mut self) -> Result<Expr, Diagnostic> {
+        let mut expr = self.parse_comparison()?;
+        while self.consume_symbol(Symbol::AndAnd).is_some() {
+            let right = self.parse_comparison()?;
+            let span = Span::new(expr.span().start, right.span().end);
+            expr = Expr::Binary {
+                op: BinaryOp::And,
+                left: Box::new(expr),
+                right: Box::new(right),
+                span,
+            };
+        }
+        Ok(expr)
     }
 
     fn parse_comparison(&mut self) -> Result<Expr, Diagnostic> {
@@ -358,7 +388,7 @@ impl Parser {
     }
 
     fn parse_multiplicative(&mut self) -> Result<Expr, Diagnostic> {
-        let mut expr = self.parse_call()?;
+        let mut expr = self.parse_unary()?;
         loop {
             let op = if self.consume_symbol(Symbol::Star).is_some() {
                 BinaryOp::Mul
@@ -367,7 +397,7 @@ impl Parser {
             } else {
                 break;
             };
-            let right = self.parse_call()?;
+            let right = self.parse_unary()?;
             let span = Span::new(expr.span().start, right.span().end);
             expr = Expr::Binary {
                 op,
@@ -377,6 +407,19 @@ impl Parser {
             };
         }
         Ok(expr)
+    }
+
+    fn parse_unary(&mut self) -> Result<Expr, Diagnostic> {
+        if let Some(start) = self.consume_symbol(Symbol::Bang) {
+            let expr = self.parse_unary()?;
+            let span = Span::new(start.start, expr.span().end);
+            return Ok(Expr::Unary {
+                op: UnaryOp::Not,
+                expr: Box::new(expr),
+                span,
+            });
+        }
+        self.parse_call()
     }
 
     fn parse_call(&mut self) -> Result<Expr, Diagnostic> {

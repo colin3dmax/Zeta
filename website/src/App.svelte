@@ -26,9 +26,9 @@
     "Bool"
   ];
   const docs = {
-    "getting-started": "从表达式开始：输入 40 + 2 可以直接执行；使用 let 声明局部绑定；需要重新赋值时使用 let mut；if/while 条件可以使用比较表达式。",
-    tutorial: "推荐路径：表达式 -> let/let mut -> 比较/控制流 -> fn -> struct/enum -> check/run -> Playground/REPL。",
-    api: "Stage 0 API 覆盖 Int、String、Bool、module/import、fn、let/let mut、赋值、比较、return、if/while、match、struct、enum 和 std 命名空间占位。",
+    "getting-started": "从表达式开始：输入 40 + 2 可以直接执行；使用 let 声明局部绑定；需要重新赋值时使用 let mut；if/while 条件可以使用比较和布尔逻辑表达式。",
+    tutorial: "推荐路径：表达式 -> let/let mut -> 比较/布尔逻辑/控制流 -> fn -> struct/enum -> check/run -> Playground/REPL。",
+    api: "Stage 0 API 覆盖 Int、String、Bool、module/import、fn、let/let mut、赋值、比较、布尔逻辑、return、if/while、match、struct、enum 和 std 命名空间占位。",
     std: "std 是标准库命名空间占位。当前可用 import std.io; 验证 import 语法，具体 IO API 后续接入。",
     playground: "Playground 通过 zeta.wasm 运行真实编译器前端，支持 AST、Check 和 Run。",
     module: "module 声明当前源码模块，例如 module demo.core;",
@@ -36,14 +36,14 @@
     fn: "fn 声明函数，例如 fn main() -> Int { return 42; }",
     let: "let 声明局部绑定，例如 let answer: Int = 40 + 2; 需要重新赋值时写 let mut answer: Int = 40;",
     mut: "mut 标记可变局部绑定，之后可以执行 answer = answer + 2;",
-    if: "if 使用 Bool 条件分支，例如 if count == 3 { return 42; }",
-    while: "while 使用 Bool 条件循环，例如 while count < 3 { count = count + 1; }",
+    if: "if 使用 Bool 条件分支，例如 if ready && !done { return 42; }",
+    while: "while 使用 Bool 条件循环，例如 while count < 3 && ready { count = count + 1; }",
     match: "match 对简单模式分支。",
     struct: "struct 声明记录类型。",
     enum: "enum 声明标签集合。",
     Int: "Int 是当前 Stage 0 的整数标量类型。",
     String: "String 是当前 Stage 0 的字符串标量类型。",
-    Bool: "Bool 是 if/while 条件使用的布尔类型。"
+    Bool: "Bool 是 if/while 条件使用的布尔类型；&&、||、! 会组合或取反 Bool。"
   };
 
   const navItems = [
@@ -63,7 +63,8 @@ export fn main() -> Int {
   while count < 3 {
     count = count + 1;
   }
-  if count == 3 {
+  let done: Bool = false;
+  if count == 3 && !done {
     return 42;
   }
   return 0;
@@ -107,12 +108,14 @@ export fn main() -> Int {
   }
 
   function highlightCode(value) {
-    return escapeHtml(value).replace(/(:[a-z-]+|"(?:[^"\\]|\\.)*"|\b[A-Za-z_][A-Za-z0-9_]*\b|\b\d+\b)/g, (part) => {
+    return escapeHtml(value).replace(/(&amp;&amp;|\|\||==|!=|&lt;=|&gt;=|-&gt;|[=!&lt;&gt;+*/:-]|:[a-z-]+|"(?:[^"\\]|\\.)*"|\b[A-Za-z_][A-Za-z0-9_]*\b|\b\d+\b)/g, (part) => {
       if (commands.includes(part)) return `<span class="tok-command">${part}</span>`;
       if (keywords.has(part)) return `<span class="tok-keyword">${part}</span>`;
       if (types.has(part)) return `<span class="tok-type">${part}</span>`;
+      if (part === "true" || part === "false") return `<span class="tok-bool">${part}</span>`;
       if (/^"/.test(part)) return `<span class="tok-string">${part}</span>`;
       if (/^\d+$/.test(part)) return `<span class="tok-number">${part}</span>`;
+      if (/^(&amp;&amp;|\|\||==|!=|&lt;=|&gt;=|-&gt;|[=!&lt;&gt;+*/:-])$/.test(part)) return `<span class="tok-operator">${part}</span>`;
       return part;
     });
   }
@@ -184,11 +187,11 @@ export fn main() -> Int {
   }
 
   function replExamples() {
-    return ["40 + 2", "1 + 1 == 2", "let mut count: Int = 0;", "count = count + 1;", "fn main() -> Int { if 2 >= 1 { return 42; } return 0; }", "module demo.core;", ":doc while"].join("\n");
+    return ["40 + 2", "1 + 1 == 2", "true && !false", "let mut count: Int = 0;", "count = count + 1;", "fn main() -> Int { if true && !false { return 42; } return 0; }", "module demo.core;", ":doc Bool"].join("\n");
   }
 
   function replApi() {
-    return "Zeta Stage 0 API\nInt/String/Bool\nmodule/import/fn/let/let mut/assignment/comparison/return/if/while/match/struct/enum\nstd: 标准库命名空间占位，当前示例 import std.io;";
+    return "Zeta Stage 0 API\nInt/String/Bool\nmodule/import/fn/let/let mut/assignment/comparison/boolean logic/return/if/while/match/struct/enum\nstd: 标准库命名空间占位，当前示例 import std.io;";
   }
 
   async function submitRepl() {
@@ -227,6 +230,9 @@ export fn main() -> Int {
     }
     if (input.endsWith(";")) {
       return `fn main() {\n  ${input}\n}`;
+    }
+    if (/\b(?:true|false)\b|&&|\|\||!|==|!=|<=|>=|<|>/.test(input)) {
+      return `fn main() -> Bool {\n  return ${input};\n}`;
     }
     return `fn main() -> Int {\n  return ${input};\n}`;
   }

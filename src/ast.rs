@@ -124,6 +124,11 @@ pub enum Expr {
         right: Box<Expr>,
         span: Span,
     },
+    Unary {
+        op: UnaryOp,
+        expr: Box<Expr>,
+        span: Span,
+    },
     Call {
         callee: String,
         callee_span: Span,
@@ -138,12 +143,19 @@ pub enum BinaryOp {
     Sub,
     Mul,
     Div,
+    And,
+    Or,
     Eq,
     NotEq,
     Lt,
     Lte,
     Gt,
     Gte,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOp {
+    Not,
 }
 
 impl Module {
@@ -308,6 +320,7 @@ impl Expr {
             | Expr::String { span, .. }
             | Expr::Bool { span, .. }
             | Expr::Binary { span, .. }
+            | Expr::Unary { span, .. }
             | Expr::Call { span, .. } => *span,
         }
     }
@@ -326,6 +339,10 @@ impl Expr {
                 left.dump(indent + 1, out);
                 right.dump(indent + 1, out);
             }
+            Expr::Unary { op, expr, .. } => {
+                out.push_str(&format!("{pad}Unary op={}\n", op.as_str()));
+                expr.dump(indent + 1, out);
+            }
             Expr::Call { callee, args, .. } => {
                 out.push_str(&format!("{pad}Call callee={callee}\n"));
                 for arg in args {
@@ -343,12 +360,22 @@ impl BinaryOp {
             BinaryOp::Sub => "sub",
             BinaryOp::Mul => "mul",
             BinaryOp::Div => "div",
+            BinaryOp::And => "and",
+            BinaryOp::Or => "or",
             BinaryOp::Eq => "eq",
             BinaryOp::NotEq => "not_eq",
             BinaryOp::Lt => "lt",
             BinaryOp::Lte => "lte",
             BinaryOp::Gt => "gt",
             BinaryOp::Gte => "gte",
+        }
+    }
+}
+
+impl UnaryOp {
+    fn as_str(self) -> &'static str {
+        match self {
+            UnaryOp::Not => "not",
         }
     }
 }

@@ -162,6 +162,10 @@ impl reedline::Highlighter for ZetaHighlighter {
                 nu_ansi_term::Color::LightPurple.bold()
             } else if is_command(part.trim) {
                 nu_ansi_term::Color::LightYellow.bold()
+            } else if is_bool_literal(part.trim) {
+                nu_ansi_term::Color::LightGreen.bold()
+            } else if is_operator_part(part.text.trim()) {
+                nu_ansi_term::Color::LightMagenta.bold()
             } else {
                 nu_ansi_term::Style::new()
             };
@@ -300,6 +304,19 @@ fn is_keyword(value: &str) -> bool {
 #[cfg(feature = "repl-rich")]
 fn is_type(value: &str) -> bool {
     matches!(value, "Int" | "String" | "Bool")
+}
+
+#[cfg(feature = "repl-rich")]
+fn is_bool_literal(value: &str) -> bool {
+    matches!(value, "true" | "false")
+}
+
+#[cfg(feature = "repl-rich")]
+fn is_operator_part(value: &str) -> bool {
+    matches!(
+        value,
+        "&&" | "||" | "!" | "==" | "!=" | "<" | "<=" | ">" | ">=" | "=" | "+" | "-" | "*" | "/"
+    )
 }
 
 #[cfg(feature = "repl-rich")]

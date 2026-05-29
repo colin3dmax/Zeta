@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, Function, Item, Module, Stmt};
+use crate::ast::{BinaryOp, Expr, Function, Item, Module, Stmt, UnaryOp};
 use crate::diagnostic::{Diagnostic, Span};
 use crate::mir::{self, MirExpr, MirFunction, MirStmt, Program};
 use std::collections::HashMap;
@@ -224,10 +224,10 @@ impl MirRuntime {
             }),
             MirExpr::String(value) => Ok(Value::String(value.clone())),
             MirExpr::Bool(value) => Ok(Value::Bool(*value)),
-            MirExpr::Binary { op, left, right } => {
-                let left = self.eval_expr(left, locals)?;
-                let right = self.eval_expr(right, locals)?;
-                eval_binary(*op, left, right)
+            MirExpr::Binary { op, left, right } => self.eval_binary_expr(*op, left, right, locals),
+            MirExpr::Unary { op, expr } => {
+                let value = self.eval_expr(expr, locals)?;
+                eval_unary(*op, value)
             }
             MirExpr::Call { callee, args } => {
                 let Some(function) = self.functions.get(callee).cloned() else {
@@ -254,6 +254,42 @@ impl MirRuntime {
                     Control::Return(value) => Ok(value),
                     Control::Continue => Ok(Value::Unit),
                 }
+            }
+        }
+    }
+
+    fn eval_binary_expr(
+        &mut self,
+        op: BinaryOp,
+        left: &MirExpr,
+        right: &MirExpr,
+        locals: &HashMap<String, Value>,
+    ) -> Result<Value, Diagnostic> {
+        match op {
+            BinaryOp::And => {
+                let left = expect_bool(self.eval_expr(left, locals)?, "RUNTIME_LOGICAL_OPERAND")?;
+                if !left {
+                    return Ok(Value::Bool(false));
+                }
+                Ok(Value::Bool(expect_bool(
+                    self.eval_expr(right, locals)?,
+                    "RUNTIME_LOGICAL_OPERAND",
+                )?))
+            }
+            BinaryOp::Or => {
+                let left = expect_bool(self.eval_expr(left, locals)?, "RUNTIME_LOGICAL_OPERAND")?;
+                if left {
+                    return Ok(Value::Bool(true));
+                }
+                Ok(Value::Bool(expect_bool(
+                    self.eval_expr(right, locals)?,
+                    "RUNTIME_LOGICAL_OPERAND",
+                )?))
+            }
+            _ => {
+                let left = self.eval_expr(left, locals)?;
+                let right = self.eval_expr(right, locals)?;
+                eval_binary(op, left, right)
             }
         }
     }
@@ -384,10 +420,10 @@ impl Runtime {
             Expr::Bool { value, .. } => Ok(Value::Bool(*value)),
             Expr::Binary {
                 op, left, right, ..
-            } => {
-                let left = self.eval_expr(left, locals)?;
-                let right = self.eval_expr(right, locals)?;
-                eval_binary(*op, left, right)
+            } => self.eval_binary_expr(*op, left, right, locals),
+            Expr::Unary { op, expr, .. } => {
+                let value = self.eval_expr(expr, locals)?;
+                eval_unary(*op, value)
             }
             Expr::Call { callee, args, .. } => {
                 let Some(function) = self.functions.get(callee).cloned() else {
@@ -417,6 +453,42 @@ impl Runtime {
             }
         }
     }
+
+    fn eval_binary_expr(
+        &mut self,
+        op: BinaryOp,
+        left: &Expr,
+        right: &Expr,
+        locals: &HashMap<String, Value>,
+    ) -> Result<Value, Diagnostic> {
+        match op {
+            BinaryOp::And => {
+                let left = expect_bool(self.eval_expr(left, locals)?, "RUNTIME_LOGICAL_OPERAND")?;
+                if !left {
+                    return Ok(Value::Bool(false));
+                }
+                Ok(Value::Bool(expect_bool(
+                    self.eval_expr(right, locals)?,
+                    "RUNTIME_LOGICAL_OPERAND",
+                )?))
+            }
+            BinaryOp::Or => {
+                let left = expect_bool(self.eval_expr(left, locals)?, "RUNTIME_LOGICAL_OPERAND")?;
+                if left {
+                    return Ok(Value::Bool(true));
+                }
+                Ok(Value::Bool(expect_bool(
+                    self.eval_expr(right, locals)?,
+                    "RUNTIME_LOGICAL_OPERAND",
+                )?))
+            }
+            _ => {
+                let left = self.eval_expr(left, locals)?;
+                let right = self.eval_expr(right, locals)?;
+                eval_binary(op, left, right)
+            }
+        }
+    }
 }
 
 enum Control {
@@ -428,6 +500,15 @@ fn eval_binary(op: BinaryOp, left: Value, right: Value) -> Result<Value, Diagnos
     match op {
         BinaryOp::Eq => Ok(Value::Bool(left == right)),
         BinaryOp::NotEq => Ok(Value::Bool(left != right)),
+        BinaryOp::And | BinaryOp::Or => {
+            let left = expect_bool(left, "RUNTIME_LOGICAL_OPERAND")?;
+            let right = expect_bool(right, "RUNTIME_LOGICAL_OPERAND")?;
+            match op {
+                BinaryOp::And => Ok(Value::Bool(left && right)),
+                BinaryOp::Or => Ok(Value::Bool(left || right)),
+                _ => unreachable!(),
+            }
+        }
         BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
             let (Value::Int(left), Value::Int(right)) = (left, right) else {
                 return Err(runtime_error(
@@ -465,6 +546,19 @@ fn eval_binary(op: BinaryOp, left: Value, right: Value) -> Result<Value, Diagnos
             }
         }
     }
+}
+
+fn eval_unary(op: UnaryOp, value: Value) -> Result<Value, Diagnostic> {
+    match op {
+        UnaryOp::Not => Ok(Value::Bool(!expect_bool(value, "RUNTIME_UNARY_OPERAND")?)),
+    }
+}
+
+fn expect_bool(value: Value, code: &'static str) -> Result<bool, Diagnostic> {
+    let Value::Bool(value) = value else {
+        return Err(runtime_error(code, "operand must evaluate to Bool"));
+    };
+    Ok(value)
 }
 
 fn runtime_error(code: &'static str, message: impl Into<String>) -> Diagnostic {

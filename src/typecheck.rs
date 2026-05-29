@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, Function, Item, Module, Stmt};
+use crate::ast::{BinaryOp, Expr, Function, Item, Module, Stmt, UnaryOp};
 use crate::diagnostic::{Diagnostic, Span};
 use std::collections::HashMap;
 
@@ -258,6 +258,23 @@ fn infer_expr(
                     );
                     Type::Int
                 }
+                BinaryOp::And | BinaryOp::Or => {
+                    expect_type(
+                        &left_type,
+                        &Type::Bool,
+                        "TYPE_LOGICAL_OPERAND",
+                        left.span(),
+                        diagnostics,
+                    );
+                    expect_type(
+                        &right_type,
+                        &Type::Bool,
+                        "TYPE_LOGICAL_OPERAND",
+                        right.span(),
+                        diagnostics,
+                    );
+                    Type::Bool
+                }
                 BinaryOp::Eq | BinaryOp::NotEq => {
                     expect_type(
                         &right_type,
@@ -281,6 +298,21 @@ fn infer_expr(
                         &Type::Int,
                         "TYPE_ORDERING_OPERAND",
                         right.span(),
+                        diagnostics,
+                    );
+                    Type::Bool
+                }
+            }
+        }
+        Expr::Unary { op, expr, .. } => {
+            let expr_type = infer_expr(expr, locals, functions, diagnostics);
+            match op {
+                UnaryOp::Not => {
+                    expect_type(
+                        &expr_type,
+                        &Type::Bool,
+                        "TYPE_UNARY_OPERAND",
+                        expr.span(),
                         diagnostics,
                     );
                     Type::Bool

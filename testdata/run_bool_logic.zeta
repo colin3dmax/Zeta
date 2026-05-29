@@ -1,0 +1,11 @@
+fn main() -> Int {
+  let ready: Bool = true;
+  let done: Bool = false;
+  if ready && !done {
+    return 42;
+  }
+  if done || false {
+    return 1;
+  }
+  return 0;
+}

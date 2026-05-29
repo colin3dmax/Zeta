@@ -64,6 +64,22 @@ fn main() -> Bool {
 }
 
 #[test]
+fn dumps_boolean_logic_expressions() {
+    let dump = zeta::dump_ast(
+        r#"
+fn main() -> Bool {
+  return true && !false || false;
+}
+"#,
+    )
+    .expect("source should parse");
+
+    assert!(dump.contains("Binary op=or"));
+    assert!(dump.contains("Binary op=and"));
+    assert!(dump.contains("Unary op=not"));
+}
+
+#[test]
 fn repl_parses_interactive_lines() {
     let binary = env!("CARGO_BIN_EXE_zeta");
     let mut child = std::process::Command::new(binary)

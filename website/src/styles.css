@@ -358,6 +358,16 @@ textarea {
   color: #7c3aed;
 }
 
+.tok-operator {
+  font-weight: 800;
+  color: #be185d;
+}
+
+.tok-bool {
+  font-weight: 800;
+  color: #047857;
+}
+
 .tok-string {
   color: #0f7a3a;
 }
@@ -625,6 +635,16 @@ textarea {
 
 .terminal-body .tok-type {
   color: #c4b5fd;
+  text-decoration: none;
+}
+
+.terminal-body .tok-operator {
+  color: #f0abfc;
+  text-decoration: none;
+}
+
+.terminal-body .tok-bool {
+  color: #86efac;
   text-decoration: none;
 }
 

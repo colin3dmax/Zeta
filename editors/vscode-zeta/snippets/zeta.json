@@ -64,5 +64,14 @@
       "}"
     ],
     "description": "Loop with an Int comparison condition"
+  },
+  "if bool logic": {
+    "prefix": "ifbool",
+    "body": [
+      "if ${1:ready} && !${2:done} {",
+      "  ${0}",
+      "}"
+    ],
+    "description": "Branch with a Bool logic condition"
   }
 }

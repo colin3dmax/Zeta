@@ -192,6 +192,9 @@ fn check_expr(
             check_expr(left, locals, functions, function_name, diagnostics);
             check_expr(right, locals, functions, function_name, diagnostics);
         }
+        Expr::Unary { expr, .. } => {
+            check_expr(expr, locals, functions, function_name, diagnostics);
+        }
         Expr::Call {
             callee,
             callee_span,

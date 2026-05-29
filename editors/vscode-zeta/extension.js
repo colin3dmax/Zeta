@@ -6,14 +6,14 @@ const TOPICS = [
   ["fn", "Declare a function.", "fn main(name: String) -> Int { return 0; }"],
   ["let", "Declare a local binding with an optional type annotation. Use let mut for reassignment.", "let mut answer: Int = 40;"],
   ["mut", "Mark a local binding as mutable so later assignment is allowed.", "let mut answer: Int = 40;\nanswer = answer + 2;"],
-  ["if", "Branch on a Bool condition. Comparisons return Bool.", "if count == 3 { return 42; } else { return 0; }"],
-  ["while", "Loop while a Bool condition is true. Comparisons are valid conditions.", "while count < 3 { count = count + 1; }"],
+  ["if", "Branch on a Bool condition. Comparisons and boolean logic return Bool.", "if ready && !done { return 42; } else { return 0; }"],
+  ["while", "Loop while a Bool condition is true. Comparisons and boolean logic are valid conditions.", "while count < 3 && ready { count = count + 1; }"],
   ["match", "Match a value against simple patterns.", "match value { 0 -> { return 0; }, _ -> { return value; }, }"],
   ["struct", "Declare a record type.", "struct User { name: String, age: Int, }"],
   ["enum", "Declare a tagged set of variants.", "enum ResultTag { Ok, Err, }"],
   ["Int", "Integer scalar type currently supported by the Stage 0 checker.", "let value: Int = 1 + 2;"],
   ["String", "String scalar type currently supported by the Stage 0 checker.", "let name: String = \"zeta\";"],
-  ["Bool", "Boolean scalar type used by if and while conditions.", "let ready: Bool = 1 + 1 == 2;"]
+  ["Bool", "Boolean scalar type used by if and while conditions.", "let ready: Bool = 1 + 1 == 2 && !false;"]
 ];
 
 function activate(context) {
