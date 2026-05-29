@@ -207,12 +207,63 @@
     </table>
 
     <h2>最小 Compiler Corpus</h2>
+    <p>Compiler corpus 是 Stage 0 的回归边界。每个样例必须有稳定输入、预期输出或预期诊断；新增语言特性必须先补 corpus，再进入 parser、typechecker、MIR 或 backend 实现。</p>
+    <table>
+      <thead>
+        <tr>
+          <th>类别</th>
+          <th>最小样例</th>
+          <th>预期产物</th>
+          <th>阻断条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>合法语法</td>
+          <td>空文件、module/import/export、fn、let/let mut、赋值、return、if/else、while、struct、enum、match、函数调用。</td>
+          <td>AST dump 与 parser golden 文件完全一致；dump 顺序和字段名稳定。</td>
+          <td>AST dump 非确定性，或新增语法没有 golden 样例。</td>
+        </tr>
+        <tr>
+          <td>错误样例</td>
+          <td>非法 token、缺失分隔符、重复定义、未知名字、不可变赋值、类型不匹配、函数参数数量错误。</td>
+          <td>诊断包含 code、message、span；同一输入的错误顺序稳定。</td>
+          <td>诊断缺少错误码/span，或错误恢复导致后续有效 item 无法继续检查。</td>
+        </tr>
+        <tr>
+          <td>跨模块</td>
+          <td>import/export、模块路径、同名符号、不可见符号、跨文件函数调用。</td>
+          <td>name resolution golden 记录解析成功项和失败诊断；跨模块符号 id 稳定。</td>
+          <td>resolver 依赖文件遍历顺序，或跨模块错误无法定位到源文件。</td>
+        </tr>
+        <tr>
+          <td>IR dump</td>
+          <td>函数调用、局部变量、赋值、if/while lower、match lower、早返回、基础算术。</td>
+          <td>HIR/MIR dump 可读、可排序、无内存地址；verifier 通过。</td>
+          <td>dump 包含随机 id，CFG 缺少 terminator，或变量初始化状态不完整。</td>
+        </tr>
+        <tr>
+          <td>执行 smoke</td>
+          <td>无参数 main、整数算术、函数调用、let mut、赋值、if/while。</td>
+          <td>MIR interpreter、WASM/WASI smoke、LLVM native smoke 对同一 corpus 输出一致。</td>
+          <td>任一 backend 行为与 MIR interpreter 不一致且没有规范化解释。</td>
+        </tr>
+        <tr>
+          <td>自举模块</td>
+          <td>token、span、diagnostic、AST node、parser result、symbol table 的 Zeta 子集实现。</td>
+          <td>Stage 0 可编译这些模块，并与 Rust 宿主实现的公开 dump/诊断契约一致。</td>
+          <td>Zeta 子集需要 deferred 特性才能表达编译器核心数据结构。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Golden 测试格式</h2>
     <ul>
-      <li>语法样例：空文件、模块、函数、表达式、控制流、struct、enum、match。</li>
-      <li>错误样例：非法 token、缺失分隔符、重复定义、未解析符号、类型不匹配。</li>
-      <li>跨模块样例：import/export、命名冲突、可见性错误。</li>
-      <li>IR 样例：函数调用、短路逻辑、结构体构造、enum 分支、早返回。</li>
-      <li>自举样例：lexer、token、span、diagnostic、AST 节点等编译器自身子模块。</li>
+      <li>输入文件放入 <code>testdata/</code> 或后续 <code>corpus/</code>，按 <code>valid</code>、<code>invalid</code>、<code>ir</code>、<code>run</code> 分组。</li>
+      <li>AST/HIR/MIR golden 使用纯文本，禁止包含内存地址、hash map 原始遍历顺序、系统路径或本地时间。</li>
+      <li>诊断 golden 至少包含 <code>code</code>、<code>message</code>、<code>file</code>、<code>span.start</code>、<code>span.end</code>；message 可以调整，但 code 和 span 变化必须显式 review。</li>
+      <li>运行 golden 使用 stdout/stderr/exit code 三元组；backend smoke 必须记录 target 和 runtime tier。</li>
+      <li>CI 至少执行 parser golden、resolver/typecheck 诊断 golden、run smoke 和 docs link check；backend 不稳定时只能降级为非阻断 nightly，不得伪装为通过。</li>
     </ul>
 
     <h2>主要风险</h2>
