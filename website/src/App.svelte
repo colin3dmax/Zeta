@@ -246,15 +246,16 @@ export fn answer() -> Int {
   }
 
   function highlightCode(value) {
-    return escapeHtml(value).replace(/(&amp;&amp;|\|\||==|!=|&lt;=|&gt;=|-&gt;|[=!&lt;&gt;+*/:-]|:[a-z-]+|"(?:[^"\\]|\\.)*"|\b[A-Za-z_][A-Za-z0-9_]*\b|\b\d+\b)/g, (part) => {
-      if (commands.includes(part)) return `<span class="tok-command">${part}</span>`;
-      if (keywords.has(part)) return `<span class="tok-keyword">${part}</span>`;
-      if (types.has(part)) return `<span class="tok-type">${part}</span>`;
-      if (part === "true" || part === "false") return `<span class="tok-bool">${part}</span>`;
-      if (/^"/.test(part)) return `<span class="tok-string">${part}</span>`;
-      if (/^\d+$/.test(part)) return `<span class="tok-number">${part}</span>`;
-      if (/^(&amp;&amp;|\|\||==|!=|&lt;=|&gt;=|-&gt;|[=!&lt;&gt;+*/:-])$/.test(part)) return `<span class="tok-operator">${part}</span>`;
-      return part;
+    return value.replace(/(&&|\|\||==|!=|<=|>=|->|:[a-z-]+|"(?:[^"\\]|\\.)*"|\b[A-Za-z_][A-Za-z0-9_]*\b|\b\d+\b|[=!<>+*/:-])/g, (part) => {
+      const escaped = escapeHtml(part);
+      if (commands.includes(part)) return `<span class="tok-command">${escaped}</span>`;
+      if (keywords.has(part)) return `<span class="tok-keyword">${escaped}</span>`;
+      if (types.has(part)) return `<span class="tok-type">${escaped}</span>`;
+      if (part === "true" || part === "false") return `<span class="tok-bool">${escaped}</span>`;
+      if (/^"/.test(part)) return `<span class="tok-string">${escaped}</span>`;
+      if (/^\d+$/.test(part)) return `<span class="tok-number">${escaped}</span>`;
+      if (/^(&&|\|\||==|!=|<=|>=|->|[=!<>+*/:-])$/.test(part)) return `<span class="tok-operator">${escaped}</span>`;
+      return escaped;
     });
   }
 

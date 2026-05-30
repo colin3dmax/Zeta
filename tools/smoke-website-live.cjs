@@ -56,6 +56,11 @@ const publicDocs = [
   await page.waitForFunction(() => document.body.innerText.includes("true"));
 
   await page.getByRole("link", { name: "Playground", exact: true }).click();
+  await page.locator(".toolbar.examples").getByRole("button", { name: "控制流", exact: true }).click();
+  const previewText = await page.locator(".editor-highlight").innerText();
+  const escapedPreviewText = await page.locator(".editor-highlight").evaluate((node) => node.textContent || "");
+  const letKeywordCount = await page.locator(".editor-highlight .tok-keyword").filter({ hasText: /^let$/ }).count();
+  const ltOperatorCount = await page.locator(".editor-highlight .tok-operator").filter({ hasText: "<" }).count();
   await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "Run", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
 
@@ -107,12 +112,20 @@ const publicDocs = [
       loadedExample.includes("fn add") &&
       operatorCount > 0 &&
       boolCount > 0 &&
+      previewText.includes("while count < 3") &&
+      !escapedPreviewText.includes("&lt;") &&
+      letKeywordCount > 0 &&
+      ltOperatorCount > 0 &&
       docChecks.every((doc) => doc.ok),
     url: baseUrl,
     wasm: wasmName,
     loadedExample: loadedExample.includes("fn add"),
     replOperatorTokens: operatorCount,
     replBoolTokens: boolCount,
+    previewHasRawLessThan: previewText.includes("while count < 3"),
+    previewLeaksHtmlEntity: escapedPreviewText.includes("&lt;"),
+    previewLetKeywordTokens: letKeywordCount,
+    previewLessThanOperatorTokens: ltOperatorCount,
     featureTestsPassed,
     docChecks,
     consoleErrors,
