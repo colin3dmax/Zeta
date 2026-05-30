@@ -92,6 +92,13 @@ pub struct MatchArm {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructExprField {
+    pub name: String,
+    pub name_span: Span,
+    pub value: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pattern {
     Name(String),
     Int(String),
@@ -133,6 +140,18 @@ pub enum Expr {
         callee: String,
         callee_span: Span,
         args: Vec<Expr>,
+        span: Span,
+    },
+    StructLiteral {
+        ty: String,
+        ty_span: Span,
+        fields: Vec<StructExprField>,
+        span: Span,
+    },
+    FieldAccess {
+        base: Box<Expr>,
+        field: String,
+        field_span: Span,
         span: Span,
     },
 }
@@ -321,7 +340,9 @@ impl Expr {
             | Expr::Bool { span, .. }
             | Expr::Binary { span, .. }
             | Expr::Unary { span, .. }
-            | Expr::Call { span, .. } => *span,
+            | Expr::Call { span, .. }
+            | Expr::StructLiteral { span, .. }
+            | Expr::FieldAccess { span, .. } => *span,
         }
     }
 
@@ -348,6 +369,17 @@ impl Expr {
                 for arg in args {
                     arg.dump(indent + 1, out);
                 }
+            }
+            Expr::StructLiteral { ty, fields, .. } => {
+                out.push_str(&format!("{pad}StructLiteral type={ty}\n"));
+                for field in fields {
+                    out.push_str(&format!("{pad}  FieldInit name={}\n", field.name));
+                    field.value.dump(indent + 2, out);
+                }
+            }
+            Expr::FieldAccess { base, field, .. } => {
+                out.push_str(&format!("{pad}FieldAccess field={field}\n"));
+                base.dump(indent + 1, out);
             }
         }
     }

@@ -151,6 +151,17 @@ fn dump_expr(expr: &Expr, indent: usize, out: &mut String) {
                 dump_expr(arg, indent + 1, out);
             }
         }
+        Expr::StructLiteral { ty, fields, .. } => {
+            out.push_str(&format!("{pad}struct_literal {ty}\n"));
+            for field in fields {
+                out.push_str(&format!("{pad}  field {}\n", field.name));
+                dump_expr(&field.value, indent + 2, out);
+            }
+        }
+        Expr::FieldAccess { base, field, .. } => {
+            out.push_str(&format!("{pad}field_access {field}\n"));
+            dump_expr(base, indent + 1, out);
+        }
     }
 }
 

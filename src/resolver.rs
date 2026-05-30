@@ -212,6 +212,14 @@ fn check_expr(
                 check_expr(arg, locals, functions, function_name, diagnostics);
             }
         }
+        Expr::StructLiteral { fields, .. } => {
+            for field in fields {
+                check_expr(&field.value, locals, functions, function_name, diagnostics);
+            }
+        }
+        Expr::FieldAccess { base, .. } => {
+            check_expr(base, locals, functions, function_name, diagnostics);
+        }
         Expr::Int { .. } | Expr::String { .. } | Expr::Bool { .. } => {}
     }
 }

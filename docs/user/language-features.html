@@ -85,7 +85,16 @@ fn main() -&gt; Int {
     <p><a class="button secondary" href="../../?example=control#playground">在 Playground 测试控制流</a></p>
 
     <h2 id="data-declarations">struct、enum 和 match</h2>
-    <p><code>match</code> 当前可以对 <code>Int</code>、<code>String</code>、<code>Bool</code> 和 <code>_</code> 通配模式执行分支。<code>struct</code> 和 <code>enum</code> 当前支持 parse、AST dump 和 HIR dump，用于冻结数据建模语法；结构体值、字段访问和枚举变体值会在后续阶段接入。</p>
+    <p><code>struct</code> 当前支持结构体字面量和字段访问，适合先表达稳定记录数据。<code>match</code> 当前可以对 <code>Int</code>、<code>String</code>、<code>Bool</code> 和 <code>_</code> 通配模式执行分支。<code>enum</code> 当前支持 parse、AST dump 和 HIR dump；枚举变体值会在后续阶段接入。</p>
+    <pre><code>struct User {
+  name: String,
+  age: Int,
+}
+
+fn main() -&gt; Int {
+  let user: User = User { name: "Ada", age: 42 };
+  return user.age;
+}</code></pre>
     <pre><code>fn main() -&gt; Int {
   let value: Int = 2;
   match value {
@@ -106,6 +115,7 @@ enum ResultTag {
   Ok,
   Err,
 }</code></pre>
+    <p><a class="button secondary" href="../../?example=struct#playground">在 Playground 运行 struct 示例</a></p>
     <p><a class="button secondary" href="../../?example=match#playground">在 Playground 运行 match 示例</a></p>
     <p><a class="button secondary" href="../../?example=data#playground">在 Playground 查看数据声明 AST</a></p>
 
@@ -113,7 +123,7 @@ enum ResultTag {
     <p>CLI 提供 <code>ast-dump</code>、<code>hir-dump</code>、<code>mir-dump</code>、<code>check</code>、<code>run</code> 和 <code>repl</code>。REPL 支持表达式执行、语句执行、文档查询、补全和输入着色。</p>
     <pre><code>zeta ast-dump testdata/core_items.zeta
 zeta check testdata/core_items.zeta
-zeta run testdata/run_match.zeta
+zeta run testdata/run_struct.zeta
 zeta repl</code></pre>
 
     <h2>在线测试</h2>

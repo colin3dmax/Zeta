@@ -107,6 +107,25 @@ fn main() {
 }
 
 #[test]
+fn check_rejects_struct_field_type_mismatch() {
+    let source = r#"
+struct User {
+  name: String,
+  age: Int,
+}
+
+fn main() -> Int {
+  let user: User = User { name: "Ada", age: "old" };
+  return user.age;
+}
+"#;
+    let diagnostics =
+        zeta::check_source(source).expect_err("String field value for Int field should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_STRUCT_FIELD");
+    assert_eq!(diagnostics[0].span, span_of(source, "\"old\""));
+}
+
+#[test]
 fn cli_check_renders_line_column_and_source_snippet() {
     let source = r#"
 fn main() {

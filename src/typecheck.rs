@@ -14,9 +14,10 @@ enum Type {
 pub fn check(module: &Module) -> Result<(), Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
     let functions = function_signatures(module);
+    let structs = struct_types(module);
     for item in &module.items {
         if let Item::Function(function) = item {
-            check_function(function, &functions, &mut diagnostics);
+            check_function(function, &functions, &structs, &mut diagnostics);
         }
     }
 
@@ -30,6 +31,7 @@ pub fn check(module: &Module) -> Result<(), Vec<Diagnostic>> {
 fn check_function(
     function: &Function,
     functions: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let mut locals = HashMap::new();
@@ -51,6 +53,7 @@ fn check_function(
         &function.body,
         &mut locals,
         functions,
+        structs,
         &return_type,
         &function.name,
         diagnostics,
@@ -61,6 +64,7 @@ fn check_stmts(
     stmts: &[Stmt],
     locals: &mut HashMap<String, Binding>,
     functions: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
     return_type: &Type,
     function_name: &str,
     diagnostics: &mut Vec<Diagnostic>,
@@ -74,7 +78,7 @@ fn check_stmts(
                 value,
                 ..
             } => {
-                let value_type = infer_expr(value, locals, functions, diagnostics);
+                let value_type = infer_expr(value, locals, functions, structs, diagnostics);
                 let declared_type = ty.as_deref().map(parse_type);
                 if let Some(declared_type) = declared_type {
                     expect_type(
@@ -106,7 +110,7 @@ fn check_stmts(
                 name_span,
                 value,
             } => {
-                let value_type = infer_expr(value, locals, functions, diagnostics);
+                let value_type = infer_expr(value, locals, functions, structs, diagnostics);
                 match locals.get(name) {
                     Some(binding) if binding.mutable => {
                         expect_type(
@@ -136,7 +140,7 @@ fn check_stmts(
                 then_body,
                 else_body,
             } => {
-                let condition_type = infer_expr(condition, locals, functions, diagnostics);
+                let condition_type = infer_expr(condition, locals, functions, structs, diagnostics);
                 expect_type(
                     &condition_type,
                     &Type::Bool,
@@ -149,6 +153,7 @@ fn check_stmts(
                     then_body,
                     &mut then_locals,
                     functions,
+                    structs,
                     return_type,
                     function_name,
                     diagnostics,
@@ -158,13 +163,14 @@ fn check_stmts(
                     else_body,
                     &mut else_locals,
                     functions,
+                    structs,
                     return_type,
                     function_name,
                     diagnostics,
                 );
             }
             Stmt::While { condition, body } => {
-                let condition_type = infer_expr(condition, locals, functions, diagnostics);
+                let condition_type = infer_expr(condition, locals, functions, structs, diagnostics);
                 expect_type(
                     &condition_type,
                     &Type::Bool,
@@ -177,13 +183,14 @@ fn check_stmts(
                     body,
                     &mut loop_locals,
                     functions,
+                    structs,
                     return_type,
                     function_name,
                     diagnostics,
                 );
             }
             Stmt::Match { value, arms } => {
-                let value_type = infer_expr(value, locals, functions, diagnostics);
+                let value_type = infer_expr(value, locals, functions, structs, diagnostics);
                 for arm in arms {
                     check_pattern(&arm.pattern, &value_type, value.span(), diagnostics);
                     let mut arm_locals = locals.clone();
@@ -191,6 +198,7 @@ fn check_stmts(
                         &arm.body,
                         &mut arm_locals,
                         functions,
+                        structs,
                         return_type,
                         function_name,
                         diagnostics,
@@ -198,7 +206,7 @@ fn check_stmts(
                 }
             }
             Stmt::Return(Some(value)) => {
-                let value_type = infer_expr(value, locals, functions, diagnostics);
+                let value_type = infer_expr(value, locals, functions, structs, diagnostics);
                 let code = if function_name.is_empty() {
                     "TYPE_RETURN_MISMATCH"
                 } else {
@@ -216,7 +224,7 @@ fn check_stmts(
                 );
             }
             Stmt::Expr(value) => {
-                let _ = infer_expr(value, locals, functions, diagnostics);
+                let _ = infer_expr(value, locals, functions, structs, diagnostics);
             }
         }
     }
@@ -258,6 +266,7 @@ fn infer_expr(
     expr: &Expr,
     locals: &HashMap<String, Binding>,
     functions: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Type {
     match expr {
@@ -271,8 +280,8 @@ fn infer_expr(
         Expr::Binary {
             op, left, right, ..
         } => {
-            let left_type = infer_expr(left, locals, functions, diagnostics);
-            let right_type = infer_expr(right, locals, functions, diagnostics);
+            let left_type = infer_expr(left, locals, functions, structs, diagnostics);
+            let right_type = infer_expr(right, locals, functions, structs, diagnostics);
             match op {
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
                     expect_type(
@@ -338,7 +347,7 @@ fn infer_expr(
             }
         }
         Expr::Unary { op, expr, .. } => {
-            let expr_type = infer_expr(expr, locals, functions, diagnostics);
+            let expr_type = infer_expr(expr, locals, functions, structs, diagnostics);
             match op {
                 UnaryOp::Not => {
                     expect_type(
@@ -374,7 +383,7 @@ fn infer_expr(
                 return signature.return_type.clone();
             }
             for (arg, expected) in args.iter().zip(&signature.params) {
-                let found = infer_expr(arg, locals, functions, diagnostics);
+                let found = infer_expr(arg, locals, functions, structs, diagnostics);
                 expect_type(
                     &found,
                     expected,
@@ -385,6 +394,94 @@ fn infer_expr(
             }
             signature.return_type.clone()
         }
+        Expr::StructLiteral {
+            ty,
+            ty_span,
+            fields,
+            ..
+        } => {
+            let Some(struct_type) = structs.get(ty) else {
+                diagnostics.push(Diagnostic::new(
+                    "TYPE_UNKNOWN_STRUCT",
+                    format!("unknown struct `{ty}`"),
+                    *ty_span,
+                ));
+                for field in fields {
+                    let _ = infer_expr(&field.value, locals, functions, structs, diagnostics);
+                }
+                return Type::Named(ty.clone());
+            };
+
+            let mut seen = HashMap::new();
+            for field in fields {
+                if seen.insert(field.name.clone(), field.name_span).is_some() {
+                    diagnostics.push(Diagnostic::new(
+                        "TYPE_DUPLICATE_FIELD",
+                        format!("duplicate field `{}` in `{ty}` literal", field.name),
+                        field.name_span,
+                    ));
+                }
+                let found = infer_expr(&field.value, locals, functions, structs, diagnostics);
+                match struct_type.fields.get(&field.name) {
+                    Some(expected) => {
+                        expect_type(
+                            &found,
+                            expected,
+                            "TYPE_STRUCT_FIELD",
+                            field.value.span(),
+                            diagnostics,
+                        );
+                    }
+                    None => diagnostics.push(Diagnostic::new(
+                        "TYPE_UNKNOWN_FIELD",
+                        format!("unknown field `{}` on struct `{ty}`", field.name),
+                        field.name_span,
+                    )),
+                }
+            }
+            for field in struct_type.fields.keys() {
+                if !seen.contains_key(field) {
+                    diagnostics.push(Diagnostic::new(
+                        "TYPE_MISSING_FIELD",
+                        format!("missing field `{field}` in `{ty}` literal"),
+                        *ty_span,
+                    ));
+                }
+            }
+            Type::Named(ty.clone())
+        }
+        Expr::FieldAccess {
+            base,
+            field,
+            field_span,
+            ..
+        } => {
+            let base_type = infer_expr(base, locals, functions, structs, diagnostics);
+            let Type::Named(struct_name) = base_type else {
+                diagnostics.push(Diagnostic::new(
+                    "TYPE_FIELD_BASE",
+                    "field access requires a struct value",
+                    base.span(),
+                ));
+                return Type::Named(field.clone());
+            };
+            let Some(struct_type) = structs.get(&struct_name) else {
+                diagnostics.push(Diagnostic::new(
+                    "TYPE_UNKNOWN_STRUCT",
+                    format!("unknown struct `{struct_name}`"),
+                    base.span(),
+                ));
+                return Type::Named(field.clone());
+            };
+            struct_type.fields.get(field).cloned().unwrap_or_else(|| {
+                diagnostics.push(Diagnostic::new(
+                    "TYPE_UNKNOWN_FIELD",
+                    format!("unknown field `{field}` on struct `{struct_name}`"),
+                    *field_span,
+                ));
+                Type::Named(field.clone())
+            })
+        }
     }
 }
 
@@ -392,6 +489,11 @@ fn infer_expr(
 struct FunctionSignature {
     params: Vec<Type>,
     return_type: Type,
+}
+
+#[derive(Debug, Clone)]
+struct StructType {
+    fields: HashMap<String, Type>,
 }
 
 #[derive(Debug, Clone)]
@@ -418,6 +520,26 @@ fn function_signatures(module: &Module) -> HashMap<String, FunctionSignature> {
                         .as_deref()
                         .map(parse_type)
                         .unwrap_or(Type::Unit),
+                },
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+fn struct_types(module: &Module) -> HashMap<String, StructType> {
+    module
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Struct(decl) => Some((
+                decl.name.clone(),
+                StructType {
+                    fields: decl
+                        .fields
+                        .iter()
+                        .map(|field| (field.name.clone(), parse_type(&field.ty)))
+                        .collect(),
                 },
             )),
             _ => None,

@@ -1,6 +1,6 @@
 use crate::ast::{
     BinaryOp, EnumDecl, Expr, Field, Function, Item, MatchArm, Module, Param, Pattern, Stmt,
-    StructDecl, UnaryOp,
+    StructDecl, StructExprField, UnaryOp,
 };
 use crate::diagnostic::{Diagnostic, Span};
 use crate::lexer::{Keyword, Symbol, Token, TokenKind};
@@ -8,11 +8,16 @@ use crate::lexer::{Keyword, Symbol, Token, TokenKind};
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    allow_struct_literals: bool,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0 }
+        Self {
+            tokens,
+            pos: 0,
+            allow_struct_literals: true,
+        }
     }
 
     pub fn parse_module(&mut self) -> Result<Module, Vec<Diagnostic>> {
@@ -193,7 +198,7 @@ impl Parser {
         }
 
         if self.consume_keyword(Keyword::If).is_some() {
-            let condition = self.parse_expr()?;
+            let condition = self.parse_expr_without_struct_literals()?;
             self.expect_symbol(Symbol::LBrace, "expected `{` after if condition")?;
             let then_body = self.parse_block_body()?;
             let else_body = if self.consume_keyword(Keyword::Else).is_some() {
@@ -210,14 +215,14 @@ impl Parser {
         }
 
         if self.consume_keyword(Keyword::While).is_some() {
-            let condition = self.parse_expr()?;
+            let condition = self.parse_expr_without_struct_literals()?;
             self.expect_symbol(Symbol::LBrace, "expected `{` after while condition")?;
             let body = self.parse_block_body()?;
             return Ok(Stmt::While { condition, body });
         }
 
         if self.consume_keyword(Keyword::Match).is_some() {
-            let value = self.parse_expr()?;
+            let value = self.parse_expr_without_struct_literals()?;
             self.expect_symbol(Symbol::LBrace, "expected `{` after match value")?;
             let mut arms = Vec::new();
             while !self.check_symbol(Symbol::RBrace) && !self.at_eof() {
@@ -303,6 +308,14 @@ impl Parser {
 
     fn parse_expr(&mut self) -> Result<Expr, Diagnostic> {
         self.parse_logical_or()
+    }
+
+    fn parse_expr_without_struct_literals(&mut self) -> Result<Expr, Diagnostic> {
+        let previous = self.allow_struct_literals;
+        self.allow_struct_literals = false;
+        let parsed = self.parse_expr();
+        self.allow_struct_literals = previous;
+        parsed
     }
 
     fn parse_logical_or(&mut self) -> Result<Expr, Diagnostic> {
@@ -425,28 +438,87 @@ impl Parser {
     fn parse_call(&mut self) -> Result<Expr, Diagnostic> {
         let mut expr = self.parse_primary()?;
         loop {
-            if self.consume_symbol(Symbol::LParen).is_none() {
-                return Ok(expr);
+            if self.consume_symbol(Symbol::LParen).is_some() {
+                let Expr::Name {
+                    name: callee,
+                    span: callee_span,
+                } = expr
+                else {
+                    return Err(self.error_here(
+                        "PARSE_EXPECTED_CALL_TARGET",
+                        "expected function name before call arguments",
+                    ));
+                };
+                let args = self.parse_call_args()?;
+                let end = self.previous_span().end;
+                expr = Expr::Call {
+                    callee,
+                    callee_span,
+                    args,
+                    span: Span::new(callee_span.start, end),
+                };
+                continue;
             }
-            let Expr::Name {
-                name: callee,
-                span: callee_span,
-            } = expr
-            else {
-                return Err(self.error_here(
-                    "PARSE_EXPECTED_CALL_TARGET",
-                    "expected function name before call arguments",
-                ));
-            };
-            let args = self.parse_call_args()?;
-            let end = self.previous_span().end;
-            expr = Expr::Call {
-                callee,
-                callee_span,
-                args,
-                span: Span::new(callee_span.start, end),
-            };
+
+            if self.allow_struct_literals
+                && matches!(expr, Expr::Name { .. })
+                && self.check_symbol(Symbol::LBrace)
+            {
+                self.expect_symbol(Symbol::LBrace, "expected `{` after struct type")?;
+                let Expr::Name { name: ty, span } = expr else {
+                    unreachable!("struct literal target was checked above");
+                };
+                let fields = self.parse_struct_expr_fields()?;
+                let end = self.previous_span().end;
+                expr = Expr::StructLiteral {
+                    ty,
+                    ty_span: span,
+                    fields,
+                    span: Span::new(span.start, end),
+                };
+                continue;
+            }
+
+            if self.consume_symbol(Symbol::Dot).is_some() {
+                let (field, field_span) =
+                    self.expect_ident_span("expected field name after `.`")?;
+                let span = Span::new(expr.span().start, field_span.end);
+                expr = Expr::FieldAccess {
+                    base: Box::new(expr),
+                    field,
+                    field_span,
+                    span,
+                };
+                continue;
+            }
+
+            return Ok(expr);
         }
+    }
+
+    fn parse_struct_expr_fields(&mut self) -> Result<Vec<StructExprField>, Diagnostic> {
+        let mut fields = Vec::new();
+        if self.consume_symbol(Symbol::RBrace).is_some() {
+            return Ok(fields);
+        }
+        loop {
+            let (name, name_span) = self.expect_ident_span("expected struct field name")?;
+            self.expect_symbol(Symbol::Colon, "expected `:` after struct field name")?;
+            let value = self.parse_expr()?;
+            fields.push(StructExprField {
+                name,
+                name_span,
+                value,
+            });
+            if self.consume_symbol(Symbol::Comma).is_none() {
+                break;
+            }
+            if self.consume_symbol(Symbol::RBrace).is_some() {
+                return Ok(fields);
+            }
+        }
+        self.expect_symbol(Symbol::RBrace, "expected `}` after struct literal fields")?;
+        Ok(fields)
     }
 
     fn parse_call_args(&mut self) -> Result<Vec<Expr>, Diagnostic> {

@@ -1,0 +1,11 @@
+MirModule
+  fn main -> Int
+    block entry
+      local user: User mutability=immutable
+      _t0 = const String "Ada"
+      _t1 = const Int 42
+      _t2 = struct User { name: _t0, age: _t1 }
+      store user, _t2
+      _t3 = load user
+      _t4 = field _t3.age
+      return _t4

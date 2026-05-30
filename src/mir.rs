@@ -76,6 +76,20 @@ pub enum MirExpr {
         callee: String,
         args: Vec<MirExpr>,
     },
+    StructLiteral {
+        ty: String,
+        fields: Vec<MirStructField>,
+    },
+    FieldAccess {
+        base: Box<MirExpr>,
+        field: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirStructField {
+    pub name: String,
+    pub value: MirExpr,
 }
 
 pub fn lower(module: &Module) -> Program {
@@ -188,6 +202,20 @@ fn lower_expr(expr: &Expr) -> MirExpr {
         Expr::Call { callee, args, .. } => MirExpr::Call {
             callee: callee.clone(),
             args: args.iter().map(lower_expr).collect(),
+        },
+        Expr::StructLiteral { ty, fields, .. } => MirExpr::StructLiteral {
+            ty: ty.clone(),
+            fields: fields
+                .iter()
+                .map(|field| MirStructField {
+                    name: field.name.clone(),
+                    value: lower_expr(&field.value),
+                })
+                .collect(),
+        },
+        Expr::FieldAccess { base, field, .. } => MirExpr::FieldAccess {
+            base: Box::new(lower_expr(base)),
+            field: field.clone(),
         },
     }
 }
@@ -338,6 +366,25 @@ impl DumpCtx {
                     "{pad}{temp} = call {callee}({})\n",
                     arg_temps.join(", ")
                 ));
+                temp
+            }
+            MirExpr::StructLiteral { ty, fields } => {
+                let mut field_temps = Vec::new();
+                for field in fields {
+                    let value_temp = self.dump_expr(&field.value, indent, out);
+                    field_temps.push(format!("{}: {}", field.name, value_temp));
+                }
+                let temp = self.temp();
+                out.push_str(&format!(
+                    "{pad}{temp} = struct {ty} {{ {} }}\n",
+                    field_temps.join(", ")
+                ));
+                temp
+            }
+            MirExpr::FieldAccess { base, field } => {
+                let base_temp = self.dump_expr(base, indent, out);
+                let temp = self.temp();
+                out.push_str(&format!("{pad}{temp} = field {base_temp}.{field}\n"));
                 temp
             }
         }

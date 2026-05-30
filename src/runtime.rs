@@ -1,7 +1,7 @@
 use crate::ast::{BinaryOp, Expr, Function, Item, Module, Pattern, Stmt, UnaryOp};
 use crate::diagnostic::{Diagnostic, Span};
 use crate::mir::{self, MirExpr, MirFunction, MirPattern, MirStmt, Program};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
 const LOOP_LIMIT: usize = 10_000;
@@ -11,6 +11,10 @@ pub enum Value {
     Int(i64),
     String(String),
     Bool(bool),
+    Struct {
+        ty: String,
+        fields: BTreeMap<String, Value>,
+    },
     Unit,
 }
 
@@ -263,6 +267,31 @@ impl MirRuntime {
                     Control::Continue => Ok(Value::Unit),
                 }
             }
+            MirExpr::StructLiteral { ty, fields } => {
+                let mut values = BTreeMap::new();
+                for field in fields {
+                    values.insert(field.name.clone(), self.eval_expr(&field.value, locals)?);
+                }
+                Ok(Value::Struct {
+                    ty: ty.clone(),
+                    fields: values,
+                })
+            }
+            MirExpr::FieldAccess { base, field } => {
+                let value = self.eval_expr(base, locals)?;
+                let Value::Struct { ty, fields } = value else {
+                    return Err(runtime_error(
+                        "RUNTIME_FIELD_BASE",
+                        "field access requires a struct value",
+                    ));
+                };
+                fields.get(field).cloned().ok_or_else(|| {
+                    runtime_error(
+                        "RUNTIME_UNKNOWN_FIELD",
+                        format!("unknown field `{field}` on struct `{ty}`"),
+                    )
+                })
+            }
         }
     }
 
@@ -467,6 +496,31 @@ impl Runtime {
                     Control::Continue => Ok(Value::Unit),
                 }
             }
+            Expr::StructLiteral { ty, fields, .. } => {
+                let mut values = BTreeMap::new();
+                for field in fields {
+                    values.insert(field.name.clone(), self.eval_expr(&field.value, locals)?);
+                }
+                Ok(Value::Struct {
+                    ty: ty.clone(),
+                    fields: values,
+                })
+            }
+            Expr::FieldAccess { base, field, .. } => {
+                let value = self.eval_expr(base, locals)?;
+                let Value::Struct { ty, fields } = value else {
+                    return Err(runtime_error(
+                        "RUNTIME_FIELD_BASE",
+                        "field access requires a struct value",
+                    ));
+                };
+                fields.get(field).cloned().ok_or_else(|| {
+                    runtime_error(
+                        "RUNTIME_UNKNOWN_FIELD",
+                        format!("unknown field `{field}` on struct `{ty}`"),
+                    )
+                })
+            }
         }
     }
 
@@ -631,6 +685,14 @@ impl fmt::Display for Value {
             Value::Int(value) => write!(f, "{value}"),
             Value::String(value) => write!(f, "{value}"),
             Value::Bool(value) => write!(f, "{value}"),
+            Value::Struct { ty, fields } => {
+                let fields = fields
+                    .iter()
+                    .map(|(name, value)| format!("{name}: {value}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "{ty} {{ {fields} }}")
+            }
             Value::Unit => write!(f, "()"),
         }
     }

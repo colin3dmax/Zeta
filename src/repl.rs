@@ -172,8 +172,8 @@ pub const TOPICS: &[ReplTopic] = &[
     },
     ReplTopic {
         name: "struct",
-        summary: "Declare a record type.",
-        example: "struct User { name: String, age: Int, }",
+        summary: "Declare a record type. Struct literals and field access are executable in full programs.",
+        example: "let user: User = User { name: \"Ada\", age: 42 };",
     },
     ReplTopic {
         name: "enum",
@@ -438,7 +438,7 @@ fn topic_summary(topic: &ReplTopic, language: Language) -> &'static str {
         "if" => "基于 Bool 条件分支；条件可以使用比较、&&、|| 和 !。",
         "while" => "当 Bool 条件为 true 时循环；条件可以使用比较、&&、|| 和 !。",
         "match" => "对值进行简单模式匹配。",
-        "struct" => "声明记录类型。",
+        "struct" => "声明记录类型；完整程序中可以使用结构体字面量和字段访问。",
         "enum" => "声明标签集合。",
         "Int" => "当前 Stage 0 checker 支持的整数标量类型。",
         "String" => "当前 Stage 0 checker 支持的字符串标量类型。",
