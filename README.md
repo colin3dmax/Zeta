@@ -53,7 +53,7 @@ Zeta 的核心取舍是低门槛和高上限同时成立：上层应用开发应
 项目处于语言设计和工程框架启动阶段。当前优先级：
 
 1. 固定语言定位、MVP Baseline 和文档规范。
-2. 建立 Rust Stage 0 编译器 bootstrap/self-hosting 路线；Zig 暂不进入必需依赖，早期后端顺序为 MIR interpreter、WASM/WASI smoke、LLVM native smoke。
+2. 建立 Rust Stage 0 编译器 bootstrap/self-hosting 路线；Zig 暂不进入必需依赖，早期后端顺序为 MIR interpreter、WASM/WASI smoke、LLVM native smoke。编译器术语解释见 `docs/compiler/glossary.html`。
 3. 定义 core/alloc/std/runtime 分层和跨平台 target matrix。
 4. 设计 capability、schema、tool、agent 的 AI 原生契约。
 5. 使用 DevGame 进行任务拆解、状态流转、质量验收和多 Agent 协作。

@@ -19,6 +19,8 @@
     <p><strong>适用范围：</strong>Zeta Stage 0 CLI、AST/HIR/MIR dump、语义检查、MIR interpreter、REPL 原型和本地示例文件。</p>
     <p><strong>验收标准：</strong>用户可以运行示例、检查源码、执行无参数 <code>main</code>，并在 REPL 里直接计算表达式。</p>
 
+    <p>如果你第一次接触编译器术语，可以先打开 <a href="../compiler/glossary.html">编译器术语解释</a>。里面解释了 AST、HIR、MIR、MIR interpreter、backend、corpus 和 golden test 等文档里常见的词。</p>
+
     <h2>安装前提</h2>
     <ul>
       <li>需要 Rust 和 Cargo。</li>
@@ -32,15 +34,15 @@ python3 tools/check-docs.py
 python3 tools/check-vscode-extension.py</code></pre>
 
     <h2>查看 AST</h2>
-    <p><code>ast-dump</code> 会解析 Zeta 源码并输出稳定 AST dump，适合调试 parser 和 golden corpus。</p>
+    <p><code>ast-dump</code> 会解析 Zeta 源码并输出稳定 AST dump。AST 可以理解成“源码语法结构的树状记录”，适合调试 parser 和 golden corpus。</p>
     <pre><code>cargo run -- ast-dump testdata/core_items.zeta</code></pre>
 
     <h2>查看 HIR</h2>
-    <p><code>hir-dump</code> 会先通过 name resolution 和 typecheck，再输出稳定 HIR 文本，作为后续 MIR 和 backend golden tests 的输入基线。</p>
+    <p><code>hir-dump</code> 会先通过 name resolution 和 typecheck，再输出稳定 HIR 文本。HIR 是比 AST 更规整的中间表示，作为后续 MIR 和 backend golden tests 的输入基线。</p>
     <pre><code>cargo run -- hir-dump testdata/core_items.zeta</code></pre>
 
     <h2>查看 MIR</h2>
-    <p><code>mir-dump</code> 当前覆盖 Stage 0 可运行子集，会输出 locals、temps、store、return、call 和基础控制流的稳定 MIR 文本。</p>
+    <p><code>mir-dump</code> 当前覆盖 Stage 0 可运行子集，会输出 locals、temps、store、return、call 和基础控制流的稳定 MIR 文本。MIR 更接近“程序执行步骤”，方便解释器和未来后端共用同一语义。</p>
     <pre><code>cargo run -- mir-dump testdata/run_mut.zeta</code></pre>
 
     <h2>检查源码</h2>
@@ -49,7 +51,7 @@ python3 tools/check-vscode-extension.py</code></pre>
     <p>当前检查范围包括重复定义、未知名字、<code>Int</code> / <code>String</code> / <code>Bool</code>、算术表达式、比较表达式、布尔逻辑表达式、函数调用、<code>let</code> 注解、<code>let mut</code> 可变绑定、赋值语句、<code>if</code> / <code>while</code> 条件和 <code>return</code> 类型。</p>
 
     <h2>执行程序</h2>
-    <p><code>run</code> 会先 lower 到结构化 MIR，再通过 Stage 0 MIR interpreter 执行无参数 <code>main</code>；当前支持整数算术、比较运算、布尔逻辑、函数调用、<code>let</code>、<code>let mut</code>、赋值、<code>return</code> 和基础 <code>if</code> / <code>while</code>。</p>
+    <p><code>run</code> 会先 lower 到结构化 MIR，再通过 Stage 0 MIR interpreter 执行无参数 <code>main</code>。这里的 MIR interpreter 不是生成机器码，而是直接读取 MIR 指令并执行，用来在早期验证 Zeta 的运行语义；当前支持整数算术、比较运算、布尔逻辑、函数调用、<code>let</code>、<code>let mut</code>、赋值、<code>return</code> 和基础 <code>if</code> / <code>while</code>。</p>
     <pre><code>cargo run -- run testdata/run_basic.zeta
 cargo run -- run testdata/run_call.zeta
 cargo run -- run testdata/run_compare.zeta

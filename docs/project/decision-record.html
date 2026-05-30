@@ -18,6 +18,7 @@
     <p><strong>更新时间：</strong>2026-05-30</p>
     <p><strong>适用范围：</strong>Zeta Stage 0 到 Stage 1 的公开工程决策、取舍依据和后续复审条件。</p>
     <p><strong>验收标准：</strong>读者可以理解当前实现为什么采用 Rust Stage 0、MIR interpreter、HTML 文档、DevGame 验收和官网实时发布闭环。</p>
+    <p>如果你不熟悉 MIR interpreter、backend、corpus 或 self-hosting，可以先看 <a href="../compiler/glossary.html">编译器术语解释</a>。</p>
 
     <section class="hero">
       <p class="eyebrow">Build Decisions</p>
@@ -27,7 +28,7 @@
 
     <h2>决策原则</h2>
     <ul>
-      <li><strong>语义先于后端：</strong>MIR interpreter 是第一语义基线；WASM/WASI 和 LLVM native 只能验证它，不能反向定义语言。</li>
+      <li><strong>语义先于后端：</strong>MIR interpreter 是第一语义基线。它直接执行 MIR 中间指令；WASM/WASI 和 LLVM native 只能验证它，不能反向定义语言。</li>
       <li><strong>小内核优先：</strong>Stage 0 只实现自举和 smoke 需要的语言表面，不把宏、完整 async、复杂泛型提前塞进核心。</li>
       <li><strong>每步可公开验证：</strong>语言变更必须同步 CLI、REPL、VS Code、官网 Playground、用户文档和 DevGame 验收证据。</li>
       <li><strong>文档即接口：</strong>正式设计文档使用 HTML，记录状态、更新时间、适用范围和验收标准。</li>
@@ -54,7 +55,7 @@
         <tr>
           <td>首个执行语义</td>
           <td>MIR interpreter</td>
-          <td>解释器比直接上 LLVM 更容易调试，也能给后续 backend 提供统一行为基线。</td>
+          <td>解释器直接执行 MIR，不需要先生成机器码；这比直接上 LLVM 更容易调试，也能给后续 backend 提供统一行为基线。</td>
           <td>当 MIR verifier 和 run corpus 足够稳定后，接入 WASM/WASI smoke 和 LLVM native smoke。</td>
         </tr>
         <tr>

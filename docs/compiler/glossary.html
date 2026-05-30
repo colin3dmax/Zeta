@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zeta 编译器术语解释</title>
+  <link rel="stylesheet" href="../shared.css">
+</head>
+<body>
+  <main>
+    <nav class="doc-nav" aria-label="文档导航">
+      <a href="../../">官网首页</a>
+      <a href="../index.html">文档中心</a>
+      <a href="../user/getting-started.html">快速开始</a>
+    </nav>
+    <h1>Zeta 编译器术语解释</h1>
+    <p><strong>状态：</strong>accepted</p>
+    <p><strong>更新时间：</strong>2026-05-30</p>
+    <p><strong>适用范围：</strong>Zeta 文档中出现的编译器、解释器、中间表示、测试和发布术语。</p>
+    <p><strong>验收标准：</strong>没有编译器背景的读者也能理解 AST、HIR、MIR、MIR interpreter、backend、corpus、golden test 和 self-hosting 的基本含义。</p>
+
+    <section class="hero">
+      <p class="eyebrow">Glossary</p>
+      <h2>把编译器术语翻译成可理解的工程概念。</h2>
+      <p>Zeta 文档会记录语言设计和编译器实现过程。下面的术语表不是学术定义，而是解释这些词在 Zeta 项目里的具体含义、为什么需要它们，以及用户什么时候会看到它们。</p>
+    </section>
+
+    <h2>从源码到运行结果</h2>
+    <p>一段 Zeta 程序从输入到执行，大致会经过下面这条管线：</p>
+    <pre><code>Zeta 源码
+  -&gt; Lexer：切成 token
+  -&gt; Parser：组织成 AST
+  -&gt; Resolver：确认名字指向谁
+  -&gt; Typechecker：确认类型是否匹配
+  -&gt; HIR：更规整的高级中间表示
+  -&gt; MIR：更接近执行的中级中间表示
+  -&gt; MIR interpreter：直接解释执行 MIR
+  -&gt; Backend：未来生成 WASM、机器码或其他目标</code></pre>
+
+    <h2>核心术语</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>术语</th>
+          <th>通俗解释</th>
+          <th>在 Zeta 里的用途</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>Lexer</code></td>
+          <td>词法分析器。它把源码文本切成更小的词块，例如 <code>fn</code>、<code>main</code>、<code>42</code>、<code>+</code>。</td>
+          <td>让后续 parser 不必直接处理原始字符串。</td>
+        </tr>
+        <tr>
+          <td><code>Token</code></td>
+          <td>源码中的一个词块。比如 <code>return</code> 是关键字 token，<code>answer</code> 是标识符 token。</td>
+          <td>诊断错误位置、语法高亮和 parser 输入都会使用 token。</td>
+        </tr>
+        <tr>
+          <td><code>Parser</code></td>
+          <td>语法分析器。它把 token 组织成树状结构，判断代码是否符合语法。</td>
+          <td>例如把 <code>40 + 2</code> 识别为“加法表达式”，而不是三个孤立字符。</td>
+        </tr>
+        <tr>
+          <td><code>AST</code></td>
+          <td>Abstract Syntax Tree，抽象语法树。它是源码语法结构的树状表示。</td>
+          <td><code>zeta ast-dump</code> 会输出 AST，方便确认 parser 是否正确理解源码。</td>
+        </tr>
+        <tr>
+          <td><code>Span</code></td>
+          <td>源码位置范围。比如一个变量名从第几个字符开始，到第几个字符结束。</td>
+          <td>错误诊断可以精确指向出错代码，而不是只说“某处错了”。</td>
+        </tr>
+        <tr>
+          <td><code>Resolver</code></td>
+          <td>名字解析器。它回答“这个名字指向哪个变量、函数、类型或模块”。</td>
+          <td>例如检查 <code>answer()</code> 是否存在，<code>import demo.math</code> 是否能找到。</td>
+        </tr>
+        <tr>
+          <td><code>Typechecker</code></td>
+          <td>类型检查器。它确认值和操作是否匹配类型规则。</td>
+          <td>例如 <code>Int</code> 不能当作 <code>Bool</code> 条件，函数参数类型必须匹配。</td>
+        </tr>
+        <tr>
+          <td><code>HIR</code></td>
+          <td>High-level Intermediate Representation，高级中间表示。它比 AST 更规整，但仍保留较高层的语言结构。</td>
+          <td>作为后续 MIR 和 backend 的输入基线，减少 backend 直接依赖源码语法细节。</td>
+        </tr>
+        <tr>
+          <td><code>MIR</code></td>
+          <td>Mid-level Intermediate Representation，中级中间表示。它比 HIR 更接近“机器可以一步步执行的指令”。</td>
+          <td><code>zeta mir-dump</code> 输出 MIR，用来检查控制流、局部变量、函数调用和返回路径。</td>
+        </tr>
+        <tr>
+          <td><code>MIR interpreter</code></td>
+          <td>MIR 解释器。它不生成机器码，而是直接读取 MIR 指令并执行，类似“先把菜谱整理成步骤，再由人按步骤做菜”。</td>
+          <td>这是 Zeta 早期的第一执行语义基线。还没有完整 WASM/LLVM 后端时，<code>zeta run</code> 先通过它验证程序结果。</td>
+        </tr>
+        <tr>
+          <td><code>Backend</code></td>
+          <td>后端。它负责把中间表示变成具体目标能运行的产物，例如 WASM、机器码或其他平台格式。</td>
+          <td>Zeta 后续会接入 WASM/WASI smoke、LLVM native smoke 等 backend 验证。</td>
+        </tr>
+        <tr>
+          <td><code>WASM</code></td>
+          <td>WebAssembly，一种可在浏览器和其他运行环境中执行的低层格式。</td>
+          <td>官网 Playground 加载 <code>zeta.wasm</code>，让浏览器运行真实 Zeta 编译器前端。</td>
+        </tr>
+        <tr>
+          <td><code>WASI</code></td>
+          <td>WebAssembly System Interface。它给 WASM 程序提供类系统接口，例如文件、时间和标准输入输出。</td>
+          <td>未来用于验证 Zeta 在命令行/沙箱环境下的 WASM 运行路径。</td>
+        </tr>
+        <tr>
+          <td><code>LLVM</code></td>
+          <td>一套成熟的编译器基础设施，很多语言用它生成原生机器码。</td>
+          <td>Zeta 未来可用 LLVM native smoke 验证 AOT 编译和原生 release 产物。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>为什么先做 MIR interpreter</h2>
+    <p>直接生成机器码或 LLVM IR 很诱人，但早期语言还在变化，问题通常出在语法、类型规则、控制流和运行语义上。MIR interpreter 的价值是把问题拆小：</p>
+    <ul>
+      <li><strong>更容易调试：</strong>如果 <code>return 40 + 2</code> 没有得到 <code>42</code>，可以直接看 MIR 指令和解释器执行路径。</li>
+      <li><strong>先定义语言语义：</strong>未来无论生成 WASM 还是机器码，都必须和 MIR interpreter 对同一测试输出一致。</li>
+      <li><strong>降低早期成本：</strong>不需要一开始就处理 ABI、寄存器、链接器、平台差异和优化器。</li>
+      <li><strong>服务 REPL 和 Playground：</strong>用户可以更早运行代码，语言团队也能更快验证新语法。</li>
+    </ul>
+
+    <h2>测试和发布术语</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>术语</th>
+          <th>解释</th>
+          <th>例子</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>Corpus</code></td>
+          <td>一组固定测试样例，用来反复验证编译器行为。</td>
+          <td><code>testdata/run_struct.zeta</code>、<code>testdata/modules_ok</code>。</td>
+        </tr>
+        <tr>
+          <td><code>Golden test</code></td>
+          <td>把某个输出保存成标准答案。以后输出变化时，测试会提醒我们是否破坏了格式或语义。</td>
+          <td><code>testdata/core_items.ast</code> 和 <code>testdata/run_enum.mir</code>。</td>
+        </tr>
+        <tr>
+          <td><code>Smoke test</code></td>
+          <td>冒烟测试。它不是覆盖所有细节，而是快速确认关键链路没有断。</td>
+          <td>官网线上 smoke 会确认 WASM 加载、Playground 运行、文档导航和 Feature Tests。</td>
+        </tr>
+        <tr>
+          <td><code>Verifier</code></td>
+          <td>验证器。它检查某个中间表示是否内部一致。</td>
+          <td>MIR verifier 未来会检查变量是否初始化、控制流是否完整、类型是否一致。</td>
+        </tr>
+        <tr>
+          <td><code>Self-hosting</code></td>
+          <td>自举或自编译。意思是最终用 Zeta 编写 Zeta 编译器，并让 Zeta 编译器能编译自己。</td>
+          <td>Stage 0 用 Rust 写冷启动编译器，后续逐步用 Zeta 替换前端模块。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>面向用户的命令含义</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>命令</th>
+          <th>它做了什么</th>
+          <th>适合什么时候用</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>zeta ast-dump file.zeta</code></td>
+          <td>只看 parser 是否把源码组织成正确 AST。</td>
+          <td>调试新语法或理解语法结构。</td>
+        </tr>
+        <tr>
+          <td><code>zeta check file.zeta</code></td>
+          <td>执行 parser、resolver 和 typechecker，不运行程序。</td>
+          <td>确认代码语法、名字和类型是否正确。</td>
+        </tr>
+        <tr>
+          <td><code>zeta mir-dump file.zeta</code></td>
+          <td>输出可运行子集的 MIR 文本。</td>
+          <td>调试运行语义、控制流和函数调用。</td>
+        </tr>
+        <tr>
+          <td><code>zeta run file.zeta</code></td>
+          <td>把源码检查通过后 lower 到 MIR，再由 MIR interpreter 执行。</td>
+          <td>运行无参数 <code>main</code>，查看程序结果。</td>
+        </tr>
+      </tbody>
+    </table>
+  </main>
+</body>
+</html>

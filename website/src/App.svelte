@@ -723,6 +723,11 @@ python3 tools/check-vscode-extension.py</code></pre>
           <p>解释 Parser、Typechecker、HIR、MIR、Backend 和 self-hosting 的职责边界。</p>
           <a href="/docs/compiler/bootstrap.html">查看自举路线</a>
         </article>
+        <article>
+          <h3>编译器术语解释</h3>
+          <p>面向非编译器背景读者解释 AST、HIR、MIR、MIR interpreter、backend、corpus 和 golden test。</p>
+          <a href="/docs/compiler/glossary.html">查看术语</a>
+        </article>
       </div>
     </section>
 
