@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zeta 语言设计过程</title>
+  <link rel="stylesheet" href="../shared.css">
+</head>
+<body>
+  <main>
+    <h1>Zeta 语言设计过程</h1>
+    <p><strong>状态：</strong>accepted</p>
+    <p><strong>更新时间：</strong>2026-05-30</p>
+    <p><strong>适用范围：</strong>Zeta 语言特性从想法、规格、实现、测试到官网发布的完整设计流程。</p>
+    <p><strong>验收标准：</strong>读者可以判断一个新语言特性为什么进入或暂缓，并能看到它如何同步到工具链和官网。</p>
+
+    <section class="hero">
+      <p class="eyebrow">Language Design</p>
+      <h2>语言不是语法集合，而是一组可验证的工程承诺。</h2>
+      <p>每个 Zeta 特性都要回答三个问题：它解决什么真实问题；它是否属于 MVP 或自举路径；它能否被 parser、typechecker、HIR/MIR、runtime、文档和 Playground 同时验证。</p>
+    </section>
+
+    <h2>设计输入</h2>
+    <ul>
+      <li><a href="mvp-baseline.html">MVP Baseline</a>：决定能力属于 included、support 还是 deferred。</li>
+      <li><a href="../compiler/bootstrap.html">编译器自举路线</a>：决定 Stage 0 需要哪些语义才能表达编译器核心。</li>
+      <li><a href="language-landscape.html">语言生态分析</a>：对比 JavaScript、Python、Go、Rust、Swift、Kotlin、Julia 和 WebAssembly 生态的取舍。</li>
+      <li><a href="../platform/targets.html">target matrix</a>：约束 runtime、panic、allocator、WASM/WASI/component 和 embedded 能力。</li>
+      <li><a href="../spec/ai-capability.html">AI capability 契约</a>：约束权限、schema、tool、agent、trace 和默认最小授权。</li>
+    </ul>
+
+    <h2>特性进入流程</h2>
+    <ol>
+      <li><strong>动机：</strong>说明用户、编译器或 runtime 为什么需要该能力。</li>
+      <li><strong>归类：</strong>标记为 MVP included、MVP support 或 deferred；deferred 不进入 Stage 0 parser 接受路径。</li>
+      <li><strong>语法草案：</strong>写出最小示例和错误示例，避免只描述抽象概念。</li>
+      <li><strong>语义边界：</strong>定义类型规则、运行时行为、诊断错误码和 source span。</li>
+      <li><strong>IR 形态：</strong>决定 AST/HIR/MIR 如何表达该特性，dump 必须稳定。</li>
+      <li><strong>实现与测试：</strong>先补 corpus/golden，再改 lexer、parser、resolver、typecheck、runtime 或 backend。</li>
+      <li><strong>工具同步：</strong>REPL、VS Code、官网 Playground、用户文档、教程和 API 文案同步。</li>
+      <li><strong>发布验收：</strong>运行 <code>tools/verify.sh</code>，必要时 <code>tools/verify.sh --deploy --live</code>，并记录 DevGame 证据。</li>
+    </ol>
+
+    <h2>当前语言层次</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>层次</th>
+          <th>已实现</th>
+          <th>下一步</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>标量与表达式</td>
+          <td><code>Int</code>、<code>String</code>、<code>Bool</code>、整数算术、比较、布尔逻辑。</td>
+          <td>完善字符串操作和基础错误路径。</td>
+        </tr>
+        <tr>
+          <td>局部状态</td>
+          <td><code>let</code>、<code>let mut</code>、赋值、局部类型注解。</td>
+          <td>明确初始化状态和 MIR verifier 规则。</td>
+        </tr>
+        <tr>
+          <td>控制流</td>
+          <td><code>if/else</code>、<code>while</code>、<code>return</code>。</td>
+          <td>让 <code>match</code> lower 到 MIR 并可执行。</td>
+        </tr>
+        <tr>
+          <td>函数</td>
+          <td>函数声明、参数、返回类型、函数调用、无参数 <code>main</code> 执行。</td>
+          <td>跨模块函数符号和导入解析。</td>
+        </tr>
+        <tr>
+          <td>数据建模</td>
+          <td><code>struct</code>、<code>enum</code> 的 parse / AST / HIR dump。</td>
+          <td>结构体值、字段访问、枚举变体、Option/Result。</td>
+        </tr>
+        <tr>
+          <td>工程化</td>
+          <td>CLI、REPL、VS Code、官网 Playground、HTML 文档和线上 smoke。</td>
+          <td>CI 化连续验证，增加 corpus 分组和 backend smoke。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>设计时避免的问题</h2>
+    <ul>
+      <li>不因为语法好看就加入核心；必须证明它服务 MVP 或自举。</li>
+      <li>不让 backend 直接消费 AST；backend 必须通过 MIR 或稳定接口。</li>
+      <li>不在 parser 里接受 deferred 语法，以免未来兼容成本过高。</li>
+      <li>不把官网演示写成模拟器；线上用户看到的必须是真实编译器结果。</li>
+    </ul>
+  </main>
+</body>
+</html>

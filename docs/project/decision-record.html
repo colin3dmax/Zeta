@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zeta 构建决策记录</title>
+  <link rel="stylesheet" href="../shared.css">
+</head>
+<body>
+  <main>
+    <h1>Zeta 构建决策记录</h1>
+    <p><strong>状态：</strong>accepted</p>
+    <p><strong>更新时间：</strong>2026-05-30</p>
+    <p><strong>适用范围：</strong>Zeta Stage 0 到 Stage 1 的公开工程决策、取舍依据和后续复审条件。</p>
+    <p><strong>验收标准：</strong>读者可以理解当前实现为什么采用 Rust Stage 0、MIR interpreter、HTML 文档、DevGame 验收和官网实时发布闭环。</p>
+
+    <section class="hero">
+      <p class="eyebrow">Build Decisions</p>
+      <h2>先建立可验证的最小语言，再扩展高级能力。</h2>
+      <p>Zeta 的构建策略不是先追求完整语法，而是把语言、编译器、运行时、文档、编辑器和官网放在同一条可回归链路上。每个新增能力都必须能进入 corpus、测试、文档和线上 Playground。</p>
+    </section>
+
+    <h2>决策原则</h2>
+    <ul>
+      <li><strong>语义先于后端：</strong>MIR interpreter 是第一语义基线；WASM/WASI 和 LLVM native 只能验证它，不能反向定义语言。</li>
+      <li><strong>小内核优先：</strong>Stage 0 只实现自举和 smoke 需要的语言表面，不把宏、完整 async、复杂泛型提前塞进核心。</li>
+      <li><strong>每步可公开验证：</strong>语言变更必须同步 CLI、REPL、VS Code、官网 Playground、用户文档和 DevGame 验收证据。</li>
+      <li><strong>文档即接口：</strong>正式设计文档使用 HTML，记录状态、更新时间、适用范围和验收标准。</li>
+      <li><strong>发布闭环不中断：</strong><code>tools/verify.sh</code> 串联本地验证、官网构建、可选发布和线上 smoke。</li>
+    </ul>
+
+    <h2>关键决策</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>决策</th>
+          <th>选择</th>
+          <th>原因</th>
+          <th>复审条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Stage 0 宿主语言</td>
+          <td>Rust</td>
+          <td>早期需要稳定包管理、测试框架、诊断处理和 WASM 构建；Rust 可以降低 bootstrap 阶段的工具链风险。</td>
+          <td>当平台 glue、allocator、panic adapter 或 cross-linker 需求稳定时，重新评估 Zig 或 C ABI 辅助层。</td>
+        </tr>
+        <tr>
+          <td>首个执行语义</td>
+          <td>MIR interpreter</td>
+          <td>解释器比直接上 LLVM 更容易调试，也能给后续 backend 提供统一行为基线。</td>
+          <td>当 MIR verifier 和 run corpus 足够稳定后，接入 WASM/WASI smoke 和 LLVM native smoke。</td>
+        </tr>
+        <tr>
+          <td>语言扩展顺序</td>
+          <td>表达式、绑定、控制流、函数、数据建模、模块、后端</td>
+          <td>自举编译器先需要稳定 AST/HIR/MIR 和基础数据结构，而不是完整高级语法。</td>
+          <td>当结构体、枚举、match、Option/Result 可运行后，进入跨模块和自举前端子集。</td>
+        </tr>
+        <tr>
+          <td>文档格式</td>
+          <td>正式文档使用 HTML，README 作为 GitHub 入口</td>
+          <td>HTML 更接近官网发布形态，便于链接检查、状态标记和后续多语言版本。</td>
+          <td>当需要版本化规范时，引入 docs/spec 下的稳定版本路径。</td>
+        </tr>
+        <tr>
+          <td>官网 Playground</td>
+          <td>加载真实编译器 WASM，不使用 JS 模拟器</td>
+          <td>用户看到的 AST、Check 和 Run 必须与仓库实现一致，避免文档演示和真实编译器分叉。</td>
+          <td>当 WASI/backend 进入 smoke 后，官网增加 backend 结果对照。</td>
+        </tr>
+        <tr>
+          <td>任务治理</td>
+          <td>DevGame 记录任务、状态、验收和发布证据</td>
+          <td>语言设计需要可追溯的取舍链，避免语法堆叠和未验证实现变成事实标准。</td>
+          <td>当多 Agent 并行实现 backend/runtime 时，进一步增加 owner claim 和冲突检查。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>当前已落地</h2>
+    <ul>
+      <li>Stage 0 已覆盖 lexer、parser、AST、resolver、typecheck、HIR dump、MIR dump、MIR interpreter 和 WebAssembly Playground 前端。</li>
+      <li>可运行子集包括整数算术、比较、布尔逻辑、函数调用、<code>let</code>、<code>let mut</code>、赋值、<code>if</code>、<code>while</code> 和无参数 <code>main</code>。</li>
+      <li>REPL、VS Code 插件、官网 Playground、用户文档和线上 smoke 已进入同一验证链。</li>
+    </ul>
+  </main>
+</body>
+</html>

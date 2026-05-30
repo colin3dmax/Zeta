@@ -53,7 +53,8 @@
     { id: "playground", label: "Playground" },
     { id: "tutorial", label: "教程" },
     { id: "vscode", label: "VS Code" },
-    { id: "design", label: "设计文档" }
+    { id: "design", label: "设计文档" },
+    { id: "roadmap", label: "路线图" }
   ];
 
   const sample = `module demo.core;
@@ -476,13 +477,40 @@ python3 tools/check-vscode-extension.py</code></pre>
     <section id="design">
       <p class="kicker">Design Notes</p>
       <h2>设计文档</h2>
-      <ul class="links">
-        <li>语言定位与产品原则</li>
-        <li>MVP Baseline 与冻结边界</li>
-        <li>编译器与自举路线</li>
-        <li>跨平台与运行时架构</li>
-        <li>AI 原生能力与权限模型</li>
-      </ul>
+      <div class="grid two">
+        <article>
+          <h3>构建决策记录</h3>
+          <p>记录 Stage 0 宿主语言、MIR interpreter、官网 Playground、文档格式和 DevGame 验收方式的关键取舍。</p>
+          <a href="/docs/project/decision-record.html">查看决策</a>
+        </article>
+        <article>
+          <h3>语言设计过程</h3>
+          <p>说明一个语言特性从动机、语法草案、类型规则、IR 形态、实现测试到官网发布的完整流程。</p>
+          <a href="/docs/project/language-design-process.html">查看过程</a>
+        </article>
+        <article>
+          <h3>MVP Baseline</h3>
+          <p>冻结 Stage 0 到 Stage 1 的 included、support 和 deferred 边界，避免语法堆叠。</p>
+          <a href="/docs/project/mvp-baseline.html">查看边界</a>
+        </article>
+        <article>
+          <h3>编译器与自举路线</h3>
+          <p>解释 Parser、Typechecker、HIR、MIR、Backend 和 self-hosting 的职责边界。</p>
+          <a href="/docs/compiler/bootstrap.html">查看自举路线</a>
+        </article>
+      </div>
+    </section>
+
+    <section id="roadmap">
+      <p class="kicker">Roadmap</p>
+      <h2>阶段路线图</h2>
+      <div class="grid two">
+        <article><h3>Stage 0A</h3><p>可运行前端：lexer、parser、resolver、typecheck、HIR/MIR、interpreter、REPL 和 Playground。</p></article>
+        <article><h3>Stage 0B</h3><p>数据建模：结构体值、字段访问、枚举变体、match 执行、Option / Result。</p></article>
+        <article><h3>Stage 0C</h3><p>模块与 verifier：跨模块 name resolution、MIR verifier、corpus 分组和诊断 golden。</p></article>
+        <article><h3>Stage 0D+</h3><p>backend smoke 和自举：WASM/WASI、LLVM native、Stage 1/2/3 self-hosting。</p></article>
+      </div>
+      <p class="note"><a href="/docs/project/stage-roadmap.html">查看完整阶段路线图</a></p>
     </section>
   </main>
 </div>

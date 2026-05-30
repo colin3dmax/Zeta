@@ -16,6 +16,11 @@ try {
 }
 
 const baseUrl = process.env.ZETA_LIVE_URL || "https://zeta.jennieapp.com/";
+const publicDocs = [
+  ["docs/project/decision-record.html", "Zeta 构建决策记录"],
+  ["docs/project/language-design-process.html", "Zeta 语言设计过程"],
+  ["docs/project/stage-roadmap.html", "Zeta 阶段路线图"],
+];
 
 (async () => {
   const browser = await chromium.launch({ headless: true });
@@ -52,12 +57,30 @@ const baseUrl = process.env.ZETA_LIVE_URL || "https://zeta.jennieapp.com/";
   await page.locator("button", { hasText: "AST" }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.includes("Unary op=not"));
 
+  const docChecks = [];
+  for (const [path, title] of publicDocs) {
+    const response = await page.goto(new URL(path, baseUrl).toString(), { waitUntil: "domcontentloaded" });
+    const h1 = await page.locator("h1").first().innerText();
+    docChecks.push({
+      path,
+      status: response ? response.status() : 0,
+      h1,
+      ok: Boolean(response?.ok()) && h1 === title,
+    });
+  }
+
   const result = {
-    ok: consoleErrors.length === 0 && Boolean(wasmName) && operatorCount > 0 && boolCount > 0,
+    ok:
+      consoleErrors.length === 0 &&
+      Boolean(wasmName) &&
+      operatorCount > 0 &&
+      boolCount > 0 &&
+      docChecks.every((doc) => doc.ok),
     url: baseUrl,
     wasm: wasmName,
     replOperatorTokens: operatorCount,
     replBoolTokens: boolCount,
+    docChecks,
     consoleErrors,
   };
 

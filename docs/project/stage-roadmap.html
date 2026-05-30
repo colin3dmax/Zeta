@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zeta 阶段路线图</title>
+  <link rel="stylesheet" href="../shared.css">
+</head>
+<body>
+  <main>
+    <h1>Zeta 阶段路线图</h1>
+    <p><strong>状态：</strong>accepted</p>
+    <p><strong>更新时间：</strong>2026-05-30</p>
+    <p><strong>适用范围：</strong>Zeta 从当前 Stage 0 到 Stage 3 self-hosting 的阶段目标、交付物和验收标准。</p>
+    <p><strong>验收标准：</strong>读者可以看到每一阶段要做什么、为什么做、何时进入下一阶段。</p>
+
+    <section class="hero">
+      <p class="eyebrow">Roadmap</p>
+      <h2>每个阶段都有可运行产物，而不是只交付设计口号。</h2>
+      <p>Zeta 的路线按“语言核心 -> MIR 语义 -> 数据建模 -> 模块工程 -> backend smoke -> 自举前端”推进。每一阶段都必须能用测试、dump、官网或线上 smoke 验收。</p>
+    </section>
+
+    <h2>阶段总览</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>阶段</th>
+          <th>目标</th>
+          <th>核心交付</th>
+          <th>进入下一阶段条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Stage 0A：可运行前端</td>
+          <td>建立 lexer/parser/resolver/typecheck/HIR/MIR/interpreter 的最小闭环。</td>
+          <td>表达式、绑定、函数、控制流、MIR interpreter、REPL、Playground。</td>
+          <td>run corpus 稳定，官网和 CLI 对同一程序行为一致。</td>
+        </tr>
+        <tr>
+          <td>Stage 0B：数据建模</td>
+          <td>让语言能表达编译器自身数据结构。</td>
+          <td>结构体值、字段访问、枚举变体、match 执行、Option/Result。</td>
+          <td>AST/HIR/MIR 的核心数据模型可用 Zeta 子集表达。</td>
+        </tr>
+        <tr>
+          <td>Stage 0C：模块与 verifier</td>
+          <td>把单文件原型推进到工程级编译单元。</td>
+          <td>跨模块 name resolution、MIR verifier、corpus 分组、诊断 golden。</td>
+          <td>多文件样例可 check/run，MIR verifier 能阻止非法 IR 进入 backend。</td>
+        </tr>
+        <tr>
+          <td>Stage 0D：backend smoke</td>
+          <td>验证 Zeta 语义能离开解释器，在其他 target 上保持一致。</td>
+          <td>WASM/WASI smoke、LLVM native smoke、artifact size 记录。</td>
+          <td>同一 corpus 在 MIR interpreter、WASI 和 native smoke 输出一致。</td>
+        </tr>
+        <tr>
+          <td>Stage 1：Zeta 前端模块</td>
+          <td>用 Zeta 编写独立前端模块，Rust Stage 0 仍提供 seed 和 backend。</td>
+          <td>Zeta parser/AST 子模块、golden dump 对齐、Stage 0 编译 Stage 1。</td>
+          <td>Stage 1 与 Rust Stage 0 在 golden corpus 上输出一致。</td>
+        </tr>
+        <tr>
+          <td>Stage 2：自举核心</td>
+          <td>Zeta 编译器可以编译自身核心前端。</td>
+          <td>Stage 1 编译 Stage 2，诊断、HIR/MIR dump 和运行结果一致。</td>
+          <td>多轮自举输出稳定，Stage 0 只作为冷启动 seed。</td>
+        </tr>
+        <tr>
+          <td>Stage 3：完整自举</td>
+          <td>Zeta 编译器可编译完整 Zeta 编译器和标准工具链核心。</td>
+          <td>稳定 release、跨平台 smoke、标准库分层、能力契约验证。</td>
+          <td>Stage 0 不再参与日常构建，只保留为 bootstrap artifact。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>近期优先级</h2>
+    <ol>
+      <li><strong>结构体值语义：</strong>结构体字面量、字段访问、字段类型检查、HIR/MIR dump 和 interpreter。</li>
+      <li><strong>枚举与 match 执行：</strong>枚举变体值、简单模式匹配、MIR lower 和 runtime 行为。</li>
+      <li><strong>Option / Result 最小模型：</strong>显式错误路径和自举编译器所需的基础代数数据类型。</li>
+      <li><strong>MIR verifier：</strong>检查局部变量、类型一致、控制流和 unsupported 节点。</li>
+      <li><strong>跨模块解析：</strong>真实 <code>module/import</code> 图、导出符号和多文件 corpus。</li>
+      <li><strong>WASM/WASI smoke：</strong>让同一 corpus 在解释器和 WASI 执行路径上输出一致。</li>
+    </ol>
+
+    <h2>每阶段共同验收</h2>
+    <ul>
+      <li><code>tools/verify.sh</code> 必须通过。</li>
+      <li>新增语言能力必须同步用户文档、教程、REPL、VS Code 和官网 Playground。</li>
+      <li>新增可运行语义必须有 run corpus 或 golden dump。</li>
+      <li>官网发布后必须记录 wasm hash 和线上 smoke 结果。</li>
+      <li>DevGame 任务必须记录决策、测试、提交和发布证据。</li>
+    </ul>
+  </main>
+</body>
+</html>

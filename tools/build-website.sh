@@ -14,3 +14,7 @@ printf 'export const ZETA_WASM_URL = "/%s";\n' "$WASM_FILE" > website/src/wasm-u
 
 cd "$ROOT/website"
 npm run build
+
+rm -rf "$ROOT/website/dist/docs"
+mkdir -p "$ROOT/website/dist/docs"
+cp -R "$ROOT/docs/." "$ROOT/website/dist/docs/"
