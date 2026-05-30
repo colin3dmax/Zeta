@@ -4,10 +4,11 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 VERSION="$(grep '^version = ' "$ROOT/Cargo.toml" | head -1 | sed 's/version = "\(.*\)"/\1/')"
 TARGET=""
+PUBLISH_DIR=""
 
 usage() {
   cat <<'USAGE'
-usage: sh tools/package-release.sh [--target <rust-target>] [--version <version>]
+usage: sh tools/package-release.sh [--target <rust-target>] [--version <version>] [--publish-dir <dir>]
 
 Build and package the Zeta CLI for the current platform or a Rust target
 already installed in the local toolchain.
@@ -17,6 +18,7 @@ Examples:
   sh tools/package-release.sh --target x86_64-unknown-linux-gnu
   sh tools/package-release.sh --target aarch64-apple-darwin
   sh tools/package-release.sh --target x86_64-pc-windows-msvc
+  sh tools/package-release.sh --publish-dir website/public/releases
 USAGE
 }
 
@@ -30,6 +32,11 @@ while [ "$#" -gt 0 ]; do
     --version)
       VERSION="${2:-}"
       [ -n "$VERSION" ] || { usage; exit 2; }
+      shift 2
+      ;;
+    --publish-dir)
+      PUBLISH_DIR="${2:-}"
+      [ -n "$PUBLISH_DIR" ] || { usage; exit 2; }
       shift 2
       ;;
     -h|--help)
@@ -60,6 +67,10 @@ host_arch() {
   esac
 }
 
+host_target() {
+  rustc -vV | awk '/^host:/ {print $2}'
+}
+
 target_os() {
   case "$1" in
     *apple-darwin*) echo "macos" ;;
@@ -87,7 +98,7 @@ if [ -n "$TARGET" ]; then
 else
   OS="$(host_os)"
   ARCH="$(host_arch)"
-  TARGET="$ARCH-$OS"
+  TARGET="$(host_target)"
   BUILD_DIR="$ROOT/target/release"
   cargo build --release
 fi
@@ -153,5 +164,15 @@ cat > "$ARCHIVE_BASE.json" <<EOF
   "sha256": "$CHECKSUM"
 }
 EOF
+
+if [ -n "$PUBLISH_DIR" ]; then
+  case "$PUBLISH_DIR" in
+    /*) PUBLISH_PATH="$PUBLISH_DIR" ;;
+    *) PUBLISH_PATH="$ROOT/$PUBLISH_DIR" ;;
+  esac
+  mkdir -p "$PUBLISH_PATH"
+  cp "$ARCHIVE" "$PUBLISH_PATH/"
+  cp "$ARCHIVE_BASE.json" "$PUBLISH_PATH/"
+fi
 
 printf '%s\n' "$ARCHIVE"

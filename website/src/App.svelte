@@ -412,12 +412,13 @@ cargo build --release
         </article>
         <article>
           <h3>平台包状态</h3>
-          <p>预构建安装包会在 release 自动化稳定后开放。现在可以用本地打包脚本生成当前平台压缩包。</p>
-          <pre><code>sh tools/package-local.sh
+          <p>release 打包脚本已经可复用，官网下载页会列出已发布的 CLI 包和 SHA256。</p>
+          <pre><code>sh tools/package-release.sh
 ls dist/packages</code></pre>
         </article>
       </div>
       <p class="note"><a href="/docs/user/install.html">查看 macOS、Linux、Windows 安装方法和平台包状态</a></p>
+      <p class="note"><a href="/docs/user/downloads.html">下载已发布的 CLI 包</a></p>
     </section>
 
     <section id="start">

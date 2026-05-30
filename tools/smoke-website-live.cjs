@@ -22,6 +22,7 @@ const publicDocs = [
   ["docs/project/stage-roadmap.html", "Zeta 阶段路线图"],
   ["docs/user/language-features.html", "Zeta 语言特性学习"],
   ["docs/user/install.html", "Zeta 本地安装"],
+  ["docs/user/downloads.html", "Zeta 下载"],
 ];
 
 (async () => {

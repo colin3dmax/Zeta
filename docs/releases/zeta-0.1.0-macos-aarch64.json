@@ -1,0 +1,9 @@
+{
+  "name": "zeta",
+  "version": "0.1.0",
+  "target": "aarch64-apple-darwin",
+  "os": "macos",
+  "arch": "aarch64",
+  "archive": "zeta-0.1.0-macos-aarch64.tar.gz",
+  "sha256": "08eb64fc8e48431157912a4fd9cc641e1fef9e7da1bc7f82d2e2c5f2e49db770"
+}
