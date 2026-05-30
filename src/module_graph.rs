@@ -1,5 +1,7 @@
 use crate::ast::{Function, Item, Module};
 use crate::diagnostic::{Diagnostic, Span};
+use crate::mir::{self, Program};
+use crate::runtime::{self, Value};
 use crate::typecheck::ExternalFunction;
 use crate::{parser, resolver, typecheck};
 use std::collections::{HashMap, HashSet};
@@ -18,6 +20,55 @@ pub struct SourceDiagnostics {
 }
 
 pub fn check_sources(files: &[SourceFile]) -> Result<(), Vec<SourceDiagnostics>> {
+    let modules = parse_sources(files)?;
+    check_parsed_sources(&modules)
+}
+
+pub fn run_sources(files: &[SourceFile]) -> Result<Value, Vec<SourceDiagnostics>> {
+    let modules = parse_sources(files)?;
+    check_parsed_sources(&modules)?;
+    let main_modules = modules
+        .iter()
+        .filter(|parsed| has_function(&parsed.module, "main"))
+        .collect::<Vec<_>>();
+    if main_modules.is_empty() {
+        return Err(vec![source_error(
+            modules.first(),
+            Diagnostic::new(
+                "RUNTIME_NO_MAIN",
+                "expected a `main` function",
+                Span::new(0, 0),
+            ),
+        )]);
+    }
+    if main_modules.len() > 1 {
+        return Err(main_modules
+            .iter()
+            .map(|parsed| {
+                source_error(
+                    Some(parsed),
+                    Diagnostic::new(
+                        "RUNTIME_DUPLICATE_MAIN",
+                        "directory run requires exactly one `main` function",
+                        Span::new(0, 0),
+                    ),
+                )
+            })
+            .collect());
+    }
+
+    let program = combined_program(&modules);
+    runtime::run_mir(&program).map_err(|diagnostics| {
+        let main = main_modules[0];
+        vec![SourceDiagnostics {
+            path: main.path.clone(),
+            source: main.source.clone(),
+            diagnostics,
+        }]
+    })
+}
+
+fn parse_sources(files: &[SourceFile]) -> Result<Vec<ParsedSource>, Vec<SourceDiagnostics>> {
     let mut modules = Vec::new();
     let mut errors = Vec::new();
 
@@ -42,9 +93,14 @@ pub fn check_sources(files: &[SourceFile]) -> Result<(), Vec<SourceDiagnostics>>
         return Err(errors);
     }
 
+    Ok(modules)
+}
+
+fn check_parsed_sources(modules: &[ParsedSource]) -> Result<(), Vec<SourceDiagnostics>> {
+    let mut errors = Vec::new();
     let module_infos = module_infos(&modules, &mut errors);
     let local_imports = module_infos.keys().cloned().collect::<HashSet<_>>();
-    for parsed in &modules {
+    for parsed in modules {
         let external_functions = imported_external_functions(&parsed.module, &module_infos);
         let external_function_names = external_functions
             .iter()
@@ -73,6 +129,19 @@ pub fn check_sources(files: &[SourceFile]) -> Result<(), Vec<SourceDiagnostics>>
     } else {
         Err(errors)
     }
+}
+
+fn combined_program(modules: &[ParsedSource]) -> Program {
+    let mut program = Program {
+        enums: Vec::new(),
+        functions: Vec::new(),
+    };
+    for parsed in modules {
+        let lowered = mir::lower(&parsed.module);
+        program.enums.extend(lowered.enums);
+        program.functions.extend(lowered.functions);
+    }
+    program
 }
 
 fn module_infos(
@@ -156,6 +225,13 @@ fn exported_functions(module: &Module) -> Vec<ExternalFunction> {
         .collect()
 }
 
+fn has_function(module: &Module, name: &str) -> bool {
+    module.items.iter().any(|item| match item {
+        Item::Function(function) => function.name == name,
+        _ => false,
+    })
+}
+
 fn external_function(function: &Function) -> ExternalFunction {
     ExternalFunction {
         name: function.name.clone(),
@@ -191,4 +267,19 @@ struct ParsedSource {
 
 struct ModuleInfo {
     exported_functions: Vec<ExternalFunction>,
+}
+
+fn source_error(parsed: Option<&ParsedSource>, diagnostic: Diagnostic) -> SourceDiagnostics {
+    match parsed {
+        Some(parsed) => SourceDiagnostics {
+            path: parsed.path.clone(),
+            source: parsed.source.clone(),
+            diagnostics: vec![diagnostic],
+        },
+        None => SourceDiagnostics {
+            path: "<module graph>".to_string(),
+            source: String::new(),
+            diagnostics: vec![diagnostic],
+        },
+    }
 }

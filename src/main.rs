@@ -164,6 +164,12 @@ fn collect_zeta_files(path: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()
 }
 
 fn run(path: &str) {
+    let path_ref = Path::new(path);
+    if path_ref.is_dir() {
+        run_module_directory(path_ref);
+        return;
+    }
+
     let source = match fs::read_to_string(path) {
         Ok(source) => source,
         Err(err) => {
@@ -176,6 +182,45 @@ fn run(path: &str) {
         Ok(value) => println!("{value}"),
         Err(diagnostics) => {
             print_diagnostics(&diagnostics, &source, path);
+            process::exit(1);
+        }
+    }
+}
+
+fn run_module_directory(root: &Path) {
+    let paths = match zeta_files(root) {
+        Ok(paths) => paths,
+        Err(err) => {
+            eprintln!("failed to scan {}: {err}", root.display());
+            process::exit(1);
+        }
+    };
+    if paths.is_empty() {
+        eprintln!("no .zeta files found in {}", root.display());
+        process::exit(1);
+    }
+
+    let mut files = Vec::new();
+    for path in paths {
+        let source = match fs::read_to_string(&path) {
+            Ok(source) => source,
+            Err(err) => {
+                eprintln!("failed to read {}: {err}", path.display());
+                process::exit(1);
+            }
+        };
+        files.push(zeta::module_graph::SourceFile {
+            path: path.display().to_string(),
+            source,
+        });
+    }
+
+    match zeta::module_graph::run_sources(&files) {
+        Ok(value) => println!("{value}"),
+        Err(errors) => {
+            for error in errors {
+                print_diagnostics(&error.diagnostics, &error.source, &error.path);
+            }
             process::exit(1);
         }
     }

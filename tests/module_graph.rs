@@ -114,6 +114,25 @@ fn cli_check_accepts_module_directory() {
     );
 }
 
+#[test]
+fn cli_run_executes_module_directory() {
+    let binary = env!("CARGO_BIN_EXE_zeta");
+    let output = std::process::Command::new(binary)
+        .args(["run", "testdata/modules_ok"])
+        .output()
+        .expect("zeta run should run");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout should be utf-8"),
+        "42\n"
+    );
+}
+
 fn source_file(path: &str, source: &str) -> zeta::module_graph::SourceFile {
     zeta::module_graph::SourceFile {
         path: path.to_string(),
