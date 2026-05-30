@@ -63,17 +63,19 @@ const publicDocs = [
 
   const docChecks = [];
   for (const [path, title] of publicDocs) {
-    const response = await page.goto(new URL(path, baseUrl).toString(), { waitUntil: "domcontentloaded" });
+    const response = await page.goto(new URL(path, baseUrl).toString(), { waitUntil: "networkidle" });
     const h1 = await page.locator("h1").first().innerText();
     const navHome = await page.locator(".doc-nav a", { hasText: "官网首页" }).count();
     const navDocs = await page.locator(".doc-nav a", { hasText: "文档中心" }).count();
+    const navLinkColor = await page.locator(".doc-nav a").first().evaluate((node) => getComputedStyle(node).color);
     docChecks.push({
       path,
       status: response ? response.status() : 0,
       h1,
       navHome,
       navDocs,
-      ok: Boolean(response?.ok()) && h1 === title && navHome > 0 && navDocs > 0,
+      navLinkColor,
+      ok: Boolean(response?.ok()) && h1 === title && navHome > 0 && navDocs > 0 && navLinkColor === "rgb(17, 17, 17)",
     });
   }
 
