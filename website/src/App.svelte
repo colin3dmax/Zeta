@@ -143,8 +143,36 @@ fn main() -> Int {
 }`,
     bool: `fn main() -> Bool {
   return true && !false;
+}`,
+    modules: `// file: main.zeta
+module demo.app;
+import demo.math;
+
+fn main() -> Int {
+  return answer();
+}
+
+// file: math.zeta
+module demo.math;
+
+export fn answer() -> Int {
+  return 42;
 }`
   };
+
+  const featureTests = [
+    { name: "模块/import/export", mode: "check-module-graph", example: "modules", expected: "ok" },
+    { name: "Int 算术", mode: "run", source: "fn main() -> Int { return 40 + 2; }", expected: "42" },
+    { name: "Bool 逻辑", mode: "run", example: "bool", expected: "true" },
+    { name: "let mut / 赋值", mode: "run", example: "bindings", expected: "42" },
+    { name: "函数调用", mode: "run", example: "functions", expected: "42" },
+    { name: "if / while", mode: "run", example: "control", expected: "42" },
+    { name: "struct 字面量 / 字段访问", mode: "run", example: "struct", expected: "42" },
+    { name: "enum 变体", mode: "run", example: "enum", expected: "42" },
+    { name: "match 分支", mode: "run", example: "match", expected: "42" },
+    { name: "数据声明 AST", mode: "ast", example: "data", expectedIncludes: "Struct name=User" },
+    { name: "标准 import 边界", mode: "check", source: "import std.core;\nimport std.io;\nfn main() -> Int { return 42; }", expected: "ok" }
+  ];
 
   let active = "overview";
   let source = sample;
@@ -156,6 +184,9 @@ fn main() -> Int {
   let sourceCompletionPrefix = "";
   let replInput = "";
   let replRunning = false;
+  let featureTestRunning = false;
+  let featureTestOutput = "尚未运行。";
+  let featureTestResults = [];
   let replCompletionOpen = false;
   let replCompletionPrefix = "";
   let replInputEl;
@@ -174,6 +205,37 @@ fn main() -> Int {
     } finally {
       runningMode = "";
     }
+  }
+
+  async function runFeatureTests() {
+    featureTestRunning = true;
+    featureTestOutput = "running...";
+    featureTestResults = [];
+    const results = [];
+    for (const test of featureTests) {
+      const testSource = test.source ?? playgroundExamples[test.example];
+      try {
+        const result = await runZeta(test.mode, testSource);
+        const passed = result.ok && (
+          test.expectedIncludes
+            ? result.output.includes(test.expectedIncludes)
+            : result.output.trim() === test.expected
+        );
+        results.push({ ...test, passed, output: result.output });
+      } catch (error) {
+        results.push({ ...test, passed: false, output: error.message });
+      }
+    }
+    featureTestResults = results;
+    const passed = results.filter((result) => result.passed).length;
+    featureTestOutput = `${passed}/${results.length} passed`;
+    featureTestRunning = false;
+  }
+
+  function loadFeatureTest(test) {
+    source = test.source ?? playgroundExamples[test.example] ?? sample;
+    output = `Feature test: ${test.name}\nMode: ${test.mode}\nExpected: ${test.expected ?? test.expectedIncludes}`;
+    active = "playground";
   }
 
   function escapeHtml(value) {
@@ -524,6 +586,7 @@ python3 tools/check-vscode-extension.py</code></pre>
         <button type="button" on:click={() => loadPlaygroundExample("enum")}>Enum</button>
         <button type="button" on:click={() => loadPlaygroundExample("match")}>Match</button>
         <button type="button" on:click={() => loadPlaygroundExample("data")}>数据声明</button>
+        <button type="button" on:click={() => loadPlaygroundExample("modules")}>模块图</button>
       </div>
       <div class="tool-window playground-panel">
         <div class="window-chrome light">
@@ -568,6 +631,7 @@ python3 tools/check-vscode-extension.py</code></pre>
               <div class="toolbar compact">
                 <button disabled={runningMode !== ""} on:click={() => runPlayground("ast")}>AST</button>
                 <button disabled={runningMode !== ""} on:click={() => runPlayground("check")}>Check</button>
+                <button disabled={runningMode !== ""} on:click={() => runPlayground("check-module-graph")}>Graph</button>
                 <button disabled={runningMode !== ""} on:click={() => runPlayground("run")}>Run</button>
               </div>
             </div>
@@ -581,6 +645,29 @@ python3 tools/check-vscode-extension.py</code></pre>
         </div>
       </div>
       <p class="note">Playground 直接加载 Zeta 编译器前端编译出的 <code>zeta.wasm</code>，AST、Check 和 Run 都执行当前仓库里的真实 Stage 0 编译器逻辑。</p>
+      <div class="feature-tests">
+        <div class="feature-tests-head">
+          <div>
+            <p class="kicker">Feature Tests</p>
+            <h3>语言特性在线测试</h3>
+          </div>
+          <button type="button" disabled={featureTestRunning} on:click={runFeatureTests}>{featureTestRunning ? "Running" : "Run All"}</button>
+        </div>
+        <p class="note">{featureTestOutput}</p>
+        <div class="feature-test-grid">
+          {#each featureTests as test}
+            <button type="button" class="feature-test-card" on:click={() => loadFeatureTest(test)}>
+              <span>{test.name}</span>
+              <small>{test.mode} · {test.expected ?? test.expectedIncludes}</small>
+              {#if featureTestResults.find((result) => result.name === test.name)}
+                <strong class:pass={featureTestResults.find((result) => result.name === test.name)?.passed}>
+                  {featureTestResults.find((result) => result.name === test.name)?.passed ? "pass" : "fail"}
+                </strong>
+              {/if}
+            </button>
+          {/each}
+        </div>
+      </div>
     </section>
 
     <section id="tutorial">

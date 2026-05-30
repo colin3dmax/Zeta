@@ -4,15 +4,23 @@ let chromium;
 try {
   ({ chromium } = require(playwrightRequire));
 } catch (error) {
-  console.error(
-    [
-      "Unable to load Playwright.",
-      "Install it where Node can resolve `playwright`, or set ZETA_PLAYWRIGHT_REQUIRE to a playwright package path.",
-      `Tried: ${playwrightRequire}`,
-      error.message,
-    ].join("\n")
-  );
-  process.exit(2);
+  try {
+    const { execFileSync } = require("node:child_process");
+    const { join } = require("node:path");
+    const globalRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
+    ({ chromium } = require(join(globalRoot, "playwright")));
+  } catch (globalError) {
+    console.error(
+      [
+        "Unable to load Playwright.",
+        "Install it where Node can resolve `playwright`, install it globally with npm, or set ZETA_PLAYWRIGHT_REQUIRE to a playwright package path.",
+        `Tried: ${playwrightRequire}`,
+        error.message,
+        globalError.message,
+      ].join("\n")
+    );
+    process.exit(2);
+  }
 }
 
 const baseUrl = process.env.ZETA_LIVE_URL || "https://zeta.jennieapp.com/";
@@ -48,7 +56,7 @@ const publicDocs = [
   await page.waitForFunction(() => document.body.innerText.includes("true"));
 
   await page.getByRole("link", { name: "Playground", exact: true }).click();
-  await page.locator("button", { hasText: "Run" }).click();
+  await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "Run", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
 
   const wasmName = await page.evaluate(() => {
@@ -58,18 +66,21 @@ const publicDocs = [
     return entry ? entry.name.match(/zeta-[a-f0-9]+\.wasm/)?.[0] ?? null : null;
   });
 
-  await page.locator("button", { hasText: "布尔逻辑" }).click();
-  await page.locator("button", { hasText: "AST" }).click();
+  await page.locator(".toolbar.examples").getByRole("button", { name: "布尔逻辑", exact: true }).click();
+  await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "AST", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.includes("Unary op=not"));
-  await page.locator("button", { hasText: "Match" }).click();
-  await page.locator("button", { hasText: "Run" }).click();
+  await page.locator(".toolbar.examples").getByRole("button", { name: "Match", exact: true }).click();
+  await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "Run", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
-  await page.locator("button", { hasText: "Struct" }).click();
-  await page.locator("button", { hasText: "Run" }).click();
+  await page.locator(".toolbar.examples").getByRole("button", { name: "Struct", exact: true }).click();
+  await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "Run", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
-  await page.locator("button", { hasText: "Enum" }).click();
-  await page.locator("button", { hasText: "Run" }).click();
+  await page.locator(".toolbar.examples").getByRole("button", { name: "Enum", exact: true }).click();
+  await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "Run", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
+  await page.getByRole("button", { name: "Run All", exact: true }).click();
+  await page.waitForFunction(() => document.body.innerText.includes("11/11 passed"));
+  const featureTestsPassed = await page.locator(".feature-test-card strong.pass").count();
 
   const docChecks = [];
   for (const [path, title] of publicDocs) {
@@ -102,6 +113,7 @@ const publicDocs = [
     loadedExample: loadedExample.includes("fn add"),
     replOperatorTokens: operatorCount,
     replBoolTokens: boolCount,
+    featureTestsPassed,
     docChecks,
     consoleErrors,
   };

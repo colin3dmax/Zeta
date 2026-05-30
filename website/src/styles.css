@@ -753,6 +753,77 @@ textarea {
   font-size: 14px;
 }
 
+.feature-tests {
+  margin-top: 24px;
+  border: 1px solid #111;
+  background: #fff;
+  box-shadow: 6px 6px 0 #d9d9d9;
+}
+
+.feature-tests-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border-bottom: 1px solid #111;
+}
+
+.feature-tests-head h3 {
+  margin: 0;
+}
+
+.feature-test-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 1px;
+  background: #111;
+}
+
+.feature-test-card {
+  display: grid;
+  gap: 6px;
+  min-height: 96px;
+  margin: 0;
+  padding: 14px;
+  border: 0;
+  background: #fff;
+  color: #111;
+  text-align: left;
+  box-shadow: none;
+}
+
+.feature-test-card:hover {
+  transform: none;
+  background: #f4f4f4;
+  color: #111;
+  box-shadow: none;
+}
+
+.feature-test-card span {
+  font-weight: 850;
+}
+
+.feature-test-card small {
+  color: #555;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.feature-test-card strong {
+  width: fit-content;
+  padding: 2px 6px;
+  border: 1px solid #111;
+  background: #111;
+  color: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.feature-test-card strong.pass {
+  background: #fff;
+  color: #111;
+}
+
 .links {
   display: grid;
   gap: 10px;

@@ -61,6 +61,10 @@ fn run_mode(mode: &str, source: &str) -> String {
             Ok(()) => playground_json(true, "ok"),
             Err(diagnostics) => playground_json(false, &format_diagnostics(&diagnostics)),
         },
+        "check-module-graph" => match crate::module_graph::check_sources(&virtual_files(source)) {
+            Ok(()) => playground_json(true, "ok"),
+            Err(errors) => playground_json(false, &format_source_diagnostics(&errors)),
+        },
         "run" => match crate::run_source(source) {
             Ok(value) => playground_json(true, &value.to_string()),
             Err(diagnostics) => playground_json(false, &format_diagnostics(&diagnostics)),
@@ -69,10 +73,53 @@ fn run_mode(mode: &str, source: &str) -> String {
     }
 }
 
+fn virtual_files(source: &str) -> Vec<crate::module_graph::SourceFile> {
+    let mut files = Vec::new();
+    let mut current_path = String::from("main.zeta");
+    let mut current_source = String::new();
+    let mut saw_marker = false;
+
+    for line in source.lines() {
+        if let Some(path) = line.trim().strip_prefix("// file: ") {
+            if saw_marker || !current_source.trim().is_empty() {
+                files.push(crate::module_graph::SourceFile {
+                    path: current_path,
+                    source: current_source,
+                });
+            }
+            current_path = path.trim().to_string();
+            current_source = String::new();
+            saw_marker = true;
+        } else {
+            current_source.push_str(line);
+            current_source.push('\n');
+        }
+    }
+
+    files.push(crate::module_graph::SourceFile {
+        path: current_path,
+        source: current_source,
+    });
+    files
+}
+
 fn format_diagnostics(diagnostics: &[crate::diagnostic::Diagnostic]) -> String {
     diagnostics
         .iter()
         .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn format_source_diagnostics(errors: &[crate::module_graph::SourceDiagnostics]) -> String {
+    errors
+        .iter()
+        .flat_map(|error| {
+            error
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.render(&error.source, &error.path))
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }

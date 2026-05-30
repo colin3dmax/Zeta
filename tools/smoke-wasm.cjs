@@ -68,6 +68,7 @@ const checks = [
   ["run", "struct User { name: String, age: Int, } fn main() -> Int { let user: User = User { name: \"Ada\", age: 42 }; return user.age; }", "42"],
   ["run", enumProgram, "42"],
   ["check", "fn main() -> Bool { return true && !false; }", "ok"],
+  ["check-module-graph", "// file: main.zeta\nmodule demo.app;\nimport demo.math;\nfn main() -> Int { return answer(); }\n// file: math.zeta\nmodule demo.math;\nexport fn answer() -> Int { return 42; }\n", "ok"],
 ];
 
 for (const [mode, source, expected] of checks) {
