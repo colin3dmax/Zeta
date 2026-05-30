@@ -14,6 +14,7 @@ Runs the continuous Zeta verification chain.
 Default checks:
   cargo fmt --check
   cargo test
+  sh tools/smoke-wasm.sh
   python3 tools/check-docs.py
   python3 tools/check-vscode-extension.py
   sh tools/build-website.sh
@@ -60,6 +61,9 @@ cargo fmt --check
 
 step "cargo test"
 cargo test
+
+step "sh tools/smoke-wasm.sh"
+sh tools/smoke-wasm.sh
 
 step "python3 tools/check-docs.py"
 python3 tools/check-docs.py

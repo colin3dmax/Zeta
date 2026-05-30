@@ -72,7 +72,7 @@ python3 tools/check-vscode-extension.py
 sh tools/verify.sh
 ```
 
-`tools/verify.sh` 会依次执行格式检查、Rust 测试、文档检查、VS Code 插件检查、WASM/官网构建和 `git diff --check`；任一步失败都会立即以非零状态退出。需要发布并跑线上 smoke 时使用：
+`tools/verify.sh` 会依次执行格式检查、Rust 测试、WASM smoke、文档检查、VS Code 插件检查、WASM/官网构建和 `git diff --check`；任一步失败都会立即以非零状态退出。需要发布并跑线上 smoke 时使用：
 
 ```sh
 ZETA_PLAYWRIGHT_REQUIRE=/path/to/node_modules/playwright sh tools/verify.sh --deploy --live
@@ -95,6 +95,7 @@ python3 tools/serve-docs.py
 官网使用 Svelte + Vite，在线 Playground 通过 `wasm32-unknown-unknown` 运行真实 Zeta 编译器前端。
 
 ```sh
+sh tools/smoke-wasm.sh
 sh tools/build-website.sh
 cd website
 npm run dev

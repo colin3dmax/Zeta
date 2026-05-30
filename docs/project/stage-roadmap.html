@@ -57,8 +57,8 @@
         <tr>
           <td>Stage 0D：backend smoke</td>
           <td>验证 Zeta 语义能离开解释器，在其他 target 上保持一致。</td>
-          <td>WASM/WASI smoke、LLVM native smoke、artifact size 记录。</td>
-          <td>同一 corpus 在 MIR interpreter、WASI 和 native smoke 输出一致。</td>
+          <td>WASM smoke、WASI target build smoke、LLVM native smoke、artifact size 记录。</td>
+          <td><code>tools/smoke-wasm.sh</code> 能构建 <code>wasm32-unknown-unknown</code>，验证 Playground exports，并让 struct/enum/match corpus 返回同一结果；WASI target 未安装时必须明确跳过。</td>
         </tr>
         <tr>
           <td>Stage 1：Zeta 前端模块</td>
