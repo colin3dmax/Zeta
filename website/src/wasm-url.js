@@ -1,1 +1,1 @@
-export const ZETA_WASM_URL = "/zeta-0bd7f804a3ff08dc.wasm";
+export const ZETA_WASM_URL = "/zeta-974ec902b55726af.wasm";

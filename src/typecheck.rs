@@ -12,8 +12,27 @@ enum Type {
 }
 
 pub fn check(module: &Module) -> Result<(), Vec<Diagnostic>> {
+    check_with_external_functions(module, &[])
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternalFunction {
+    pub name: String,
+    pub params: Vec<String>,
+    pub return_type: Option<String>,
+}
+
+pub fn check_with_external_functions(
+    module: &Module,
+    external_functions: &[ExternalFunction],
+) -> Result<(), Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
-    let functions = function_signatures(module);
+    let mut functions = function_signatures(module);
+    for function in external_functions {
+        functions
+            .entry(function.name.clone())
+            .or_insert_with(|| external_function_signature(function));
+    }
     let structs = struct_types(module);
     let enums = enum_types(module);
     for item in &module.items {
@@ -26,6 +45,21 @@ pub fn check(module: &Module) -> Result<(), Vec<Diagnostic>> {
         Ok(())
     } else {
         Err(diagnostics)
+    }
+}
+
+fn external_function_signature(function: &ExternalFunction) -> FunctionSignature {
+    FunctionSignature {
+        params: function
+            .params
+            .iter()
+            .map(|param| parse_type(param))
+            .collect(),
+        return_type: function
+            .return_type
+            .as_deref()
+            .map(parse_type)
+            .unwrap_or(Type::Unit),
     }
 }
 

@@ -8,7 +8,36 @@ module demo.app;
 import demo.math;
 
 fn main() -> Int {
+  return answer();
+}
+"#,
+        ),
+        source_file(
+            "math.zeta",
+            r#"
+module demo.math;
+
+export fn answer() -> Int {
   return 42;
+}
+"#,
+        ),
+    ];
+
+    zeta::module_graph::check_sources(&files).expect("local module import should resolve");
+}
+
+#[test]
+fn module_graph_does_not_import_private_functions() {
+    let files = vec![
+        source_file(
+            "app.zeta",
+            r#"
+module demo.app;
+import demo.math;
+
+fn main() -> Int {
+  return answer();
 }
 "#,
         ),
@@ -24,7 +53,9 @@ fn answer() -> Int {
         ),
     ];
 
-    zeta::module_graph::check_sources(&files).expect("local module import should resolve");
+    let errors =
+        zeta::module_graph::check_sources(&files).expect_err("private function should not import");
+    assert_eq!(errors[0].diagnostics[0].code, "RESOLVE_UNKNOWN_FUNCTION");
 }
 
 #[test]

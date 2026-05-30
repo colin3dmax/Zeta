@@ -4,16 +4,25 @@ use crate::std_api;
 use std::collections::{HashMap, HashSet};
 
 pub fn resolve(module: &Module) -> Result<(), Vec<Diagnostic>> {
-    resolve_with_imports(module, &HashSet::new())
+    resolve_with_imports_and_functions(module, &HashSet::new(), &HashSet::new())
 }
 
 pub fn resolve_with_imports(
     module: &Module,
     local_imports: &HashSet<String>,
 ) -> Result<(), Vec<Diagnostic>> {
+    resolve_with_imports_and_functions(module, local_imports, &HashSet::new())
+}
+
+pub fn resolve_with_imports_and_functions(
+    module: &Module,
+    local_imports: &HashSet<String>,
+    external_functions: &HashSet<String>,
+) -> Result<(), Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
     check_top_level(module, local_imports, &mut diagnostics);
-    let functions = function_names(module);
+    let mut functions = function_names(module);
+    functions.extend(external_functions.iter().cloned());
     let top_level_names = top_level_names(module);
     for item in &module.items {
         if let Item::Function(function) = item {

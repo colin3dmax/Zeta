@@ -3,5 +3,5 @@ import demo.math;
 import std.core;
 
 fn main() -> Int {
-  return 42;
+  return answer();
 }

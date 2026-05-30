@@ -64,7 +64,7 @@
         <tr>
           <td>本地 module graph</td>
           <td>目录检查可导入</td>
-          <td><code>zeta check &lt;directory&gt;</code> 会读取目录内 <code>.zeta</code> 文件，允许导入其中声明的模块。</td>
+          <td><code>zeta check &lt;directory&gt;</code> 会读取目录内 <code>.zeta</code> 文件，允许导入其中声明的模块；被导入模块里的 <code>export fn</code> 可在当前文件直接调用。</td>
         </tr>
         <tr>
           <td><code>std.*</code> 其他路径或缺失本地模块</td>
