@@ -60,6 +60,9 @@ const publicDocs = [
   await page.locator("button", { hasText: "布尔逻辑" }).click();
   await page.locator("button", { hasText: "AST" }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.includes("Unary op=not"));
+  await page.locator("button", { hasText: "Match" }).click();
+  await page.locator("button", { hasText: "Run" }).click();
+  await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
 
   const docChecks = [];
   for (const [path, title] of publicDocs) {

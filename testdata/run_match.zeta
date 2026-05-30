@@ -1,0 +1,15 @@
+fn main() -> Int {
+  let value: Int = 2;
+  match value {
+    1 -> {
+      return 10;
+    },
+    2 -> {
+      return 42;
+    },
+    _ -> {
+      return 0;
+    },
+  }
+  return 0;
+}

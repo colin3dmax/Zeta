@@ -41,6 +41,13 @@ fn run_executes_boolean_logic_conditions() {
 }
 
 #[test]
+fn run_executes_scalar_match() {
+    let value =
+        zeta::run_source(include_str!("../testdata/run_match.zeta")).expect("program should run");
+    assert_eq!(value.to_string(), "42");
+}
+
+#[test]
 fn mir_interpreter_executes_lowered_program() {
     let source = include_str!("../testdata/run_mut.zeta");
     let module = zeta::parse_source(source).expect("source should parse");
@@ -49,6 +56,26 @@ fn mir_interpreter_executes_lowered_program() {
 
     let program = zeta::mir::lower(&module);
     let value = zeta::runtime::run_mir(&program).expect("MIR program should run");
+
+    assert_eq!(value.to_string(), "42");
+}
+
+#[test]
+fn repl_executes_scalar_match() {
+    let mut session = zeta::runtime::ReplSession::new();
+    let value = zeta::eval_repl_source(
+        &mut session,
+        r#"
+fn main() -> Int {
+  match 1 {
+    1 -> { return 42; },
+    _ -> { return 0; },
+  }
+  return 0;
+}
+"#,
+    )
+    .expect("REPL match program should run");
 
     assert_eq!(value.to_string(), "42");
 }

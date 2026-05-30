@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, Function, Item, Module, Param, Stmt, UnaryOp};
+use crate::ast::{BinaryOp, Expr, Function, Item, Module, Param, Pattern, Stmt, UnaryOp};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
@@ -34,9 +34,27 @@ pub enum MirStmt {
         condition: MirExpr,
         body: Vec<MirStmt>,
     },
-    UnsupportedMatch,
+    Match {
+        value: MirExpr,
+        arms: Vec<MirMatchArm>,
+    },
     Return(Option<MirExpr>),
     Drop(MirExpr),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirMatchArm {
+    pub pattern: MirPattern,
+    pub body: Vec<MirStmt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MirPattern {
+    Name(String),
+    Int(String),
+    String(String),
+    Bool(bool),
+    Wildcard,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,9 +143,28 @@ fn lower_stmt(stmt: &Stmt) -> MirStmt {
             condition: lower_expr(condition),
             body: body.iter().map(lower_stmt).collect(),
         },
-        Stmt::Match { .. } => MirStmt::UnsupportedMatch,
+        Stmt::Match { value, arms } => MirStmt::Match {
+            value: lower_expr(value),
+            arms: arms
+                .iter()
+                .map(|arm| MirMatchArm {
+                    pattern: lower_pattern(&arm.pattern),
+                    body: arm.body.iter().map(lower_stmt).collect(),
+                })
+                .collect(),
+        },
         Stmt::Return(value) => MirStmt::Return(value.as_ref().map(lower_expr)),
         Stmt::Expr(value) => MirStmt::Drop(lower_expr(value)),
+    }
+}
+
+fn lower_pattern(pattern: &Pattern) -> MirPattern {
+    match pattern {
+        Pattern::Name(name) => MirPattern::Name(name.clone()),
+        Pattern::Int(value) => MirPattern::Int(value.clone()),
+        Pattern::String(value) => MirPattern::String(value.clone()),
+        Pattern::Bool(value) => MirPattern::Bool(*value),
+        Pattern::Wildcard => MirPattern::Wildcard,
     }
 }
 
@@ -224,8 +261,16 @@ impl DumpCtx {
                 }
                 out.push_str(&format!("{pad}end_loop\n"));
             }
-            MirStmt::UnsupportedMatch => {
-                out.push_str(&format!("{pad}unsupported match\n"));
+            MirStmt::Match { value, arms } => {
+                let value_temp = self.dump_expr(value, indent, out);
+                out.push_str(&format!("{pad}match {value_temp}\n"));
+                for arm in arms {
+                    out.push_str(&format!("{pad}  arm {}\n", pattern_text(&arm.pattern)));
+                    for stmt in &arm.body {
+                        self.dump_stmt(stmt, indent + 2, out);
+                    }
+                }
+                out.push_str(&format!("{pad}end_match\n"));
             }
             MirStmt::Return(Some(value)) => {
                 let value_temp = self.dump_expr(value, indent, out);
@@ -302,6 +347,16 @@ impl DumpCtx {
         let temp = format!("_t{}", self.next_temp);
         self.next_temp += 1;
         temp
+    }
+}
+
+fn pattern_text(pattern: &MirPattern) -> String {
+    match pattern {
+        MirPattern::Name(name) => format!("name:{name}"),
+        MirPattern::Int(value) => format!("int:{value}"),
+        MirPattern::String(value) => format!("string:{value:?}"),
+        MirPattern::Bool(value) => format!("bool:{value}"),
+        MirPattern::Wildcard => "_".to_string(),
     }
 }
 

@@ -1,6 +1,6 @@
-use crate::ast::{BinaryOp, Expr, Function, Item, Module, Stmt, UnaryOp};
+use crate::ast::{BinaryOp, Expr, Function, Item, Module, Pattern, Stmt, UnaryOp};
 use crate::diagnostic::{Diagnostic, Span};
-use crate::mir::{self, MirExpr, MirFunction, MirStmt, Program};
+use crate::mir::{self, MirExpr, MirFunction, MirPattern, MirStmt, Program};
 use std::collections::HashMap;
 use std::fmt;
 
@@ -194,10 +194,18 @@ impl MirRuntime {
                 }
                 Ok(Control::Continue)
             }
-            MirStmt::UnsupportedMatch => Err(runtime_error(
-                "RUNTIME_UNSUPPORTED_MATCH",
-                "match execution is not implemented in Stage 0",
-            )),
+            MirStmt::Match { value, arms } => {
+                let value = self.eval_expr(value, locals)?;
+                for arm in arms {
+                    if mir_pattern_matches(&arm.pattern, &value)? {
+                        return self.eval_stmts(&arm.body, locals);
+                    }
+                }
+                Err(runtime_error(
+                    "RUNTIME_MATCH_NON_EXHAUSTIVE",
+                    "match did not select an arm",
+                ))
+            }
             MirStmt::Return(Some(value)) => Ok(Control::Return(self.eval_expr(value, locals)?)),
             MirStmt::Return(None) => Ok(Control::Return(Value::Unit)),
             MirStmt::Drop(value) => {
@@ -388,10 +396,18 @@ impl Runtime {
                 }
                 Ok(Control::Continue)
             }
-            Stmt::Match { .. } => Err(runtime_error(
-                "RUNTIME_UNSUPPORTED_MATCH",
-                "match execution is not implemented in Stage 0",
-            )),
+            Stmt::Match { value, arms } => {
+                let value = self.eval_expr(value, locals)?;
+                for arm in arms {
+                    if pattern_matches(&arm.pattern, &value)? {
+                        return self.eval_stmts(&arm.body, locals);
+                    }
+                }
+                Err(runtime_error(
+                    "RUNTIME_MATCH_NON_EXHAUSTIVE",
+                    "match did not select an arm",
+                ))
+            }
             Stmt::Return(Some(value)) => Ok(Control::Return(self.eval_expr(value, locals)?)),
             Stmt::Return(None) => Ok(Control::Return(Value::Unit)),
             Stmt::Expr(value) => {
@@ -559,6 +575,50 @@ fn expect_bool(value: Value, code: &'static str) -> Result<bool, Diagnostic> {
         return Err(runtime_error(code, "operand must evaluate to Bool"));
     };
     Ok(value)
+}
+
+fn mir_pattern_matches(pattern: &MirPattern, value: &Value) -> Result<bool, Diagnostic> {
+    match pattern {
+        MirPattern::Name(name) => Err(runtime_error(
+            "RUNTIME_UNSUPPORTED_PATTERN",
+            format!("name pattern `{name}` is not executable yet"),
+        )),
+        MirPattern::Int(pattern) => {
+            let parsed = pattern.parse::<i64>().map_err(|_| {
+                runtime_error(
+                    "RUNTIME_INVALID_PATTERN",
+                    format!("invalid Int match pattern `{pattern}`"),
+                )
+            })?;
+            Ok(matches!(value, Value::Int(value) if *value == parsed))
+        }
+        MirPattern::String(pattern) => {
+            Ok(matches!(value, Value::String(value) if value == pattern))
+        }
+        MirPattern::Bool(pattern) => Ok(matches!(value, Value::Bool(value) if value == pattern)),
+        MirPattern::Wildcard => Ok(true),
+    }
+}
+
+fn pattern_matches(pattern: &Pattern, value: &Value) -> Result<bool, Diagnostic> {
+    match pattern {
+        Pattern::Name(name) => Err(runtime_error(
+            "RUNTIME_UNSUPPORTED_PATTERN",
+            format!("name pattern `{name}` is not executable yet"),
+        )),
+        Pattern::Int(pattern) => {
+            let parsed = pattern.parse::<i64>().map_err(|_| {
+                runtime_error(
+                    "RUNTIME_INVALID_PATTERN",
+                    format!("invalid Int match pattern `{pattern}`"),
+                )
+            })?;
+            Ok(matches!(value, Value::Int(value) if *value == parsed))
+        }
+        Pattern::String(pattern) => Ok(matches!(value, Value::String(value) if value == pattern)),
+        Pattern::Bool(pattern) => Ok(matches!(value, Value::Bool(value) if value == pattern)),
+        Pattern::Wildcard => Ok(true),
+    }
 }
 
 fn runtime_error(code: &'static str, message: impl Into<String>) -> Diagnostic {

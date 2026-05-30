@@ -92,6 +92,21 @@ fn main() {
 }
 
 #[test]
+fn check_rejects_match_pattern_type_mismatch() {
+    let source = r#"
+fn main() {
+  match true {
+    1 -> { return; },
+    _ -> { return; },
+  }
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("Int pattern against Bool should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_MATCH_PATTERN");
+    assert_eq!(diagnostics[0].span, span_of(source, "true"));
+}
+
+#[test]
 fn cli_check_renders_line_column_and_source_snippet() {
     let source = r#"
 fn main() {

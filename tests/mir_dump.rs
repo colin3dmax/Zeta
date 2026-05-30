@@ -24,3 +24,11 @@ fn cli_dumps_run_mut_mir() {
         include_str!("../testdata/run_mut.mir")
     );
 }
+
+#[test]
+fn dumps_run_match_mir() {
+    let source = include_str!("../testdata/run_match.zeta");
+    let expected = include_str!("../testdata/run_match.mir");
+    let dump = zeta::dump_mir(source).expect("source should lower to MIR");
+    assert_eq!(dump, expected);
+}

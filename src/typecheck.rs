@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, Function, Item, Module, Stmt, UnaryOp};
+use crate::ast::{BinaryOp, Expr, Function, Item, Module, Pattern, Stmt, UnaryOp};
 use crate::diagnostic::{Diagnostic, Span};
 use std::collections::HashMap;
 
@@ -183,8 +183,9 @@ fn check_stmts(
                 );
             }
             Stmt::Match { value, arms } => {
-                let _ = infer_expr(value, locals, functions, diagnostics);
+                let value_type = infer_expr(value, locals, functions, diagnostics);
                 for arm in arms {
+                    check_pattern(&arm.pattern, &value_type, value.span(), diagnostics);
                     let mut arm_locals = locals.clone();
                     check_stmts(
                         &arm.body,
@@ -218,6 +219,38 @@ fn check_stmts(
                 let _ = infer_expr(value, locals, functions, diagnostics);
             }
         }
+    }
+}
+
+fn check_pattern(
+    pattern: &Pattern,
+    value_type: &Type,
+    value_span: Span,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    match pattern {
+        Pattern::Int(_) => expect_type(
+            value_type,
+            &Type::Int,
+            "TYPE_MATCH_PATTERN",
+            value_span,
+            diagnostics,
+        ),
+        Pattern::String(_) => expect_type(
+            value_type,
+            &Type::String,
+            "TYPE_MATCH_PATTERN",
+            value_span,
+            diagnostics,
+        ),
+        Pattern::Bool(_) => expect_type(
+            value_type,
+            &Type::Bool,
+            "TYPE_MATCH_PATTERN",
+            value_span,
+            diagnostics,
+        ),
+        Pattern::Name(_) | Pattern::Wildcard => {}
     }
 }
 

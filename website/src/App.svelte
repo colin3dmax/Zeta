@@ -27,8 +27,8 @@
   ];
   const docs = {
     "getting-started": "从表达式开始：输入 40 + 2 可以直接执行；使用 let 声明局部绑定；需要重新赋值时使用 let mut；if/while 条件可以使用比较和布尔逻辑表达式。",
-    tutorial: "推荐路径：表达式 -> let/let mut -> 比较/布尔逻辑/控制流 -> fn -> struct/enum -> check/run -> Playground/REPL。",
-    api: "Stage 0 API 覆盖 Int、String、Bool、module/import、fn、let/let mut、赋值、比较、布尔逻辑、return、if/while、match、struct、enum 和 std 命名空间占位。",
+    tutorial: "推荐路径：表达式 -> let/let mut -> 比较/布尔逻辑/控制流 -> fn -> 标量 match -> struct/enum -> check/run -> Playground/REPL。",
+    api: "Stage 0 API 覆盖 Int、String、Bool、module/import、fn、let/let mut、赋值、比较、布尔逻辑、return、if/while、标量 match、struct、enum 和 std 命名空间占位。",
     std: "std 是标准库命名空间占位。当前可用 import std.io; 验证 import 语法，具体 IO API 后续接入。",
     playground: "Playground 通过 zeta.wasm 运行真实编译器前端，支持 AST、Check 和 Run。",
     module: "module 声明当前源码模块，例如 module demo.core;",
@@ -38,7 +38,7 @@
     mut: "mut 标记可变局部绑定，之后可以执行 answer = answer + 2;",
     if: "if 使用 Bool 条件分支，例如 if ready && !done { return 42; }",
     while: "while 使用 Bool 条件循环，例如 while count < 3 && ready { count = count + 1; }",
-    match: "match 对简单模式分支。",
+    match: "match 对 Int/String/Bool 字面量和 _ 通配模式执行分支。",
     struct: "struct 声明记录类型。",
     enum: "enum 声明标签集合。",
     Int: "Int 是当前 Stage 0 的整数标量类型。",
@@ -107,6 +107,15 @@ export struct User {
 enum ResultTag {
   Ok,
   Err,
+}`,
+    match: `fn main() -> Int {
+  let value: Int = 2;
+  match value {
+    1 -> { return 10; },
+    2 -> { return 42; },
+    _ -> { return 0; },
+  }
+  return 0;
 }`,
     bool: `fn main() -> Bool {
   return true && !false;
@@ -234,7 +243,7 @@ enum ResultTag {
   }
 
   function replApi() {
-    return "Zeta Stage 0 API\nInt/String/Bool\nmodule/import/fn/let/let mut/assignment/comparison/boolean logic/return/if/while/match/struct/enum\nstd: 标准库命名空间占位，当前示例 import std.io;";
+    return "Zeta Stage 0 API\nInt/String/Bool\nmodule/import/fn/let/let mut/assignment/comparison/boolean logic/return/if/while/scalar match/struct/enum\nstd: 标准库命名空间占位，当前示例 import std.io;";
   }
 
   async function submitRepl() {
@@ -486,6 +495,7 @@ python3 tools/check-vscode-extension.py</code></pre>
         <button type="button" on:click={() => loadPlaygroundExample("control")}>控制流</button>
         <button type="button" on:click={() => loadPlaygroundExample("functions")}>函数调用</button>
         <button type="button" on:click={() => loadPlaygroundExample("bool")}>布尔逻辑</button>
+        <button type="button" on:click={() => loadPlaygroundExample("match")}>Match</button>
         <button type="button" on:click={() => loadPlaygroundExample("data")}>数据声明</button>
       </div>
       <div class="tool-window playground-panel">
