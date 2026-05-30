@@ -1,0 +1,13 @@
+enum ResultTag {
+  Ok,
+  Err,
+}
+
+fn main() -> Int {
+  let tag: ResultTag = ResultTag.Ok;
+  match tag {
+    ResultTag.Ok -> { return 42; },
+    ResultTag.Err -> { return 0; },
+  }
+  return 0;
+}

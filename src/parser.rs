@@ -282,6 +282,13 @@ impl Parser {
             TokenKind::Ident(name) => {
                 let name = name.clone();
                 self.pos += 1;
+                if self.consume_symbol(Symbol::Dot).is_some() {
+                    let variant = self.expect_ident("expected enum variant name after `.`")?;
+                    return Ok(Pattern::Variant {
+                        enum_name: name,
+                        variant,
+                    });
+                }
                 Ok(Pattern::Name(name))
             }
             TokenKind::Int(value) => {

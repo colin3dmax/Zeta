@@ -177,8 +177,8 @@ pub const TOPICS: &[ReplTopic] = &[
     },
     ReplTopic {
         name: "enum",
-        summary: "Declare a tagged set of variants.",
-        example: "enum ResultTag { Ok, Err, }",
+        summary: "Declare a tagged set of variants. Use qualified variants such as ResultTag.Ok.",
+        example: "let tag: ResultTag = ResultTag.Ok;",
     },
     ReplTopic {
         name: "Int",
@@ -209,12 +209,9 @@ pub fn complete(prefix: &str) -> Vec<&'static str> {
         })
         .filter(|name| name.starts_with(prefix))
         .collect::<Vec<_>>();
-    matches.extend(
-        TOPICS
-            .iter()
-            .map(|topic| topic.name)
-            .filter(|name| name.starts_with(prefix)),
-    );
+    matches.extend(TOPICS.iter().map(|topic| topic.name));
+    matches.extend(["std", "std.io", "std.core", "ResultTag.Ok", "ResultTag.Err"]);
+    matches.retain(|name| name.starts_with(prefix));
     matches.sort_unstable();
     matches.dedup();
     matches
@@ -245,33 +242,42 @@ pub fn help_text_colored() -> String {
 
 pub fn help_text_colored_lang(language: Language) -> String {
     if language == Language::Zh {
-        let mut out = String::from("命令\n");
+        let mut out = String::new();
+        out.push_str(&section_title("命令"));
         for (name, summary) in [
-            (":help", "显示命令、学习路径和常用主题。"),
-            (":api", "查看 Stage 0 API 和标准库概览。"),
-            (":topics", "列出终端内置文档主题。"),
-            (":examples", "显示当前阶段可直接运行的示例。"),
-            (":doc <topic>", "查询语言或 API 主题文档。"),
-            (":complete <prefix>", "列出补全候选。"),
-            (":lang zh|en", "切换本次 REPL 会话语言。"),
-            (":quit", "退出 REPL。"),
+            (":help", "查看命令、学习入口和常用主题"),
+            (":api", "浏览 Stage 0 API 和标准库边界"),
+            (":topics", "列出终端内置文档主题"),
+            (":examples", "显示当前阶段可运行示例"),
+            (":doc <topic>", "查看某个语言或 API 主题"),
+            (":complete <prefix>", "按前缀列出补全候选"),
+            (":lang zh|en", "切换本次 REPL 会话语言"),
+            (":quit", "退出 REPL"),
         ] {
-            out.push_str(&format!(
-                "  {:<24} {}\n",
+            out.push_str(&doc_row(
                 color(name, Style::Command),
-                summary
+                name,
+                &color(summary, Style::Hint),
+                22,
             ));
         }
-        out.push_str("\n学习入口\n");
-        out.push_str(&format!(
-            "  {}\n",
-            color(":doc getting-started", Style::Command)
-        ));
-        out.push_str(&format!("  {}\n", color(":doc tutorial", Style::Command)));
-        out.push_str(&format!("  {}\n", color(":api", Style::Command)));
-        out.push_str("\n主题\n  ");
-        out.push_str(&topic_names());
         out.push('\n');
+        out.push_str(&section_title("学习入口"));
+        for (name, summary) in [
+            (":doc getting-started", "从表达式、绑定、函数和运行命令开始"),
+            (":doc tutorial", "按阶段学习控制流、数据类型和工具链"),
+            (":api", "查看当前可用语言表面和标准库占位"),
+        ] {
+            out.push_str(&doc_row(
+                color(name, Style::Command),
+                name,
+                &color(summary, Style::Hint),
+                22,
+            ));
+        }
+        out.push('\n');
+        out.push_str(&section_title("主题索引"));
+        out.push_str(&topic_grid(4, 18));
         return out;
     }
 
@@ -296,20 +302,52 @@ pub fn help_text_colored_lang(language: Language) -> String {
     out
 }
 
+fn section_title(title: &str) -> String {
+    format!("{}\n", color(format!("◆ {title}"), Style::Bold))
+}
+
+fn doc_row(label: String, raw_label: &str, summary: &str, width: usize) -> String {
+    let padding = width.saturating_sub(display_width(raw_label));
+    format!("  {label}{}{}\n", " ".repeat(padding + 2), summary)
+}
+
+fn topic_grid(columns: usize, width: usize) -> String {
+    let mut out = String::new();
+    for row in TOPICS.chunks(columns) {
+        out.push_str("  ");
+        for topic in row {
+            out.push_str(&color(topic.name, Style::Command));
+            let padding = width.saturating_sub(display_width(topic.name));
+            out.push_str(&" ".repeat(padding));
+        }
+        out.push('\n');
+    }
+    out
+}
+
+fn display_width(value: &str) -> usize {
+    value
+        .chars()
+        .map(|ch| if ch.is_ascii() { 1 } else { 2 })
+        .sum()
+}
+
 pub fn topics_text_colored() -> String {
     topics_text_colored_lang(Language::En)
 }
 
 pub fn topics_text_colored_lang(language: Language) -> String {
-    let mut out = String::from("Documentation topics\n");
-    if language == Language::Zh {
-        out = String::from("文档主题\n");
-    }
+    let mut out = if language == Language::Zh {
+        section_title("文档主题")
+    } else {
+        String::from("Documentation topics\n")
+    };
     for topic in TOPICS {
-        out.push_str(&format!(
-            "  {:<18} {}\n",
+        out.push_str(&doc_row(
             color(topic.name, Style::Command),
-            topic_summary(topic, language)
+            topic.name,
+            &color(topic_summary(topic, language), Style::Hint),
+            18,
         ));
     }
     out
@@ -343,10 +381,20 @@ pub fn examples_text_colored_lang(language: Language) -> String {
             ("Completion", ":complete st"),
         ]
     };
-    examples
-        .into_iter()
-        .map(|(label, example)| format!("  {:<12} {}\n", label, highlight_zeta(example)))
-        .collect::<String>()
+    let mut out = if language == Language::Zh {
+        section_title("可运行示例")
+    } else {
+        String::from("Runnable examples\n")
+    };
+    for (label, example) in examples {
+        out.push_str(&doc_row(
+            color(label, Style::Bold),
+            label,
+            &highlight_zeta(example),
+            12,
+        ));
+    }
+    out
 }
 
 pub fn api_text_colored() -> String {
@@ -364,7 +412,7 @@ Zeta Stage 0 API
   {}  标准库命名空间占位，当前用于 import 示例
 
 语言表面
-  module/import, fn, let/let mut, assignment, comparison, boolean logic, return, if/else, while, match, struct, enum
+  模块/导入、函数、绑定/可变绑定、赋值、比较、布尔逻辑、返回、if/while、struct、enum 变体、match
 
 试试
   {}
@@ -391,7 +439,7 @@ Zeta Stage 0 API
   {}  namespace placeholder used by import examples
 
 Language surface
-  module/import, fn, let/let mut, assignment, comparison, boolean logic, return, if/else, while, match, struct, enum
+  module/import, fn, let/let mut, assignment, comparison, boolean logic, return, if/else, while, struct, enum variants, match
 
 Try
   {}
@@ -403,6 +451,14 @@ Try
         color("std", Style::Command),
         color(":doc Int", Style::Command),
         color(":doc std", Style::Command)
+    )
+}
+
+pub fn result_line(value: &str) -> String {
+    format!(
+        "  {} {}\n",
+        color("=>", Style::Hint),
+        color(value, Style::Value)
     )
 }
 
@@ -437,9 +493,9 @@ fn topic_summary(topic: &ReplTopic, language: Language) -> &'static str {
         "mut" => "标记局部绑定可变，允许后续赋值语句更新它。",
         "if" => "基于 Bool 条件分支；条件可以使用比较、&&、|| 和 !。",
         "while" => "当 Bool 条件为 true 时循环；条件可以使用比较、&&、|| 和 !。",
-        "match" => "对值进行简单模式匹配。",
+        "match" => "对标量、枚举变体和通配模式进行分支。",
         "struct" => "声明记录类型；完整程序中可以使用结构体字面量和字段访问。",
-        "enum" => "声明标签集合。",
+        "enum" => "声明标签集合；完整程序中可以使用 ResultTag.Ok 这类限定变体值。",
         "Int" => "当前 Stage 0 checker 支持的整数标量类型。",
         "String" => "当前 Stage 0 checker 支持的字符串标量类型。",
         "Bool" => "if 和 while 条件使用的布尔类型；&&、|| 和 ! 用于组合或取反 Bool。",

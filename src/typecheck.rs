@@ -15,9 +15,10 @@ pub fn check(module: &Module) -> Result<(), Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
     let functions = function_signatures(module);
     let structs = struct_types(module);
+    let enums = enum_types(module);
     for item in &module.items {
         if let Item::Function(function) = item {
-            check_function(function, &functions, &structs, &mut diagnostics);
+            check_function(function, &functions, &structs, &enums, &mut diagnostics);
         }
     }
 
@@ -32,6 +33,7 @@ fn check_function(
     function: &Function,
     functions: &HashMap<String, FunctionSignature>,
     structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let mut locals = HashMap::new();
@@ -54,6 +56,7 @@ fn check_function(
         &mut locals,
         functions,
         structs,
+        enums,
         &return_type,
         &function.name,
         diagnostics,
@@ -65,6 +68,7 @@ fn check_stmts(
     locals: &mut HashMap<String, Binding>,
     functions: &HashMap<String, FunctionSignature>,
     structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
     return_type: &Type,
     function_name: &str,
     diagnostics: &mut Vec<Diagnostic>,
@@ -78,7 +82,7 @@ fn check_stmts(
                 value,
                 ..
             } => {
-                let value_type = infer_expr(value, locals, functions, structs, diagnostics);
+                let value_type = infer_expr(value, locals, functions, structs, enums, diagnostics);
                 let declared_type = ty.as_deref().map(parse_type);
                 if let Some(declared_type) = declared_type {
                     expect_type(
@@ -110,7 +114,7 @@ fn check_stmts(
                 name_span,
                 value,
             } => {
-                let value_type = infer_expr(value, locals, functions, structs, diagnostics);
+                let value_type = infer_expr(value, locals, functions, structs, enums, diagnostics);
                 match locals.get(name) {
                     Some(binding) if binding.mutable => {
                         expect_type(
@@ -140,7 +144,8 @@ fn check_stmts(
                 then_body,
                 else_body,
             } => {
-                let condition_type = infer_expr(condition, locals, functions, structs, diagnostics);
+                let condition_type =
+                    infer_expr(condition, locals, functions, structs, enums, diagnostics);
                 expect_type(
                     &condition_type,
                     &Type::Bool,
@@ -154,6 +159,7 @@ fn check_stmts(
                     &mut then_locals,
                     functions,
                     structs,
+                    enums,
                     return_type,
                     function_name,
                     diagnostics,
@@ -164,13 +170,15 @@ fn check_stmts(
                     &mut else_locals,
                     functions,
                     structs,
+                    enums,
                     return_type,
                     function_name,
                     diagnostics,
                 );
             }
             Stmt::While { condition, body } => {
-                let condition_type = infer_expr(condition, locals, functions, structs, diagnostics);
+                let condition_type =
+                    infer_expr(condition, locals, functions, structs, enums, diagnostics);
                 expect_type(
                     &condition_type,
                     &Type::Bool,
@@ -184,21 +192,23 @@ fn check_stmts(
                     &mut loop_locals,
                     functions,
                     structs,
+                    enums,
                     return_type,
                     function_name,
                     diagnostics,
                 );
             }
             Stmt::Match { value, arms } => {
-                let value_type = infer_expr(value, locals, functions, structs, diagnostics);
+                let value_type = infer_expr(value, locals, functions, structs, enums, diagnostics);
                 for arm in arms {
-                    check_pattern(&arm.pattern, &value_type, value.span(), diagnostics);
+                    check_pattern(&arm.pattern, &value_type, value.span(), enums, diagnostics);
                     let mut arm_locals = locals.clone();
                     check_stmts(
                         &arm.body,
                         &mut arm_locals,
                         functions,
                         structs,
+                        enums,
                         return_type,
                         function_name,
                         diagnostics,
@@ -206,7 +216,7 @@ fn check_stmts(
                 }
             }
             Stmt::Return(Some(value)) => {
-                let value_type = infer_expr(value, locals, functions, structs, diagnostics);
+                let value_type = infer_expr(value, locals, functions, structs, enums, diagnostics);
                 let code = if function_name.is_empty() {
                     "TYPE_RETURN_MISMATCH"
                 } else {
@@ -224,7 +234,7 @@ fn check_stmts(
                 );
             }
             Stmt::Expr(value) => {
-                let _ = infer_expr(value, locals, functions, structs, diagnostics);
+                let _ = infer_expr(value, locals, functions, structs, enums, diagnostics);
             }
         }
     }
@@ -234,9 +244,32 @@ fn check_pattern(
     pattern: &Pattern,
     value_type: &Type,
     value_span: Span,
+    enums: &HashMap<String, EnumType>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     match pattern {
+        Pattern::Variant { enum_name, variant } => {
+            expect_type(
+                value_type,
+                &Type::Named(enum_name.clone()),
+                "TYPE_MATCH_PATTERN",
+                value_span,
+                diagnostics,
+            );
+            match enums.get(enum_name) {
+                Some(enum_type) if enum_type.variants.iter().any(|known| known == variant) => {}
+                Some(_) => diagnostics.push(Diagnostic::new(
+                    "TYPE_UNKNOWN_VARIANT",
+                    format!("unknown variant `{variant}` on enum `{enum_name}`"),
+                    value_span,
+                )),
+                None => diagnostics.push(Diagnostic::new(
+                    "TYPE_UNKNOWN_ENUM",
+                    format!("unknown enum `{enum_name}`"),
+                    value_span,
+                )),
+            }
+        }
         Pattern::Int(_) => expect_type(
             value_type,
             &Type::Int,
@@ -267,6 +300,7 @@ fn infer_expr(
     locals: &HashMap<String, Binding>,
     functions: &HashMap<String, FunctionSignature>,
     structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Type {
     match expr {
@@ -280,8 +314,8 @@ fn infer_expr(
         Expr::Binary {
             op, left, right, ..
         } => {
-            let left_type = infer_expr(left, locals, functions, structs, diagnostics);
-            let right_type = infer_expr(right, locals, functions, structs, diagnostics);
+            let left_type = infer_expr(left, locals, functions, structs, enums, diagnostics);
+            let right_type = infer_expr(right, locals, functions, structs, enums, diagnostics);
             match op {
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
                     expect_type(
@@ -347,7 +381,7 @@ fn infer_expr(
             }
         }
         Expr::Unary { op, expr, .. } => {
-            let expr_type = infer_expr(expr, locals, functions, structs, diagnostics);
+            let expr_type = infer_expr(expr, locals, functions, structs, enums, diagnostics);
             match op {
                 UnaryOp::Not => {
                     expect_type(
@@ -383,7 +417,7 @@ fn infer_expr(
                 return signature.return_type.clone();
             }
             for (arg, expected) in args.iter().zip(&signature.params) {
-                let found = infer_expr(arg, locals, functions, structs, diagnostics);
+                let found = infer_expr(arg, locals, functions, structs, enums, diagnostics);
                 expect_type(
                     &found,
                     expected,
@@ -407,7 +441,8 @@ fn infer_expr(
                     *ty_span,
                 ));
                 for field in fields {
-                    let _ = infer_expr(&field.value, locals, functions, structs, diagnostics);
+                    let _ =
+                        infer_expr(&field.value, locals, functions, structs, enums, diagnostics);
                 }
                 return Type::Named(ty.clone());
             };
@@ -421,7 +456,8 @@ fn infer_expr(
                         field.name_span,
                     ));
                 }
-                let found = infer_expr(&field.value, locals, functions, structs, diagnostics);
+                let found =
+                    infer_expr(&field.value, locals, functions, structs, enums, diagnostics);
                 match struct_type.fields.get(&field.name) {
                     Some(expected) => {
                         expect_type(
@@ -456,7 +492,30 @@ fn infer_expr(
             field_span,
             ..
         } => {
-            let base_type = infer_expr(base, locals, functions, structs, diagnostics);
+            if let Expr::Name {
+                name: enum_name, ..
+            } = base.as_ref()
+            {
+                if !locals.contains_key(enum_name) {
+                    match enums.get(enum_name) {
+                        Some(enum_type)
+                            if enum_type.variants.iter().any(|known| known == field) =>
+                        {
+                            return Type::Named(enum_name.clone());
+                        }
+                        Some(_) => {
+                            diagnostics.push(Diagnostic::new(
+                                "TYPE_UNKNOWN_VARIANT",
+                                format!("unknown variant `{field}` on enum `{enum_name}`"),
+                                *field_span,
+                            ));
+                            return Type::Named(enum_name.clone());
+                        }
+                        None => {}
+                    }
+                }
+            }
+            let base_type = infer_expr(base, locals, functions, structs, enums, diagnostics);
             let Type::Named(struct_name) = base_type else {
                 diagnostics.push(Diagnostic::new(
                     "TYPE_FIELD_BASE",
@@ -494,6 +553,11 @@ struct FunctionSignature {
 #[derive(Debug, Clone)]
 struct StructType {
     fields: HashMap<String, Type>,
+}
+
+#[derive(Debug, Clone)]
+struct EnumType {
+    variants: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -540,6 +604,22 @@ fn struct_types(module: &Module) -> HashMap<String, StructType> {
                         .iter()
                         .map(|field| (field.name.clone(), parse_type(&field.ty)))
                         .collect(),
+                },
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+fn enum_types(module: &Module) -> HashMap<String, EnumType> {
+    module
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Enum(decl) => Some((
+                decl.name.clone(),
+                EnumType {
+                    variants: decl.variants.clone(),
                 },
             )),
             _ => None,

@@ -66,6 +66,9 @@ const publicDocs = [
   await page.locator("button", { hasText: "Struct" }).click();
   await page.locator("button", { hasText: "Run" }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
+  await page.locator("button", { hasText: "Enum" }).click();
+  await page.locator("button", { hasText: "Run" }).click();
+  await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
 
   const docChecks = [];
   for (const [path, title] of publicDocs) {

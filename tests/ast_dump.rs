@@ -165,6 +165,8 @@ fn repl_supports_help_doc_and_completion() {
     assert!(stdout.contains("Declare a local binding"));
     assert!(stdout.contains("standard API surface"));
     assert!(stdout.contains("struct"));
+    assert_eq!(zeta::repl::complete("std."), vec!["std.core", "std.io"]);
+    assert!(zeta::repl::result_line("8").contains("=>"));
 }
 
 #[test]

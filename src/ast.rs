@@ -101,6 +101,7 @@ pub struct StructExprField {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pattern {
     Name(String),
+    Variant { enum_name: String, variant: String },
     Int(String),
     String(String),
     Bool(bool),
@@ -323,6 +324,7 @@ impl Pattern {
     fn dump(&self) -> String {
         match self {
             Pattern::Name(name) => format!("name:{name}"),
+            Pattern::Variant { enum_name, variant } => format!("variant:{enum_name}.{variant}"),
             Pattern::Int(value) => format!("int:{value}"),
             Pattern::String(value) => format!("string:{value:?}"),
             Pattern::Bool(value) => format!("bool:{value}"),

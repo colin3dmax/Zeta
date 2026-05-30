@@ -54,7 +54,8 @@ python3 tools/check-vscode-extension.py</code></pre>
 cargo run -- run testdata/run_call.zeta
 cargo run -- run testdata/run_compare.zeta
 cargo run -- run testdata/run_bool_logic.zeta
-cargo run -- run testdata/run_struct.zeta</code></pre>
+cargo run -- run testdata/run_struct.zeta
+cargo run -- run testdata/run_enum.zeta</code></pre>
 
     <h2>可变绑定和赋值</h2>
     <p>Zeta 默认局部绑定不可变。需要在后续语句里重新赋值时，声明时必须写 <code>let mut</code>；否则 <code>check</code> 会报告 <code>RESOLVE_ASSIGN_IMMUTABLE</code>。</p>
@@ -114,6 +115,23 @@ fn main() -&gt; Int {
   return user.age;
 }</code></pre>
     <pre><code>cargo run -- run testdata/run_struct.zeta</code></pre>
+
+    <h2>枚举变体和 match</h2>
+    <p><code>enum</code> 当前支持限定变体值，例如 <code>ResultTag.Ok</code>。枚举值可以赋给局部变量，也可以在 <code>match</code> 中用同样的限定变体模式分支。</p>
+    <pre><code>enum ResultTag {
+  Ok,
+  Err,
+}
+
+fn main() -&gt; Int {
+  let tag: ResultTag = ResultTag.Ok;
+  match tag {
+    ResultTag.Ok -&gt; { return 42; },
+    ResultTag.Err -&gt; { return 0; },
+  }
+  return 0;
+}</code></pre>
+    <pre><code>cargo run -- run testdata/run_enum.zeta</code></pre>
 
     <h2>在线 Playground</h2>
     <p>官网的 Playground 直接加载 Zeta 编译器前端编译出的 <code>zeta.wasm</code>，不是 JavaScript 模拟器。当前支持三个模式：</p>

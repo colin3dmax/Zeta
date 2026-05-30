@@ -1,8 +1,16 @@
 use crate::ast::{BinaryOp, Expr, Function, Item, Module, Param, Pattern, Stmt, UnaryOp};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
+    pub enums: Vec<MirEnum>,
     pub functions: Vec<MirFunction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirEnum {
+    pub name: String,
+    pub variants: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +59,7 @@ pub struct MirMatchArm {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MirPattern {
     Name(String),
+    Variant { enum_name: String, variant: String },
     Int(String),
     String(String),
     Bool(bool),
@@ -76,6 +85,10 @@ pub enum MirExpr {
         callee: String,
         args: Vec<MirExpr>,
     },
+    EnumVariant {
+        enum_name: String,
+        variant: String,
+    },
     StructLiteral {
         ty: String,
         fields: Vec<MirStructField>,
@@ -93,12 +106,24 @@ pub struct MirStructField {
 }
 
 pub fn lower(module: &Module) -> Program {
+    let enum_variants = enum_variants(module);
     Program {
+        enums: module
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Enum(decl) => Some(MirEnum {
+                    name: decl.name.clone(),
+                    variants: decl.variants.clone(),
+                }),
+                _ => None,
+            })
+            .collect(),
         functions: module
             .items
             .iter()
             .filter_map(|item| match item {
-                Item::Function(function) => Some(lower_function(function)),
+                Item::Function(function) => Some(lower_function(function, &enum_variants)),
                 _ => None,
             })
             .collect(),
@@ -111,22 +136,36 @@ pub fn dump(module: &Module) -> String {
 
 pub fn dump_program(program: &Program) -> String {
     let mut out = String::from("MirModule\n");
+    for enum_decl in &program.enums {
+        out.push_str(&format!(
+            "  enum {} variants={}\n",
+            enum_decl.name,
+            enum_decl.variants.join(",")
+        ));
+    }
     for function in &program.functions {
         dump_function(function, 1, &mut out);
     }
     out
 }
 
-fn lower_function(function: &Function) -> MirFunction {
+fn lower_function(
+    function: &Function,
+    enum_variants: &HashMap<String, Vec<String>>,
+) -> MirFunction {
     MirFunction {
         name: function.name.clone(),
         params: function.params.clone(),
         return_type: function.return_type.clone(),
-        body: function.body.iter().map(lower_stmt).collect(),
+        body: function
+            .body
+            .iter()
+            .map(|stmt| lower_stmt(stmt, enum_variants))
+            .collect(),
     }
 }
 
-fn lower_stmt(stmt: &Stmt) -> MirStmt {
+fn lower_stmt(stmt: &Stmt, enum_variants: &HashMap<String, Vec<String>>) -> MirStmt {
     match stmt {
         Stmt::Let {
             mutable,
@@ -138,43 +177,62 @@ fn lower_stmt(stmt: &Stmt) -> MirStmt {
             mutable: *mutable,
             name: name.clone(),
             ty: ty.clone(),
-            value: lower_expr(value),
+            value: lower_expr(value, enum_variants),
         },
         Stmt::Assign { name, value, .. } => MirStmt::Store {
             name: name.clone(),
-            value: lower_expr(value),
+            value: lower_expr(value, enum_variants),
         },
         Stmt::If {
             condition,
             then_body,
             else_body,
         } => MirStmt::If {
-            condition: lower_expr(condition),
-            then_body: then_body.iter().map(lower_stmt).collect(),
-            else_body: else_body.iter().map(lower_stmt).collect(),
+            condition: lower_expr(condition, enum_variants),
+            then_body: then_body
+                .iter()
+                .map(|stmt| lower_stmt(stmt, enum_variants))
+                .collect(),
+            else_body: else_body
+                .iter()
+                .map(|stmt| lower_stmt(stmt, enum_variants))
+                .collect(),
         },
         Stmt::While { condition, body } => MirStmt::While {
-            condition: lower_expr(condition),
-            body: body.iter().map(lower_stmt).collect(),
+            condition: lower_expr(condition, enum_variants),
+            body: body
+                .iter()
+                .map(|stmt| lower_stmt(stmt, enum_variants))
+                .collect(),
         },
         Stmt::Match { value, arms } => MirStmt::Match {
-            value: lower_expr(value),
+            value: lower_expr(value, enum_variants),
             arms: arms
                 .iter()
                 .map(|arm| MirMatchArm {
                     pattern: lower_pattern(&arm.pattern),
-                    body: arm.body.iter().map(lower_stmt).collect(),
+                    body: arm
+                        .body
+                        .iter()
+                        .map(|stmt| lower_stmt(stmt, enum_variants))
+                        .collect(),
                 })
                 .collect(),
         },
-        Stmt::Return(value) => MirStmt::Return(value.as_ref().map(lower_expr)),
-        Stmt::Expr(value) => MirStmt::Drop(lower_expr(value)),
+        Stmt::Return(value) => {
+            MirStmt::Return(value.as_ref().map(|expr| lower_expr(expr, enum_variants)))
+        }
+        Stmt::Expr(value) => MirStmt::Drop(lower_expr(value, enum_variants)),
     }
 }
 
 fn lower_pattern(pattern: &Pattern) -> MirPattern {
     match pattern {
         Pattern::Name(name) => MirPattern::Name(name.clone()),
+        Pattern::Variant { enum_name, variant } => MirPattern::Variant {
+            enum_name: enum_name.clone(),
+            variant: variant.clone(),
+        },
         Pattern::Int(value) => MirPattern::Int(value.clone()),
         Pattern::String(value) => MirPattern::String(value.clone()),
         Pattern::Bool(value) => MirPattern::Bool(*value),
@@ -182,7 +240,7 @@ fn lower_pattern(pattern: &Pattern) -> MirPattern {
     }
 }
 
-fn lower_expr(expr: &Expr) -> MirExpr {
+fn lower_expr(expr: &Expr, enum_variants: &HashMap<String, Vec<String>>) -> MirExpr {
     match expr {
         Expr::Name { name, .. } => MirExpr::Load(name.clone()),
         Expr::Int { value, .. } => MirExpr::Int(value.clone()),
@@ -192,16 +250,19 @@ fn lower_expr(expr: &Expr) -> MirExpr {
             op, left, right, ..
         } => MirExpr::Binary {
             op: *op,
-            left: Box::new(lower_expr(left)),
-            right: Box::new(lower_expr(right)),
+            left: Box::new(lower_expr(left, enum_variants)),
+            right: Box::new(lower_expr(right, enum_variants)),
         },
         Expr::Unary { op, expr, .. } => MirExpr::Unary {
             op: *op,
-            expr: Box::new(lower_expr(expr)),
+            expr: Box::new(lower_expr(expr, enum_variants)),
         },
         Expr::Call { callee, args, .. } => MirExpr::Call {
             callee: callee.clone(),
-            args: args.iter().map(lower_expr).collect(),
+            args: args
+                .iter()
+                .map(|arg| lower_expr(arg, enum_variants))
+                .collect(),
         },
         Expr::StructLiteral { ty, fields, .. } => MirExpr::StructLiteral {
             ty: ty.clone(),
@@ -209,15 +270,42 @@ fn lower_expr(expr: &Expr) -> MirExpr {
                 .iter()
                 .map(|field| MirStructField {
                     name: field.name.clone(),
-                    value: lower_expr(&field.value),
+                    value: lower_expr(&field.value, enum_variants),
                 })
                 .collect(),
         },
-        Expr::FieldAccess { base, field, .. } => MirExpr::FieldAccess {
-            base: Box::new(lower_expr(base)),
-            field: field.clone(),
-        },
+        Expr::FieldAccess { base, field, .. } => {
+            if let Expr::Name {
+                name: enum_name, ..
+            } = base.as_ref()
+            {
+                if enum_variants
+                    .get(enum_name)
+                    .is_some_and(|variants| variants.iter().any(|variant| variant == field))
+                {
+                    return MirExpr::EnumVariant {
+                        enum_name: enum_name.clone(),
+                        variant: field.clone(),
+                    };
+                }
+            }
+            MirExpr::FieldAccess {
+                base: Box::new(lower_expr(base, enum_variants)),
+                field: field.clone(),
+            }
+        }
     }
+}
+
+fn enum_variants(module: &Module) -> HashMap<String, Vec<String>> {
+    module
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Enum(decl) => Some((decl.name.clone(), decl.variants.clone())),
+            _ => None,
+        })
+        .collect()
 }
 
 fn dump_function(function: &MirFunction, indent: usize, out: &mut String) {
@@ -368,6 +456,11 @@ impl DumpCtx {
                 ));
                 temp
             }
+            MirExpr::EnumVariant { enum_name, variant } => {
+                let temp = self.temp();
+                out.push_str(&format!("{pad}{temp} = enum {enum_name}.{variant}\n"));
+                temp
+            }
             MirExpr::StructLiteral { ty, fields } => {
                 let mut field_temps = Vec::new();
                 for field in fields {
@@ -400,6 +493,7 @@ impl DumpCtx {
 fn pattern_text(pattern: &MirPattern) -> String {
     match pattern {
         MirPattern::Name(name) => format!("name:{name}"),
+        MirPattern::Variant { enum_name, variant } => format!("variant:{enum_name}.{variant}"),
         MirPattern::Int(value) => format!("int:{value}"),
         MirPattern::String(value) => format!("string:{value:?}"),
         MirPattern::Bool(value) => format!("bool:{value}"),

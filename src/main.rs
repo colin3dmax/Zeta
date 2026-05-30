@@ -219,9 +219,9 @@ fn repl() {
         match zeta::eval_repl_source(&mut session, &source) {
             Ok(value) => {
                 if value != zeta::runtime::Value::Unit {
-                    println!("{}", color(value.to_string(), Style::Value));
+                    print!("{}", zeta::repl::result_line(&value.to_string()));
                 } else {
-                    println!("{}", color("ok", Style::Value));
+                    print!("{}", zeta::repl::result_line("ok"));
                 }
             }
             Err(diagnostics) => {

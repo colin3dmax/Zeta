@@ -6,9 +6,10 @@ pub fn resolve(module: &Module) -> Result<(), Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
     check_top_level(module, &mut diagnostics);
     let functions = function_names(module);
+    let top_level_names = top_level_names(module);
     for item in &module.items {
         if let Item::Function(function) = item {
-            check_function(function, &functions, &mut diagnostics);
+            check_function(function, &functions, &top_level_names, &mut diagnostics);
         }
     }
 
@@ -38,6 +39,7 @@ fn check_top_level(module: &Module, diagnostics: &mut Vec<Diagnostic>) {
 fn check_function(
     function: &Function,
     functions: &HashSet<String>,
+    top_level_names: &HashSet<String>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let mut locals = HashMap::new();
@@ -60,6 +62,7 @@ fn check_function(
         &function.body,
         &mut locals,
         functions,
+        top_level_names,
         &function.name,
         diagnostics,
     );
@@ -69,6 +72,7 @@ fn check_stmts(
     stmts: &[Stmt],
     locals: &mut HashMap<String, Binding>,
     functions: &HashSet<String>,
+    top_level_names: &HashSet<String>,
     function_name: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -81,7 +85,14 @@ fn check_stmts(
                 value,
                 ..
             } => {
-                check_expr(value, locals, functions, function_name, diagnostics);
+                check_expr(
+                    value,
+                    locals,
+                    functions,
+                    top_level_names,
+                    function_name,
+                    diagnostics,
+                );
                 if locals
                     .insert(name.clone(), Binding { mutable: *mutable })
                     .is_some()
@@ -98,7 +109,14 @@ fn check_stmts(
                 name_span,
                 value,
             } => {
-                check_expr(value, locals, functions, function_name, diagnostics);
+                check_expr(
+                    value,
+                    locals,
+                    functions,
+                    top_level_names,
+                    function_name,
+                    diagnostics,
+                );
                 match locals.get(name) {
                     Some(binding) if binding.mutable => {}
                     Some(_) => diagnostics.push(Diagnostic::new(
@@ -121,12 +139,20 @@ fn check_stmts(
                 else_body,
                 ..
             } => {
-                check_expr(condition, locals, functions, function_name, diagnostics);
+                check_expr(
+                    condition,
+                    locals,
+                    functions,
+                    top_level_names,
+                    function_name,
+                    diagnostics,
+                );
                 let mut then_locals = locals.clone();
                 check_stmts(
                     then_body,
                     &mut then_locals,
                     functions,
+                    top_level_names,
                     function_name,
                     diagnostics,
                 );
@@ -135,36 +161,60 @@ fn check_stmts(
                     else_body,
                     &mut else_locals,
                     functions,
+                    top_level_names,
                     function_name,
                     diagnostics,
                 );
             }
             Stmt::While { condition, body } => {
-                check_expr(condition, locals, functions, function_name, diagnostics);
+                check_expr(
+                    condition,
+                    locals,
+                    functions,
+                    top_level_names,
+                    function_name,
+                    diagnostics,
+                );
                 let mut loop_locals = locals.clone();
                 check_stmts(
                     body,
                     &mut loop_locals,
                     functions,
+                    top_level_names,
                     function_name,
                     diagnostics,
                 );
             }
             Stmt::Match { value, arms } => {
-                check_expr(value, locals, functions, function_name, diagnostics);
+                check_expr(
+                    value,
+                    locals,
+                    functions,
+                    top_level_names,
+                    function_name,
+                    diagnostics,
+                );
                 for arm in arms {
                     let mut arm_locals = locals.clone();
                     check_stmts(
                         &arm.body,
                         &mut arm_locals,
                         functions,
+                        top_level_names,
                         function_name,
                         diagnostics,
                     );
                 }
             }
             Stmt::Return(Some(value)) | Stmt::Expr(value) => {
-                check_expr(value, locals, functions, function_name, diagnostics);
+                check_expr(
+                    value,
+                    locals,
+                    functions,
+                    top_level_names,
+                    function_name,
+                    diagnostics,
+                );
             }
             Stmt::Return(None) => {}
         }
@@ -175,12 +225,13 @@ fn check_expr(
     expr: &Expr,
     locals: &HashMap<String, Binding>,
     functions: &HashSet<String>,
+    top_level_names: &HashSet<String>,
     function_name: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     match expr {
         Expr::Name { name, span } => {
-            if !locals.contains_key(name) {
+            if !locals.contains_key(name) && !top_level_names.contains(name) {
                 diagnostics.push(Diagnostic::new(
                     "RESOLVE_UNKNOWN_NAME",
                     format!("unknown name `{name}` in function `{function_name}`"),
@@ -189,11 +240,32 @@ fn check_expr(
             }
         }
         Expr::Binary { left, right, .. } => {
-            check_expr(left, locals, functions, function_name, diagnostics);
-            check_expr(right, locals, functions, function_name, diagnostics);
+            check_expr(
+                left,
+                locals,
+                functions,
+                top_level_names,
+                function_name,
+                diagnostics,
+            );
+            check_expr(
+                right,
+                locals,
+                functions,
+                top_level_names,
+                function_name,
+                diagnostics,
+            );
         }
         Expr::Unary { expr, .. } => {
-            check_expr(expr, locals, functions, function_name, diagnostics);
+            check_expr(
+                expr,
+                locals,
+                functions,
+                top_level_names,
+                function_name,
+                diagnostics,
+            );
         }
         Expr::Call {
             callee,
@@ -209,16 +281,37 @@ fn check_expr(
                 ));
             }
             for arg in args {
-                check_expr(arg, locals, functions, function_name, diagnostics);
+                check_expr(
+                    arg,
+                    locals,
+                    functions,
+                    top_level_names,
+                    function_name,
+                    diagnostics,
+                );
             }
         }
         Expr::StructLiteral { fields, .. } => {
             for field in fields {
-                check_expr(&field.value, locals, functions, function_name, diagnostics);
+                check_expr(
+                    &field.value,
+                    locals,
+                    functions,
+                    top_level_names,
+                    function_name,
+                    diagnostics,
+                );
             }
         }
         Expr::FieldAccess { base, .. } => {
-            check_expr(base, locals, functions, function_name, diagnostics);
+            check_expr(
+                base,
+                locals,
+                functions,
+                top_level_names,
+                function_name,
+                diagnostics,
+            );
         }
         Expr::Int { .. } | Expr::String { .. } | Expr::Bool { .. } => {}
     }
@@ -237,6 +330,14 @@ fn function_names(module: &Module) -> HashSet<String> {
             Item::Function(function) => Some(function.name.clone()),
             _ => None,
         })
+        .collect()
+}
+
+fn top_level_names(module: &Module) -> HashSet<String> {
+    module
+        .items
+        .iter()
+        .filter_map(|item| item_name(item).map(|(name, _)| name.to_string()))
         .collect()
 }
 

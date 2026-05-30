@@ -1,0 +1,18 @@
+MirModule
+  enum ResultTag variants=Ok,Err
+  fn main -> Int
+    block entry
+      local tag: ResultTag mutability=immutable
+      _t0 = enum ResultTag.Ok
+      store tag, _t0
+      _t1 = load tag
+      match _t1
+        arm variant:ResultTag.Ok
+          _t2 = const Int 42
+          return _t2
+        arm variant:ResultTag.Err
+          _t3 = const Int 0
+          return _t3
+      end_match
+      _t4 = const Int 0
+      return _t4

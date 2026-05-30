@@ -126,6 +126,24 @@ fn main() -> Int {
 }
 
 #[test]
+fn check_rejects_unknown_enum_variant() {
+    let source = r#"
+enum ResultTag {
+  Ok,
+  Err,
+}
+
+fn main() -> Int {
+  let tag: ResultTag = ResultTag.Missing;
+  return 0;
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("unknown variant should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_UNKNOWN_VARIANT");
+    assert_eq!(diagnostics[0].span, span_of(source, "Missing"));
+}
+
+#[test]
 fn cli_check_renders_line_column_and_source_snippet() {
     let source = r#"
 fn main() {

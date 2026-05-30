@@ -168,6 +168,7 @@ fn dump_expr(expr: &Expr, indent: usize, out: &mut String) {
 fn pattern_text(pattern: &Pattern) -> String {
     match pattern {
         Pattern::Name(name) => format!("name:{name}"),
+        Pattern::Variant { enum_name, variant } => format!("variant:{enum_name}.{variant}"),
         Pattern::Int(value) => format!("int:{value}"),
         Pattern::String(value) => format!("string:{value:?}"),
         Pattern::Bool(value) => format!("bool:{value}"),

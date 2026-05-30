@@ -276,7 +276,15 @@ fn token_start(line: &str, pos: usize) -> usize {
 
 #[cfg(feature = "repl-rich")]
 fn completion_words() -> Vec<&'static str> {
-    let mut words = vec![":help", ":doc", ":complete", ":quit", ":exit"];
+    let mut words = vec![
+        ":help",
+        ":doc",
+        ":complete",
+        ":quit",
+        ":exit",
+        "std.io",
+        "std.core",
+    ];
     words.extend(crate::repl::TOPICS.iter().map(|topic| topic.name));
     words
 }
@@ -377,10 +385,7 @@ fn handle_escape(
 }
 
 fn apply_completion(line: &mut String, cursor: &mut usize) -> io::Result<()> {
-    let prefix_start = line[..*cursor]
-        .rfind(|ch: char| ch.is_whitespace())
-        .map(|index| index + 1)
-        .unwrap_or(0);
+    let prefix_start = completion_prefix_start(line, *cursor);
     let prefix = &line[prefix_start..*cursor];
     let matches = complete(prefix);
     if matches.is_empty() {
@@ -402,6 +407,13 @@ fn apply_completion(line: &mut String, cursor: &mut usize) -> io::Result<()> {
         );
     }
     Ok(())
+}
+
+fn completion_prefix_start(line: &str, cursor: usize) -> usize {
+    line[..cursor]
+        .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':' || ch == '.'))
+        .map(|index| index + 1)
+        .unwrap_or(0)
 }
 
 fn redraw(line: &str, cursor: usize) -> io::Result<()> {

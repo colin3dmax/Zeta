@@ -15,6 +15,10 @@ pub enum Value {
         ty: String,
         fields: BTreeMap<String, Value>,
     },
+    Enum {
+        ty: String,
+        variant: String,
+    },
     Unit,
 }
 
@@ -45,6 +49,7 @@ pub fn run_mir(program: &Program) -> Result<Value, Vec<Diagnostic>> {
 pub struct ReplSession {
     locals: HashMap<String, Value>,
     functions: HashMap<String, Function>,
+    enum_variants: HashMap<String, Vec<String>>,
 }
 
 impl ReplSession {
@@ -58,6 +63,10 @@ impl ReplSession {
                 self.functions
                     .insert(function.name.clone(), function.clone());
             }
+            if let Item::Enum(decl) = item {
+                self.enum_variants
+                    .insert(decl.name.clone(), decl.variants.clone());
+            }
         }
 
         let Some(main) = find_main(module) else {
@@ -70,7 +79,7 @@ impl ReplSession {
             )]);
         }
 
-        let mut runtime = Runtime::from_functions(self.functions.clone());
+        let mut runtime = Runtime::from_parts(self.functions.clone(), self.enum_variants.clone());
         match runtime.eval_stmts(&main.body, &mut self.locals) {
             Ok(Control::Return(value)) => Ok(value),
             Ok(Control::Continue) => Ok(Value::Unit),
@@ -95,6 +104,7 @@ fn find_mir_main(program: &Program) -> Option<&MirFunction> {
 
 struct MirRuntime {
     functions: HashMap<String, MirFunction>,
+    enum_variants: HashMap<String, Vec<String>>,
     loop_steps: usize,
 }
 
@@ -105,6 +115,11 @@ impl MirRuntime {
                 .functions
                 .iter()
                 .map(|function| (function.name.clone(), function.clone()))
+                .collect(),
+            enum_variants: program
+                .enums
+                .iter()
+                .map(|enum_decl| (enum_decl.name.clone(), enum_decl.variants.clone()))
                 .collect(),
             loop_steps: 0,
         }
@@ -267,6 +282,10 @@ impl MirRuntime {
                     Control::Continue => Ok(Value::Unit),
                 }
             }
+            MirExpr::EnumVariant { enum_name, variant } => Ok(Value::Enum {
+                ty: enum_name.clone(),
+                variant: variant.clone(),
+            }),
             MirExpr::StructLiteral { ty, fields } => {
                 let mut values = BTreeMap::new();
                 for field in fields {
@@ -278,6 +297,20 @@ impl MirRuntime {
                 })
             }
             MirExpr::FieldAccess { base, field } => {
+                if let MirExpr::Load(enum_name) = base.as_ref() {
+                    if let Some(variants) = self.enum_variants.get(enum_name) {
+                        if variants.iter().any(|variant| variant == field) {
+                            return Ok(Value::Enum {
+                                ty: enum_name.clone(),
+                                variant: field.clone(),
+                            });
+                        }
+                        return Err(runtime_error(
+                            "RUNTIME_UNKNOWN_VARIANT",
+                            format!("unknown variant `{field}` on enum `{enum_name}`"),
+                        ));
+                    }
+                }
                 let value = self.eval_expr(base, locals)?;
                 let Value::Struct { ty, fields } = value else {
                     return Err(runtime_error(
@@ -334,13 +367,18 @@ impl MirRuntime {
 
 struct Runtime {
     functions: HashMap<String, Function>,
+    enum_variants: HashMap<String, Vec<String>>,
     loop_steps: usize,
 }
 
 impl Runtime {
-    fn from_functions(functions: HashMap<String, Function>) -> Self {
+    fn from_parts(
+        functions: HashMap<String, Function>,
+        enum_variants: HashMap<String, Vec<String>>,
+    ) -> Self {
         Self {
             functions,
+            enum_variants,
             loop_steps: 0,
         }
     }
@@ -507,6 +545,23 @@ impl Runtime {
                 })
             }
             Expr::FieldAccess { base, field, .. } => {
+                if let Expr::Name {
+                    name: enum_name, ..
+                } = base.as_ref()
+                {
+                    if let Some(variants) = self.enum_variants.get(enum_name) {
+                        if variants.iter().any(|variant| variant == field) {
+                            return Ok(Value::Enum {
+                                ty: enum_name.clone(),
+                                variant: field.clone(),
+                            });
+                        }
+                        return Err(runtime_error(
+                            "RUNTIME_UNKNOWN_VARIANT",
+                            format!("unknown variant `{field}` on enum `{enum_name}`"),
+                        ));
+                    }
+                }
                 let value = self.eval_expr(base, locals)?;
                 let Value::Struct { ty, fields } = value else {
                     return Err(runtime_error(
@@ -637,6 +692,9 @@ fn mir_pattern_matches(pattern: &MirPattern, value: &Value) -> Result<bool, Diag
             "RUNTIME_UNSUPPORTED_PATTERN",
             format!("name pattern `{name}` is not executable yet"),
         )),
+        MirPattern::Variant { enum_name, variant } => Ok(
+            matches!(value, Value::Enum { ty, variant: value_variant } if ty == enum_name && value_variant == variant),
+        ),
         MirPattern::Int(pattern) => {
             let parsed = pattern.parse::<i64>().map_err(|_| {
                 runtime_error(
@@ -660,6 +718,9 @@ fn pattern_matches(pattern: &Pattern, value: &Value) -> Result<bool, Diagnostic>
             "RUNTIME_UNSUPPORTED_PATTERN",
             format!("name pattern `{name}` is not executable yet"),
         )),
+        Pattern::Variant { enum_name, variant } => Ok(
+            matches!(value, Value::Enum { ty, variant: value_variant } if ty == enum_name && value_variant == variant),
+        ),
         Pattern::Int(pattern) => {
             let parsed = pattern.parse::<i64>().map_err(|_| {
                 runtime_error(
@@ -693,6 +754,7 @@ impl fmt::Display for Value {
                     .join(", ");
                 write!(f, "{ty} {{ {fields} }}")
             }
+            Value::Enum { ty, variant } => write!(f, "{ty}.{variant}"),
             Value::Unit => write!(f, "()"),
         }
     }
