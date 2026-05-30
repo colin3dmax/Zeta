@@ -36,7 +36,9 @@ pub fn dump_mir(source: &str) -> Result<String, Vec<Diagnostic>> {
     let module = parse_source(source)?;
     resolver::resolve(&module)?;
     typecheck::check(&module)?;
-    Ok(mir::dump(&module))
+    let program = mir::lower(&module);
+    mir::verify(&program)?;
+    Ok(mir::dump_program(&program))
 }
 
 pub fn check_source(source: &str) -> Result<(), Vec<Diagnostic>> {

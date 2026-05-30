@@ -1,5 +1,6 @@
 use crate::ast::{BinaryOp, Expr, Function, Item, Module, Param, Pattern, Stmt, UnaryOp};
-use std::collections::HashMap;
+use crate::diagnostic::{Diagnostic, Span};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
@@ -147,6 +148,16 @@ pub fn dump_program(program: &Program) -> String {
         dump_function(function, 1, &mut out);
     }
     out
+}
+
+pub fn verify(program: &Program) -> Result<(), Vec<Diagnostic>> {
+    let mut verifier = MirVerifier::new(program);
+    verifier.verify_program();
+    if verifier.diagnostics.is_empty() {
+        Ok(())
+    } else {
+        Err(verifier.diagnostics)
+    }
 }
 
 fn lower_function(
@@ -521,5 +532,431 @@ pub fn binary_op_text(op: BinaryOp) -> &'static str {
 pub fn unary_op_text(op: UnaryOp) -> &'static str {
     match op {
         UnaryOp::Not => "not",
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MirType {
+    Named(String),
+    Unit,
+    Unknown,
+}
+
+impl MirType {
+    fn named(name: impl Into<String>) -> Self {
+        Self::Named(name.into())
+    }
+
+    fn is_unknown(&self) -> bool {
+        matches!(self, Self::Unknown)
+    }
+
+    fn display(&self) -> String {
+        match self {
+            Self::Named(name) => name.clone(),
+            Self::Unit => "Unit".to_string(),
+            Self::Unknown => "<unknown>".to_string(),
+        }
+    }
+}
+
+struct MirVerifier<'a> {
+    program: &'a Program,
+    functions: HashMap<&'a str, &'a MirFunction>,
+    enums: HashMap<&'a str, HashSet<&'a str>>,
+    diagnostics: Vec<Diagnostic>,
+}
+
+impl<'a> MirVerifier<'a> {
+    fn new(program: &'a Program) -> Self {
+        Self {
+            program,
+            functions: program
+                .functions
+                .iter()
+                .map(|function| (function.name.as_str(), function))
+                .collect(),
+            enums: program
+                .enums
+                .iter()
+                .map(|enum_decl| {
+                    (
+                        enum_decl.name.as_str(),
+                        enum_decl
+                            .variants
+                            .iter()
+                            .map(String::as_str)
+                            .collect::<HashSet<_>>(),
+                    )
+                })
+                .collect(),
+            diagnostics: Vec::new(),
+        }
+    }
+
+    fn verify_program(&mut self) {
+        let mut names = HashSet::new();
+        for function in &self.program.functions {
+            if !names.insert(function.name.as_str()) {
+                self.error(
+                    "MIR_DUPLICATE_FUNCTION",
+                    format!("duplicate MIR function `{}`", function.name),
+                );
+            }
+            self.verify_function(function);
+        }
+    }
+
+    fn verify_function(&mut self, function: &MirFunction) {
+        let mut locals = HashMap::new();
+        for param in &function.params {
+            if locals
+                .insert(param.name.clone(), MirType::named(param.ty.clone()))
+                .is_some()
+            {
+                self.error(
+                    "MIR_DUPLICATE_LOCAL",
+                    format!("duplicate MIR parameter `{}`", param.name),
+                );
+            }
+        }
+        let expected_return = function
+            .return_type
+            .as_ref()
+            .map(|ty| MirType::named(ty.clone()))
+            .unwrap_or(MirType::Unit);
+        self.verify_stmts(&function.body, &mut locals, &expected_return);
+    }
+
+    fn verify_stmts(
+        &mut self,
+        stmts: &[MirStmt],
+        locals: &mut HashMap<String, MirType>,
+        expected_return: &MirType,
+    ) {
+        for stmt in stmts {
+            self.verify_stmt(stmt, locals, expected_return);
+        }
+    }
+
+    fn verify_stmt(
+        &mut self,
+        stmt: &MirStmt,
+        locals: &mut HashMap<String, MirType>,
+        expected_return: &MirType,
+    ) {
+        match stmt {
+            MirStmt::Local {
+                name, ty, value, ..
+            } => {
+                if locals.contains_key(name) {
+                    self.error(
+                        "MIR_DUPLICATE_LOCAL",
+                        format!("duplicate MIR local `{name}`"),
+                    );
+                }
+                let value_ty = self.verify_expr(value, locals);
+                let local_ty = ty
+                    .as_ref()
+                    .map(|ty| MirType::named(ty.clone()))
+                    .unwrap_or_else(|| value_ty.clone());
+                self.expect_type(
+                    &value_ty,
+                    &local_ty,
+                    "MIR_LOCAL_TYPE",
+                    format!(
+                        "local `{name}` expects `{}`, found `{}`",
+                        local_ty.display(),
+                        value_ty.display()
+                    ),
+                );
+                locals.insert(name.clone(), local_ty);
+            }
+            MirStmt::Store { name, value } => {
+                let value_ty = self.verify_expr(value, locals);
+                let Some(local_ty) = locals.get(name).cloned() else {
+                    self.error(
+                        "MIR_UNKNOWN_LOCAL",
+                        format!("store target `{name}` is not defined"),
+                    );
+                    return;
+                };
+                self.expect_type(
+                    &value_ty,
+                    &local_ty,
+                    "MIR_STORE_TYPE",
+                    format!(
+                        "store target `{name}` expects `{}`, found `{}`",
+                        local_ty.display(),
+                        value_ty.display()
+                    ),
+                );
+            }
+            MirStmt::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                self.expect_bool(condition, locals, "MIR_IF_CONDITION", "if condition");
+                let mut then_locals = locals.clone();
+                self.verify_stmts(then_body, &mut then_locals, expected_return);
+                let mut else_locals = locals.clone();
+                self.verify_stmts(else_body, &mut else_locals, expected_return);
+            }
+            MirStmt::While { condition, body } => {
+                self.expect_bool(condition, locals, "MIR_WHILE_CONDITION", "while condition");
+                let mut body_locals = locals.clone();
+                self.verify_stmts(body, &mut body_locals, expected_return);
+            }
+            MirStmt::Match { value, arms } => {
+                let value_ty = self.verify_expr(value, locals);
+                for arm in arms {
+                    self.verify_pattern(&arm.pattern, &value_ty);
+                    let mut arm_locals = locals.clone();
+                    self.verify_stmts(&arm.body, &mut arm_locals, expected_return);
+                }
+            }
+            MirStmt::Return(Some(value)) => {
+                let value_ty = self.verify_expr(value, locals);
+                self.expect_type(
+                    &value_ty,
+                    expected_return,
+                    "MIR_RETURN_TYPE",
+                    format!(
+                        "return expects `{}`, found `{}`",
+                        expected_return.display(),
+                        value_ty.display()
+                    ),
+                );
+            }
+            MirStmt::Return(None) => {
+                self.expect_type(
+                    &MirType::Unit,
+                    expected_return,
+                    "MIR_RETURN_TYPE",
+                    format!(
+                        "return expects `{}`, found `Unit`",
+                        expected_return.display()
+                    ),
+                );
+            }
+            MirStmt::Drop(value) => {
+                self.verify_expr(value, locals);
+            }
+        }
+    }
+
+    fn verify_expr(&mut self, expr: &MirExpr, locals: &HashMap<String, MirType>) -> MirType {
+        match expr {
+            MirExpr::Load(name) => locals.get(name).cloned().unwrap_or_else(|| {
+                self.error(
+                    "MIR_UNKNOWN_LOCAL",
+                    format!("load source `{name}` is not defined"),
+                );
+                MirType::Unknown
+            }),
+            MirExpr::Int(_) => MirType::named("Int"),
+            MirExpr::String(_) => MirType::named("String"),
+            MirExpr::Bool(_) => MirType::named("Bool"),
+            MirExpr::Binary { op, left, right } => self.verify_binary(*op, left, right, locals),
+            MirExpr::Unary { op, expr } => match op {
+                UnaryOp::Not => {
+                    self.expect_bool(expr, locals, "MIR_UNARY_TYPE", "not operand");
+                    MirType::named("Bool")
+                }
+            },
+            MirExpr::Call { callee, args } => self.verify_call(callee, args, locals),
+            MirExpr::EnumVariant { enum_name, variant } => {
+                self.verify_enum_variant(enum_name, variant);
+                MirType::named(enum_name.clone())
+            }
+            MirExpr::StructLiteral { ty, fields } => {
+                let mut seen = HashSet::new();
+                for field in fields {
+                    if !seen.insert(field.name.as_str()) {
+                        self.error(
+                            "MIR_DUPLICATE_FIELD",
+                            format!("duplicate field `{}` in struct literal `{ty}`", field.name),
+                        );
+                    }
+                    self.verify_expr(&field.value, locals);
+                }
+                MirType::named(ty.clone())
+            }
+            MirExpr::FieldAccess { base, .. } => {
+                self.verify_expr(base, locals);
+                MirType::Unknown
+            }
+        }
+    }
+
+    fn verify_binary(
+        &mut self,
+        op: BinaryOp,
+        left: &MirExpr,
+        right: &MirExpr,
+        locals: &HashMap<String, MirType>,
+    ) -> MirType {
+        let left_ty = self.verify_expr(left, locals);
+        let right_ty = self.verify_expr(right, locals);
+        match op {
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                self.expect_named(&left_ty, "Int", "MIR_BINARY_TYPE", "left operand");
+                self.expect_named(&right_ty, "Int", "MIR_BINARY_TYPE", "right operand");
+                MirType::named("Int")
+            }
+            BinaryOp::And | BinaryOp::Or => {
+                self.expect_named(&left_ty, "Bool", "MIR_BINARY_TYPE", "left operand");
+                self.expect_named(&right_ty, "Bool", "MIR_BINARY_TYPE", "right operand");
+                MirType::named("Bool")
+            }
+            BinaryOp::Lt | BinaryOp::Lte | BinaryOp::Gt | BinaryOp::Gte => {
+                self.expect_named(&left_ty, "Int", "MIR_BINARY_TYPE", "left operand");
+                self.expect_named(&right_ty, "Int", "MIR_BINARY_TYPE", "right operand");
+                MirType::named("Bool")
+            }
+            BinaryOp::Eq | BinaryOp::NotEq => {
+                self.expect_type(
+                    &left_ty,
+                    &right_ty,
+                    "MIR_BINARY_TYPE",
+                    format!(
+                        "equality operands must match, found `{}` and `{}`",
+                        left_ty.display(),
+                        right_ty.display()
+                    ),
+                );
+                MirType::named("Bool")
+            }
+        }
+    }
+
+    fn verify_call(
+        &mut self,
+        callee: &str,
+        args: &[MirExpr],
+        locals: &HashMap<String, MirType>,
+    ) -> MirType {
+        let Some(function) = self.functions.get(callee).copied() else {
+            self.error(
+                "MIR_UNKNOWN_FUNCTION",
+                format!("call target `{callee}` is not defined"),
+            );
+            for arg in args {
+                self.verify_expr(arg, locals);
+            }
+            return MirType::Unknown;
+        };
+        if function.params.len() != args.len() {
+            self.error(
+                "MIR_CALL_ARITY",
+                format!(
+                    "function `{callee}` expects {} arguments, found {}",
+                    function.params.len(),
+                    args.len()
+                ),
+            );
+        }
+        for (param, arg) in function.params.iter().zip(args) {
+            let arg_ty = self.verify_expr(arg, locals);
+            let param_ty = MirType::named(param.ty.clone());
+            self.expect_type(
+                &arg_ty,
+                &param_ty,
+                "MIR_CALL_TYPE",
+                format!(
+                    "argument `{}` for `{callee}` expects `{}`, found `{}`",
+                    param.name,
+                    param_ty.display(),
+                    arg_ty.display()
+                ),
+            );
+        }
+        function
+            .return_type
+            .as_ref()
+            .map(|ty| MirType::named(ty.clone()))
+            .unwrap_or(MirType::Unit)
+    }
+
+    fn verify_pattern(&mut self, pattern: &MirPattern, value_ty: &MirType) {
+        match pattern {
+            MirPattern::Name(_) | MirPattern::Wildcard => {}
+            MirPattern::Variant { enum_name, variant } => {
+                self.verify_enum_variant(enum_name, variant);
+                self.expect_type(
+                    &MirType::named(enum_name.clone()),
+                    value_ty,
+                    "MIR_MATCH_PATTERN",
+                    format!(
+                        "match pattern `{enum_name}.{variant}` expects value type `{enum_name}`, found `{}`",
+                        value_ty.display()
+                    ),
+                );
+            }
+            MirPattern::Int(_) => {
+                self.expect_named(value_ty, "Int", "MIR_MATCH_PATTERN", "match pattern")
+            }
+            MirPattern::String(_) => {
+                self.expect_named(value_ty, "String", "MIR_MATCH_PATTERN", "match pattern")
+            }
+            MirPattern::Bool(_) => {
+                self.expect_named(value_ty, "Bool", "MIR_MATCH_PATTERN", "match pattern")
+            }
+        }
+    }
+
+    fn verify_enum_variant(&mut self, enum_name: &str, variant: &str) {
+        let Some(variants) = self.enums.get(enum_name) else {
+            self.error(
+                "MIR_UNKNOWN_ENUM",
+                format!("enum `{enum_name}` is not defined"),
+            );
+            return;
+        };
+        if !variants.contains(variant) {
+            self.error(
+                "MIR_UNKNOWN_VARIANT",
+                format!("enum `{enum_name}` has no variant `{variant}`"),
+            );
+        }
+    }
+
+    fn expect_bool(
+        &mut self,
+        expr: &MirExpr,
+        locals: &HashMap<String, MirType>,
+        code: &'static str,
+        label: &str,
+    ) {
+        let ty = self.verify_expr(expr, locals);
+        self.expect_named(&ty, "Bool", code, label);
+    }
+
+    fn expect_named(&mut self, actual: &MirType, expected: &str, code: &'static str, label: &str) {
+        self.expect_type(
+            actual,
+            &MirType::named(expected),
+            code,
+            format!("{label} expects `{expected}`, found `{}`", actual.display()),
+        );
+    }
+
+    fn expect_type(
+        &mut self,
+        actual: &MirType,
+        expected: &MirType,
+        code: &'static str,
+        message: impl Into<String>,
+    ) {
+        if actual.is_unknown() || expected.is_unknown() || actual == expected {
+            return;
+        }
+        self.error(code, message);
+    }
+
+    fn error(&mut self, code: &'static str, message: impl Into<String>) {
+        self.diagnostics
+            .push(Diagnostic::new(code, message, Span::new(0, 0)));
     }
 }

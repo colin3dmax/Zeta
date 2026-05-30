@@ -40,6 +40,7 @@ pub fn run_mir(program: &Program) -> Result<Value, Vec<Diagnostic>> {
             "`main` must not take parameters for Stage 0 execution",
         )]);
     }
+    mir::verify(program)?;
 
     let mut runtime = MirRuntime::new(program);
     runtime.call_function(main).map_err(|err| vec![err])
