@@ -122,8 +122,8 @@ pub const TOPICS: &[ReplTopic] = &[
     },
     ReplTopic {
         name: "std",
-        summary: "Stage 0 standard library namespace placeholder. Current examples use import std.io; for syntax shaping.",
-        example: "import std.io;",
+        summary: "Stage 0 standard API boundary. The resolver currently accepts std.core and std.io imports.",
+        example: "import std.core;",
     },
     ReplTopic {
         name: "playground",
@@ -409,10 +409,10 @@ Zeta Stage 0 API
   {}  整数标量和整数算术
   {}  字符串标量
   {}  用于 if/while 条件的布尔标量
-  {}  标准库命名空间占位，当前用于 import 示例
+  {}  标准 API 边界：当前可导入 std.core 和 std.io
 
 语言表面
-  模块/导入、函数、绑定/可变绑定、赋值、比较、布尔逻辑、返回、if/while、struct、enum 变体、match
+  模块/导入、std.core/std.io、函数、绑定/可变绑定、赋值、比较、布尔逻辑、返回、if/while、struct、enum 变体、match
 
 试试
   {}
@@ -436,10 +436,10 @@ Zeta Stage 0 API
   {}  scalar integer values and arithmetic
   {}  scalar string values
   {}  scalar boolean values for control flow
-  {}  namespace placeholder used by import examples
+  {}  standard API boundary: std.core and std.io imports are accepted
 
 Language surface
-  module/import, fn, let/let mut, assignment, comparison, boolean logic, return, if/else, while, struct, enum variants, match
+  module/import, std.core/std.io, fn, let/let mut, assignment, comparison, boolean logic, return, if/else, while, struct, enum variants, match
 
 Try
   {}
@@ -484,7 +484,7 @@ fn topic_summary(topic: &ReplTopic, language: Language) -> &'static str {
         "getting-started" => "从表达式、let/let mut 绑定、函数、run/check 和在线 Playground 开始。",
         "tutorial" => "推荐学习路径：表达式、函数、控制流、数据类型和工具链。",
         "api" => "在终端里浏览 Stage 0 内置语言能力和标准 API 表面。",
-        "std" => "Stage 0 标准库命名空间占位。当前示例用 import std.io; 塑造语法。",
+        "std" => "Stage 0 标准 API 边界；resolver 当前接受 import std.core; 和 import std.io;，未知标准库路径会报错。",
         "playground" => "官网 Playground 运行编译为 WebAssembly 的真实 Zeta 编译器前端。",
         "module" => "声明当前源码模块。",
         "import" => "引入另一个模块路径。",

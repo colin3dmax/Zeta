@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zeta Core / Std API 边界</title>
+  <link rel="stylesheet" href="../shared.css">
+</head>
+<body>
+  <main>
+    <nav class="doc-nav" aria-label="文档导航">
+      <a href="../../">官网首页</a>
+      <a href="../index.html">文档中心</a>
+      <a href="../user/getting-started.html">快速开始</a>
+    </nav>
+    <h1>Zeta Core / Std API 边界</h1>
+    <p><strong>状态：</strong>accepted</p>
+    <p><strong>更新时间：</strong>2026-05-30</p>
+    <p><strong>适用范围：</strong>Zeta Stage 0 标准 API 命名空间、resolver 校验、用户文档和 Playground 示例。</p>
+    <p><strong>验收标准：</strong>用户能明确知道当前哪些标准 API 路径可导入，未知路径会被编译器拒绝，并能在线验证。</p>
+
+    <section class="hero">
+      <p class="eyebrow">API Boundary</p>
+      <h2>先冻结可验证边界，再扩展真实标准库能力。</h2>
+      <p>Zeta 不把尚未实现的标准库伪装成可用功能。Stage 0 只承诺最小命名空间边界：<code>std.core</code> 和 <code>std.io</code> 可以被导入，其他路径必须被 resolver 明确拒绝。</p>
+    </section>
+
+    <h2>设计决策</h2>
+    <div class="grid">
+      <section>
+        <h3>core 保持小</h3>
+        <p><code>std.core</code> 是最小语言核心能力的稳定入口，用于承载后续无需平台权限的基础 API。当前 Stage 0 只验证导入边界，不暴露函数集合。</p>
+      </section>
+      <section>
+        <h3>std.io 先占位</h3>
+        <p><code>std.io</code> 代表需要平台能力的 IO 层。真实读写 API 要等权限、错误模型和目标平台契约确定后再进入。</p>
+      </section>
+      <section>
+        <h3>未知路径必须失败</h3>
+        <p><code>import std.net;</code> 这类输入会得到 <code>RESOLVE_UNKNOWN_IMPORT</code>。这比静默接受更利于用户形成正确预期。</p>
+      </section>
+    </div>
+
+    <h2>当前规则</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>路径</th>
+          <th>状态</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>std.core</code></td>
+          <td>可导入</td>
+          <td>标准核心 API 边界，当前不提供运行时函数。</td>
+        </tr>
+        <tr>
+          <td><code>std.io</code></td>
+          <td>可导入</td>
+          <td>标准 IO API 边界，当前用于语法、resolver 和文档闭环。</td>
+        </tr>
+        <tr>
+          <td><code>std.*</code> 其他路径</td>
+          <td>拒绝</td>
+          <td>报告 <code>RESOLVE_UNKNOWN_IMPORT</code>，等对应 API 设计通过后再开放。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>示例</h2>
+    <pre><code>module demo.core;
+import std.core;
+import std.io;
+
+export fn main() -&gt; Int {
+  return 42;
+}</code></pre>
+    <pre><code>import std.net;
+
+fn main() -&gt; Int {
+  return 42;
+}
+// RESOLVE_UNKNOWN_IMPORT: unknown import `std.net`</code></pre>
+
+    <h2>后续阶段</h2>
+    <ul>
+      <li>Stage 1：实现跨文件模块图之前，继续只接受已登记标准路径。</li>
+      <li>Stage 1：为 <code>std.core</code> 定义不可分配、无需权限的基础 API 候选。</li>
+      <li>Stage 2：为 <code>std.io</code> 补齐权限、错误类型和平台目标差异。</li>
+      <li>Stage 2：开放第三方模块和包管理时，再让非标准路径进入模块解析。</li>
+    </ul>
+
+    <h2>在线测试</h2>
+    <p>下面复用官网真实 WASM Playground。修改 import 路径后点击 Check，可以看到 resolver 对未知路径的诊断。</p>
+    <iframe class="embedded-playground" src="../../?example=overview#playground" title="Zeta Core Std API Playground"></iframe>
+  </main>
+</body>
+</html>

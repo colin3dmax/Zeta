@@ -1,5 +1,6 @@
 use crate::ast::{Expr, Function, Item, Module, Stmt};
 use crate::diagnostic::{Diagnostic, Span};
+use crate::std_api;
 use std::collections::{HashMap, HashSet};
 
 pub fn resolve(module: &Module) -> Result<(), Vec<Diagnostic>> {
@@ -23,6 +24,9 @@ pub fn resolve(module: &Module) -> Result<(), Vec<Diagnostic>> {
 fn check_top_level(module: &Module, diagnostics: &mut Vec<Diagnostic>) {
     let mut names = HashSet::new();
     for item in &module.items {
+        if let Item::Import { path, path_span } = item {
+            check_import(path, *path_span, diagnostics);
+        }
         let Some((name, span)) = item_name(item) else {
             continue;
         };
@@ -34,6 +38,22 @@ fn check_top_level(module: &Module, diagnostics: &mut Vec<Diagnostic>) {
             ));
         }
     }
+}
+
+fn check_import(path: &[String], span: Span, diagnostics: &mut Vec<Diagnostic>) {
+    if std_api::is_standard_import(path) {
+        return;
+    }
+
+    let import_name = path.join(".");
+    let supported = std_api::standard_import_names().join("`, `");
+    diagnostics.push(Diagnostic::new(
+        "RESOLVE_UNKNOWN_IMPORT",
+        format!(
+            "unknown import `{import_name}`; Stage 0 currently supports standard imports `{supported}`"
+        ),
+        span,
+    ));
 }
 
 fn check_function(

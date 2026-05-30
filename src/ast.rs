@@ -8,7 +8,7 @@ pub struct Module {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Item {
     ModuleDecl { name: String },
-    Import { path: Vec<String> },
+    Import { path: Vec<String>, path_span: Span },
     Struct(StructDecl),
     Enum(EnumDecl),
     Function(Function),
@@ -195,7 +195,7 @@ impl Item {
             Item::ModuleDecl { name } => {
                 out.push_str(&format!("{pad}ModuleDecl name={name}\n"));
             }
-            Item::Import { path } => {
+            Item::Import { path, .. } => {
                 out.push_str(&format!("{pad}Import path={}\n", path.join(".")));
             }
             Item::Struct(decl) => {

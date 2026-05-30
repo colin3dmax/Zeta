@@ -49,9 +49,9 @@ impl Parser {
         }
 
         if self.consume_keyword(Keyword::Import).is_some() {
-            let path = self.parse_path()?;
+            let (path, path_span) = self.parse_path_span()?;
             self.expect_symbol(Symbol::Semicolon, "expected `;` after import")?;
-            return Ok(Item::Import { path });
+            return Ok(Item::Import { path, path_span });
         }
 
         let exported = self.consume_keyword(Keyword::Export).is_some();
@@ -160,11 +160,18 @@ impl Parser {
     }
 
     fn parse_path(&mut self) -> Result<Vec<String>, Diagnostic> {
+        self.parse_path_span().map(|(path, _)| path)
+    }
+
+    fn parse_path_span(&mut self) -> Result<(Vec<String>, Span), Diagnostic> {
+        let start = self.peek().span.start;
         let mut path = vec![self.expect_ident("expected module path")?];
+        let mut end = self.tokens[self.pos.saturating_sub(1)].span.end;
         while self.consume_symbol(Symbol::Dot).is_some() {
             path.push(self.expect_ident("expected name after `.`")?);
+            end = self.tokens[self.pos.saturating_sub(1)].span.end;
         }
-        Ok(path)
+        Ok((path, Span::new(start, end)))
     }
 
     fn parse_block_body(&mut self) -> Result<Vec<Stmt>, Diagnostic> {

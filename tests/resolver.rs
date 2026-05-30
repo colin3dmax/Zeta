@@ -81,6 +81,33 @@ fn main() {
     zeta::check_source(source).expect("mutable assignment should resolve");
 }
 
+#[test]
+fn check_accepts_stage0_standard_imports() {
+    let source = r#"
+import std.core;
+import std.io;
+
+fn main() -> Int {
+  return 42;
+}
+"#;
+    zeta::check_source(source).expect("standard imports should resolve");
+}
+
+#[test]
+fn check_rejects_unknown_imports() {
+    let source = r#"
+import std.net;
+
+fn main() -> Int {
+  return 42;
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("unknown import should fail");
+    assert_eq!(diagnostics[0].code, "RESOLVE_UNKNOWN_IMPORT");
+    assert_eq!(diagnostics[0].span, span_of(source, "std.net"));
+}
+
 fn span_of(source: &str, needle: &str) -> zeta::diagnostic::Span {
     let start = source.find(needle).expect("needle should exist");
     zeta::diagnostic::Span::new(start, start + needle.len())

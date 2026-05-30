@@ -14,7 +14,7 @@ fn dump_item(item: &Item, indent: usize, out: &mut String) {
         Item::ModuleDecl { name } => {
             out.push_str(&format!("{pad}module {name}\n"));
         }
-        Item::Import { path } => {
+        Item::Import { path, .. } => {
             out.push_str(&format!("{pad}import {}\n", path.join(".")));
         }
         Item::Struct(decl) => {
