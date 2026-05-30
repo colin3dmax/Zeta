@@ -14,15 +14,15 @@
       <a href="getting-started.html">快速开始</a>
     </nav>
     <h1>Zeta 本地安装</h1>
-    <p><strong>状态：</strong>draft</p>
+    <p><strong>状态：</strong>accepted</p>
     <p><strong>更新时间：</strong>2026-05-30</p>
     <p><strong>适用范围：</strong>Zeta Stage 0 命令行工具、REPL、官网安装入口和当前平台本地打包方法。</p>
     <p><strong>验收标准：</strong>用户可以在 macOS、Linux 或 Windows 上从源码构建 Zeta，运行 <code>zeta repl</code>、<code>zeta check</code> 和 <code>zeta run</code>。</p>
 
     <section class="hero">
       <p class="eyebrow">Install</p>
-      <h2>当前推荐从源码安装，预构建安装包进入 release 自动化后开放。</h2>
-      <p>Zeta 还处在 Stage 0，命令行工具已经可本地运行，但跨平台预构建安装包尚未作为稳定 release 发布。官网先提供源码安装、本地 release 构建和当前平台打包方法，避免把实验产物误标为稳定下载。</p>
+      <h2>当前推荐从源码安装；release 打包脚本已经可复用。</h2>
+      <p>Zeta 还处在 Stage 0，命令行工具已经可本地运行。官网提供源码安装、本地 release 构建和脚本化打包方法；预构建下载会在发布机或 CI 跑同一套脚本后开放。</p>
     </section>
 
     <h2>平台状态</h2>
@@ -37,18 +37,18 @@
       <tbody>
         <tr>
           <td>macOS arm64 / x86_64</td>
-          <td>源码构建、本地 release 构建、本地 <code>tar.gz</code> 打包。</td>
-          <td>规划中。</td>
+          <td>源码构建、本地 release 构建、<code>tools/package-release.sh</code> 打包。</td>
+          <td>脚本已支持；稳定下载待 release 发布。</td>
         </tr>
         <tr>
           <td>Linux x86_64 / aarch64</td>
-          <td>源码构建、本地 release 构建、本地 <code>tar.gz</code> 打包。</td>
-          <td>规划中。</td>
+          <td>源码构建、本地 release 构建、指定 Rust target 打包。</td>
+          <td>脚本已支持；需要本机安装对应 Rust target/linker。</td>
         </tr>
         <tr>
           <td>Windows x86_64</td>
-          <td>通过 Rust/Cargo 在 PowerShell 或 Git Bash 中源码构建。</td>
-          <td>规划中。</td>
+          <td>通过 Rust/Cargo 在 PowerShell 或 Git Bash 中源码构建；发布机可指定 Windows target。</td>
+          <td>脚本会优先生成 <code>.zip</code>；需要 Windows target 和 linker。</td>
         </tr>
       </tbody>
     </table>
@@ -79,10 +79,21 @@ zeta repl</code></pre>
     <pre><code>cargo build --release
 .\target\release\zeta.exe repl</code></pre>
 
-    <h2>生成当前平台安装包</h2>
-    <p>本地打包脚本会构建 release，并把 <code>zeta</code>、README 和 HTML 文档打进 <code>dist/packages/</code>。</p>
-    <pre><code>sh tools/package-local.sh
+    <h2>生成安装包</h2>
+    <p>打包脚本会构建 release，并把 <code>zeta</code>、README、HTML 文档、<code>INSTALL.txt</code> 和校验信息打进 <code>dist/packages/</code>。</p>
+    <pre><code>sh tools/package-release.sh
 ls dist/packages</code></pre>
+    <p>发布机可以指定已经安装好的 Rust target。脚本不会自动下载 target 或 linker，避免在用户机器上隐式改变工具链。</p>
+    <pre><code>rustup target add x86_64-unknown-linux-gnu
+sh tools/package-release.sh --target x86_64-unknown-linux-gnu
+
+rustup target add aarch64-apple-darwin
+sh tools/package-release.sh --target aarch64-apple-darwin
+
+rustup target add x86_64-pc-windows-msvc
+sh tools/package-release.sh --target x86_64-pc-windows-msvc</code></pre>
+    <p>兼容旧入口：</p>
+    <pre><code>sh tools/package-local.sh</code></pre>
 
     <h2>验证安装</h2>
     <pre><code>zeta ast-dump testdata/core_items.zeta
