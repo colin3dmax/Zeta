@@ -22,7 +22,7 @@
     <section class="hero">
       <p class="eyebrow">API Boundary</p>
       <h2>先冻结可验证边界，再扩展真实标准库能力。</h2>
-      <p>Zeta 不把尚未实现的标准库伪装成可用功能。Stage 0 只承诺最小命名空间边界：<code>std.core</code> 和 <code>std.io</code> 可以被导入，其他路径必须被 resolver 明确拒绝。</p>
+    <p>Zeta 不把尚未实现的标准库伪装成可用功能。Stage 0/1 只承诺最小命名空间边界：<code>std.core</code> 和 <code>std.io</code> 可以被导入；目录检查时，module graph 中存在的本地模块也可以被导入；其他路径必须被 resolver 明确拒绝。</p>
     </section>
 
     <h2>设计决策</h2>
@@ -62,7 +62,12 @@
           <td>标准 IO API 边界，当前用于语法、resolver 和文档闭环。</td>
         </tr>
         <tr>
-          <td><code>std.*</code> 其他路径</td>
+          <td>本地 module graph</td>
+          <td>目录检查可导入</td>
+          <td><code>zeta check &lt;directory&gt;</code> 会读取目录内 <code>.zeta</code> 文件，允许导入其中声明的模块。</td>
+        </tr>
+        <tr>
+          <td><code>std.*</code> 其他路径或缺失本地模块</td>
           <td>拒绝</td>
           <td>报告 <code>RESOLVE_UNKNOWN_IMPORT</code>，等对应 API 设计通过后再开放。</td>
         </tr>

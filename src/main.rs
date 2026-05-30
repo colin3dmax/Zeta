@@ -1,5 +1,6 @@
 use std::env;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process;
 use zeta::repl::{color, Language, Style};
 
@@ -80,6 +81,12 @@ fn mir_dump(path: &str) {
 }
 
 fn check(path: &str) {
+    let path_ref = Path::new(path);
+    if path_ref.is_dir() {
+        check_module_directory(path_ref);
+        return;
+    }
+
     let source = match fs::read_to_string(path) {
         Ok(source) => source,
         Err(err) => {
@@ -95,6 +102,65 @@ fn check(path: &str) {
             process::exit(1);
         }
     }
+}
+
+fn check_module_directory(root: &Path) {
+    let paths = match zeta_files(root) {
+        Ok(paths) => paths,
+        Err(err) => {
+            eprintln!("failed to scan {}: {err}", root.display());
+            process::exit(1);
+        }
+    };
+    if paths.is_empty() {
+        eprintln!("no .zeta files found in {}", root.display());
+        process::exit(1);
+    }
+
+    let mut files = Vec::new();
+    for path in paths {
+        let source = match fs::read_to_string(&path) {
+            Ok(source) => source,
+            Err(err) => {
+                eprintln!("failed to read {}: {err}", path.display());
+                process::exit(1);
+            }
+        };
+        files.push(zeta::module_graph::SourceFile {
+            path: path.display().to_string(),
+            source,
+        });
+    }
+
+    match zeta::module_graph::check_sources(&files) {
+        Ok(()) => println!("ok"),
+        Err(errors) => {
+            for error in errors {
+                print_diagnostics(&error.diagnostics, &error.source, &error.path);
+            }
+            process::exit(1);
+        }
+    }
+}
+
+fn zeta_files(root: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    collect_zeta_files(root, &mut out)?;
+    out.sort();
+    Ok(out)
+}
+
+fn collect_zeta_files(path: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_zeta_files(&path, out)?;
+        } else if path.extension().and_then(|value| value.to_str()) == Some("zeta") {
+            out.push(path);
+        }
+    }
+    Ok(())
 }
 
 fn run(path: &str) {

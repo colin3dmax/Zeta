@@ -7,7 +7,7 @@ pub struct Module {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Item {
-    ModuleDecl { name: String },
+    ModuleDecl { name: String, name_span: Span },
     Import { path: Vec<String>, path_span: Span },
     Struct(StructDecl),
     Enum(EnumDecl),
@@ -192,7 +192,7 @@ impl Item {
     fn dump(&self, indent: usize, out: &mut String) {
         let pad = "  ".repeat(indent);
         match self {
-            Item::ModuleDecl { name } => {
+            Item::ModuleDecl { name, .. } => {
                 out.push_str(&format!("{pad}ModuleDecl name={name}\n"));
             }
             Item::Import { path, .. } => {

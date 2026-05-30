@@ -1,0 +1,96 @@
+#[test]
+fn module_graph_accepts_local_imports() {
+    let files = vec![
+        source_file(
+            "app.zeta",
+            r#"
+module demo.app;
+import demo.math;
+
+fn main() -> Int {
+  return 42;
+}
+"#,
+        ),
+        source_file(
+            "math.zeta",
+            r#"
+module demo.math;
+
+fn answer() -> Int {
+  return 42;
+}
+"#,
+        ),
+    ];
+
+    zeta::module_graph::check_sources(&files).expect("local module import should resolve");
+}
+
+#[test]
+fn module_graph_rejects_missing_local_imports() {
+    let source = r#"
+module demo.app;
+import demo.missing;
+
+fn main() -> Int {
+  return 42;
+}
+"#;
+    let files = vec![source_file("app.zeta", source)];
+    let errors = zeta::module_graph::check_sources(&files).expect_err("missing import should fail");
+    assert_eq!(errors[0].diagnostics[0].code, "RESOLVE_UNKNOWN_IMPORT");
+    assert_eq!(
+        errors[0].diagnostics[0].span,
+        span_of(source, "demo.missing")
+    );
+}
+
+#[test]
+fn module_graph_rejects_duplicate_modules() {
+    let files = vec![
+        source_file(
+            "one.zeta",
+            "module demo.same;\nfn one() -> Int { return 1; }\n",
+        ),
+        source_file(
+            "two.zeta",
+            "module demo.same;\nfn two() -> Int { return 2; }\n",
+        ),
+    ];
+
+    let errors =
+        zeta::module_graph::check_sources(&files).expect_err("duplicate module should fail");
+    assert_eq!(errors[0].diagnostics[0].code, "RESOLVE_DUPLICATE_MODULE");
+}
+
+#[test]
+fn cli_check_accepts_module_directory() {
+    let binary = env!("CARGO_BIN_EXE_zeta");
+    let output = std::process::Command::new(binary)
+        .args(["check", "testdata/modules_ok"])
+        .output()
+        .expect("zeta check should run");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout should be utf-8"),
+        "ok\n"
+    );
+}
+
+fn source_file(path: &str, source: &str) -> zeta::module_graph::SourceFile {
+    zeta::module_graph::SourceFile {
+        path: path.to_string(),
+        source: source.to_string(),
+    }
+}
+
+fn span_of(source: &str, needle: &str) -> zeta::diagnostic::Span {
+    let start = source.find(needle).expect("needle should exist");
+    zeta::diagnostic::Span::new(start, start + needle.len())
+}

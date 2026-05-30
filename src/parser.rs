@@ -43,9 +43,10 @@ impl Parser {
 
     fn parse_item(&mut self) -> Result<Item, Diagnostic> {
         if self.consume_keyword(Keyword::Module).is_some() {
-            let name = self.parse_path()?.join(".");
+            let (path, name_span) = self.parse_path_span()?;
+            let name = path.join(".");
             self.expect_symbol(Symbol::Semicolon, "expected `;` after module declaration")?;
-            return Ok(Item::ModuleDecl { name });
+            return Ok(Item::ModuleDecl { name, name_span });
         }
 
         if self.consume_keyword(Keyword::Import).is_some() {
@@ -157,10 +158,6 @@ impl Parser {
             }
         }
         Ok(params)
-    }
-
-    fn parse_path(&mut self) -> Result<Vec<String>, Diagnostic> {
-        self.parse_path_span().map(|(path, _)| path)
     }
 
     fn parse_path_span(&mut self) -> Result<(Vec<String>, Span), Diagnostic> {

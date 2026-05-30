@@ -4,6 +4,7 @@ pub mod hir;
 pub mod lexer;
 pub mod line_editor;
 pub mod mir;
+pub mod module_graph;
 pub mod parser;
 pub mod repl;
 pub mod resolver;

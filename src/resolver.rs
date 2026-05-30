@@ -4,8 +4,15 @@ use crate::std_api;
 use std::collections::{HashMap, HashSet};
 
 pub fn resolve(module: &Module) -> Result<(), Vec<Diagnostic>> {
+    resolve_with_imports(module, &HashSet::new())
+}
+
+pub fn resolve_with_imports(
+    module: &Module,
+    local_imports: &HashSet<String>,
+) -> Result<(), Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
-    check_top_level(module, &mut diagnostics);
+    check_top_level(module, local_imports, &mut diagnostics);
     let functions = function_names(module);
     let top_level_names = top_level_names(module);
     for item in &module.items {
@@ -21,11 +28,15 @@ pub fn resolve(module: &Module) -> Result<(), Vec<Diagnostic>> {
     }
 }
 
-fn check_top_level(module: &Module, diagnostics: &mut Vec<Diagnostic>) {
+fn check_top_level(
+    module: &Module,
+    local_imports: &HashSet<String>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
     let mut names = HashSet::new();
     for item in &module.items {
         if let Item::Import { path, path_span } = item {
-            check_import(path, *path_span, diagnostics);
+            check_import(path, *path_span, local_imports, diagnostics);
         }
         let Some((name, span)) = item_name(item) else {
             continue;
@@ -40,17 +51,22 @@ fn check_top_level(module: &Module, diagnostics: &mut Vec<Diagnostic>) {
     }
 }
 
-fn check_import(path: &[String], span: Span, diagnostics: &mut Vec<Diagnostic>) {
-    if std_api::is_standard_import(path) {
+fn check_import(
+    path: &[String],
+    span: Span,
+    local_imports: &HashSet<String>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let import_name = path.join(".");
+    if std_api::is_standard_import(path) || local_imports.contains(&import_name) {
         return;
     }
 
-    let import_name = path.join(".");
     let supported = std_api::standard_import_names().join("`, `");
     diagnostics.push(Diagnostic::new(
         "RESOLVE_UNKNOWN_IMPORT",
         format!(
-            "unknown import `{import_name}`; Stage 0 currently supports standard imports `{supported}`"
+            "unknown import `{import_name}`; Stage 1 currently supports standard imports `{supported}` or modules present in the checked module graph"
         ),
         span,
     ));

@@ -540,17 +540,19 @@ python3 tools/check-vscode-extension.py</code></pre>
               <small>main.zeta</small>
             </div>
             <div class="code-editor">
+              <pre
+                class="code-highlight editor-highlight"
+                aria-hidden="true"
+                style={`transform: translate(${-sourceScrollLeft}px, ${-sourceScrollTop}px);`}
+              ><code>{@html highlightCode(source)}</code></pre>
               <textarea
                 bind:value={source}
                 on:scroll={syncSourceScroll}
                 on:input={showSourceCompletion}
                 on:keydown={onSourceKeydown}
                 spellcheck="false"
+                aria-label="Zeta source input"
               ></textarea>
-              <div class="code-preview" aria-label="Highlighted source preview">
-                <span>Preview</span>
-                <pre class="code-highlight"><code>{@html highlightCode(source)}</code></pre>
-              </div>
               {#if sourceCompletionOpen && sourceSuggestions.length}
                 <div class="completion-panel editor-completion">
                   {#each sourceSuggestions as item}

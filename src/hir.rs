@@ -11,7 +11,7 @@ pub fn dump(module: &Module) -> String {
 fn dump_item(item: &Item, indent: usize, out: &mut String) {
     let pad = "  ".repeat(indent);
     match item {
-        Item::ModuleDecl { name } => {
+        Item::ModuleDecl { name, .. } => {
             out.push_str(&format!("{pad}module {name}\n"));
         }
         Item::Import { path, .. } => {

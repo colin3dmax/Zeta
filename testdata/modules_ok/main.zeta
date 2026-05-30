@@ -1,0 +1,7 @@
+module demo.app;
+import demo.math;
+import std.core;
+
+fn main() -> Int {
+  return 42;
+}
