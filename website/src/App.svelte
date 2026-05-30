@@ -450,6 +450,7 @@ python3 tools/check-vscode-extension.py</code></pre>
               <pre class="terminal-input-highlight" aria-hidden="true"><code>{@html replInput
                 ? highlightCode(replInput)
                 : '<span class="terminal-placeholder">40 + 2</span>'}</code></pre>
+              {#if !replInput}<span class="terminal-caret" aria-hidden="true"></span>{/if}
               <input
                 bind:this={replInputEl}
                 bind:value={replInput}
