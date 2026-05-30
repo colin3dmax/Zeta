@@ -76,6 +76,39 @@ main {
   display: block;
 }
 
+.doc-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 24px;
+  padding: 12px 0;
+  border-bottom: 1px solid #d0d7de;
+}
+
+.doc-nav a {
+  display: inline-block;
+  padding: 6px 10px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #fff;
+  color: #0969da;
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.doc-nav a:hover {
+  border-color: #0969da;
+  background: #f6f8fa;
+}
+
+.embedded-playground {
+  width: 100%;
+  min-height: 720px;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+}
+
 h1,
 h2 {
   line-height: 1.25;

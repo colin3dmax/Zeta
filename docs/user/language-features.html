@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zeta 语言特性学习</title>
+  <link rel="stylesheet" href="../shared.css">
+</head>
+<body>
+  <main>
+    <nav class="doc-nav" aria-label="文档导航">
+      <a href="../../">官网首页</a>
+      <a href="../index.html">文档中心</a>
+      <a href="getting-started.html">快速开始</a>
+    </nav>
+    <h1>Zeta 语言特性学习</h1>
+    <p><strong>状态：</strong>draft</p>
+    <p><strong>更新时间：</strong>2026-05-30</p>
+    <p><strong>适用范围：</strong>Zeta Stage 0 已实现语言功能、用户示例、CLI 验证方式和官网 Playground 在线测试入口。</p>
+    <p><strong>验收标准：</strong>每个已实现语言功能都有用途说明、规则、示例和可复用 Playground 测试入口。</p>
+
+    <section class="hero">
+      <p class="eyebrow">Feature Guide</p>
+      <h2>每个语言能力都应该能读、能跑、能在线验证。</h2>
+      <p>本页覆盖当前 Stage 0 已实现的语言表面。标记为 parse / dump 的能力表示编译器前端已识别，但运行时语义仍在后续阶段补齐。</p>
+    </section>
+
+    <h2 id="modules">模块、import 和 export</h2>
+    <p><code>module</code> 声明当前文件模块名；<code>import</code> 先作为模块路径语法进入 AST；<code>export</code> 标记函数或类型对外可见。当前 Stage 0 还没有跨文件模块图。</p>
+    <pre><code>module demo.core;
+import std.io;
+
+export fn main() -&gt; Int {
+  return 42;
+}</code></pre>
+    <p><a class="button secondary" href="../../?example=overview#playground">在 Playground 测试模块示例</a></p>
+
+    <h2 id="scalars-expressions">标量与表达式</h2>
+    <p>当前标量类型包括 <code>Int</code>、<code>String</code> 和 <code>Bool</code>。整数算术支持 <code>+ - * /</code>，乘除优先级高于加减。</p>
+    <pre><code>fn main() -&gt; Int {
+  return 1 + 2 * 20 + 1;
+}</code></pre>
+    <p>比较表达式返回 <code>Bool</code>。<code>&lt;</code>、<code>&lt;=</code>、<code>&gt;</code>、<code>&gt;=</code> 当前只接受 <code>Int</code>；<code>==</code> 和 <code>!=</code> 要求左右类型一致。</p>
+    <pre><code>fn main() -&gt; Bool {
+  return 40 + 2 == 42;
+}</code></pre>
+    <p>布尔逻辑支持 <code>&amp;&amp;</code>、<code>||</code> 和 <code>!</code>，其中 <code>&amp;&amp;</code> / <code>||</code> 使用短路语义。</p>
+    <pre><code>fn main() -&gt; Bool {
+  return true &amp;&amp; !false;
+}</code></pre>
+    <p><a class="button secondary" href="../../?example=bool#playground">在 Playground 测试布尔逻辑</a></p>
+
+    <h2 id="bindings">let、let mut 和赋值</h2>
+    <p>Zeta 默认局部绑定不可变。需要后续赋值时，必须在声明处写 <code>let mut</code>。给不可变绑定赋值会被 resolver/typecheck 拒绝。</p>
+    <pre><code>fn main() -&gt; Int {
+  let mut answer: Int = 40;
+  answer = answer + 2;
+  return answer;
+}</code></pre>
+    <p><a class="button secondary" href="../../?example=bindings#playground">在 Playground 测试绑定和赋值</a></p>
+
+    <h2 id="functions">函数、参数和 return</h2>
+    <p><code>fn</code> 声明函数，参数和返回值使用显式类型。<code>run</code> 当前执行无参数 <code>main</code>。函数调用会检查参数数量和参数类型。</p>
+    <pre><code>fn add(left: Int, right: Int) -&gt; Int {
+  return left + right;
+}
+
+fn main() -&gt; Int {
+  return add(40, 2);
+}</code></pre>
+    <p><a class="button secondary" href="../../?example=functions#playground">在 Playground 测试函数调用</a></p>
+
+    <h2 id="control-flow">if/else 和 while</h2>
+    <p><code>if</code> 和 <code>while</code> 的条件必须是 <code>Bool</code>。比较表达式和布尔逻辑可以直接作为条件。</p>
+    <pre><code>fn main() -&gt; Int {
+  let mut count: Int = 0;
+  while count &lt; 3 {
+    count = count + 1;
+  }
+  if count == 3 &amp;&amp; !false {
+    return 42;
+  }
+  return 0;
+}</code></pre>
+    <p><a class="button secondary" href="../../?example=control#playground">在 Playground 测试控制流</a></p>
+
+    <h2 id="data-declarations">struct、enum 和 match</h2>
+    <p><code>struct</code> 和 <code>enum</code> 当前支持 parse、AST dump 和 HIR dump，用于冻结数据建模语法。结构体值、字段访问、枚举变体值和 <code>match</code> 运行时语义会在后续阶段接入。</p>
+    <pre><code>module demo.data;
+
+export struct User {
+  name: String,
+  age: Int,
+}
+
+enum ResultTag {
+  Ok,
+  Err,
+}</code></pre>
+    <p><a class="button secondary" href="../../?example=data#playground">在 Playground 查看数据声明 AST</a></p>
+
+    <h2 id="tooling">CLI、REPL 和编辑器</h2>
+    <p>CLI 提供 <code>ast-dump</code>、<code>hir-dump</code>、<code>mir-dump</code>、<code>check</code>、<code>run</code> 和 <code>repl</code>。REPL 支持表达式执行、语句执行、文档查询、补全和输入着色。</p>
+    <pre><code>zeta ast-dump testdata/core_items.zeta
+zeta check testdata/core_items.zeta
+zeta run testdata/run_bool_logic.zeta
+zeta repl</code></pre>
+
+    <h2>在线测试</h2>
+    <p>下面的嵌入区域复用官网真实 WASM Playground。也可以点击各章节按钮打开对应示例。</p>
+    <iframe class="embedded-playground" src="../../?example=overview#playground" title="Zeta Playground"></iframe>
+  </main>
+</body>
+</html>

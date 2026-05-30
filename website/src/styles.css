@@ -422,6 +422,10 @@ textarea {
   margin: 0;
 }
 
+.toolbar.examples {
+  margin-bottom: 16px;
+}
+
 .toolbar.compact {
   gap: 0;
 }

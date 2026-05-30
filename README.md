@@ -78,6 +78,10 @@ sh tools/verify.sh
 ZETA_PLAYWRIGHT_REQUIRE=/path/to/node_modules/playwright sh tools/verify.sh --deploy --live
 ```
 
+## 本地安装
+
+当前 Stage 0 推荐从源码安装和本地构建。平台安装说明见 [Zeta 本地安装](docs/user/install.html)，语言特性讲解和在线测试见 [Zeta 语言特性学习](docs/user/language-features.html)。
+
 ## 本地文档服务
 
 ```sh

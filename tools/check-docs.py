@@ -9,6 +9,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 REQUIRED_METADATA = ("状态", "更新时间", "适用范围", "验收标准")
+REQUIRED_DOC_NAV_TEXT = ("官网首页", "文档中心", "快速开始")
 METADATA_PATTERN = re.compile(
     r"<p>\s*<strong>(状态|更新时间|适用范围|验收标准)：</strong>\s*(.*?)\s*</p>",
     re.DOTALL,
@@ -103,6 +104,18 @@ def check_metadata(path):
     return errors
 
 
+def check_doc_nav(path):
+    text = path.read_text(encoding="utf-8")
+    errors = []
+    if 'class="doc-nav"' not in text:
+        errors.append(f"{path.relative_to(ROOT)}: missing top doc-nav")
+        return errors
+    for label in REQUIRED_DOC_NAV_TEXT:
+        if label not in text:
+            errors.append(f"{path.relative_to(ROOT)}: doc-nav missing link label: {label}")
+    return errors
+
+
 def check_html_links(path):
     parser = LinkParser()
     parser.feed(path.read_text(encoding="utf-8"))
@@ -111,7 +124,9 @@ def check_html_links(path):
         clean = urldefrag(link)[0]
         if not clean or is_external(clean):
             continue
-        target = (path.parent / clean).resolve()
+        parsed = urlparse(clean)
+        target_path = parsed.path or "."
+        target = (path.parent / target_path).resolve()
         try:
             target.relative_to(ROOT)
         except ValueError:
@@ -133,7 +148,9 @@ def check_readme_links():
         clean = urldefrag(link)[0]
         if not clean or is_external(clean):
             continue
-        target = (readme.parent / clean).resolve()
+        parsed = urlparse(clean)
+        target_path = parsed.path or "."
+        target = (readme.parent / target_path).resolve()
         if not target.exists():
             errors.append(f"README.md: missing link target: {link}")
     return errors
@@ -145,6 +162,7 @@ def main():
     for path in html_files:
         errors.extend(check_html_balance(path))
         errors.extend(check_metadata(path))
+        errors.extend(check_doc_nav(path))
         errors.extend(check_html_links(path))
     errors.extend(check_readme_links())
 

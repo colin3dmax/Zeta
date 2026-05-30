@@ -48,7 +48,9 @@
 
   const navItems = [
     { id: "overview", label: "概览" },
+    { id: "install", label: "安装" },
     { id: "start", label: "快速开始" },
+    { id: "features", label: "语言特性" },
     { id: "repl", label: "交互终端" },
     { id: "playground", label: "Playground" },
     { id: "tutorial", label: "教程" },
@@ -70,6 +72,46 @@ export fn main() -> Int {
   }
   return 0;
 }`;
+
+  const playgroundExamples = {
+    overview: sample,
+    bindings: `fn main() -> Int {
+  let mut answer: Int = 40;
+  answer = answer + 2;
+  return answer;
+}`,
+    control: `fn main() -> Int {
+  let mut count: Int = 0;
+  while count < 3 {
+    count = count + 1;
+  }
+  if count == 3 && !false {
+    return 42;
+  }
+  return 0;
+}`,
+    functions: `fn add(left: Int, right: Int) -> Int {
+  return left + right;
+}
+
+fn main() -> Int {
+  return add(40, 2);
+}`,
+    data: `module demo.data;
+
+export struct User {
+  name: String,
+  age: Int,
+}
+
+enum ResultTag {
+  Ok,
+  Err,
+}`,
+    bool: `fn main() -> Bool {
+  return true && !false;
+}`
+  };
 
   let active = "overview";
   let source = sample;
@@ -257,9 +299,23 @@ export fn main() -> Int {
     replInputEl?.focus();
   }
 
+  function loadPlaygroundExample(name) {
+    const example = playgroundExamples[name] ?? playgroundExamples.overview;
+    source = example;
+    output = "选择 AST、Check 或 Run 查看真实 Zeta 编译器前端结果。";
+    active = "playground";
+  }
+
   onMount(() => {
+    const params = new URLSearchParams(location.search);
+    const example = params.get("example");
+    if (example) {
+      loadPlaygroundExample(example);
+    }
     if (location.hash === "#repl") {
       focusRepl();
+    } else if (location.hash === "#playground") {
+      active = "playground";
     }
   });
 </script>
@@ -291,6 +347,7 @@ export fn main() -> Int {
       </p>
       <div class="actions">
         <a href="#playground" on:click={() => (active = "playground")}>打开 Playground</a>
+        <a href="#install" on:click={() => (active = "install")}>本地安装</a>
         <a href="#start" on:click={() => (active = "start")}>快速开始</a>
       </div>
     </section>
@@ -308,6 +365,28 @@ export fn main() -> Int {
         <span class="metric">Native First</span>
         <p>目标覆盖 native、WASM、Windows、iOS、Android 和 RISC-V。</p>
       </div>
+    </section>
+
+    <section id="install">
+      <p class="kicker">Install</p>
+      <h2>本地安装</h2>
+      <div class="grid two">
+        <article>
+          <h3>源码安装</h3>
+          <p>当前 Stage 0 推荐从源码构建，适用于 macOS、Linux 和 Windows。</p>
+          <pre><code>git clone https://github.com/colin3dmax/Zeta.git
+cd Zeta
+cargo build --release
+./target/release/zeta repl</code></pre>
+        </article>
+        <article>
+          <h3>平台包状态</h3>
+          <p>预构建安装包会在 release 自动化稳定后开放。现在可以用本地打包脚本生成当前平台压缩包。</p>
+          <pre><code>sh tools/package-local.sh
+ls dist/packages</code></pre>
+        </article>
+      </div>
+      <p class="note"><a href="/docs/user/install.html">查看 macOS、Linux、Windows 安装方法和平台包状态</a></p>
     </section>
 
     <section id="start">
@@ -400,6 +479,14 @@ python3 tools/check-vscode-extension.py</code></pre>
     <section id="playground">
       <p class="kicker">Online Playground</p>
       <h2>在线使用</h2>
+      <div class="toolbar examples">
+        <button type="button" on:click={() => loadPlaygroundExample("overview")}>综合示例</button>
+        <button type="button" on:click={() => loadPlaygroundExample("bindings")}>绑定/赋值</button>
+        <button type="button" on:click={() => loadPlaygroundExample("control")}>控制流</button>
+        <button type="button" on:click={() => loadPlaygroundExample("functions")}>函数调用</button>
+        <button type="button" on:click={() => loadPlaygroundExample("bool")}>布尔逻辑</button>
+        <button type="button" on:click={() => loadPlaygroundExample("data")}>数据声明</button>
+      </div>
       <div class="tool-window playground-panel">
         <div class="window-chrome light">
           <div class="window-controls" aria-hidden="true">
@@ -460,10 +547,21 @@ python3 tools/check-vscode-extension.py</code></pre>
       <p class="kicker">Tutorial</p>
       <h2>在线教程</h2>
       <div class="grid two">
-        <article><h3>1. 模块与函数</h3><p>从 <code>module</code>、<code>export fn</code> 和标量类型开始。</p></article>
-        <article><h3>2. 控制流</h3><p>学习 <code>if</code>、<code>while</code>、<code>match</code> 和返回类型。</p></article>
-        <article><h3>3. 数据建模</h3><p>用 <code>struct</code> 和 <code>enum</code> 描述稳定的数据边界。</p></article>
-        <article><h3>4. 工具链</h3><p>掌握 <code>ast-dump</code>、<code>check</code>、REPL 和编辑器插件。</p></article>
+        <article><h3>1. 模块与函数</h3><p>从 <code>module</code>、<code>export fn</code> 和标量类型开始。</p><a href="/docs/tutorial/index.html">打开教程</a></article>
+        <article><h3>2. 控制流</h3><p>学习 <code>if</code>、<code>while</code>、<code>match</code> 和返回类型。</p><a href="/docs/user/language-features.html#control-flow">查看特性</a></article>
+        <article><h3>3. 数据建模</h3><p>用 <code>struct</code> 和 <code>enum</code> 描述稳定的数据边界。</p><a href="/docs/user/language-features.html#data-declarations">查看特性</a></article>
+        <article><h3>4. 工具链</h3><p>掌握 <code>ast-dump</code>、<code>check</code>、REPL 和编辑器插件。</p><a href="/docs/user/language-features.html#tooling">查看特性</a></article>
+      </div>
+    </section>
+
+    <section id="features">
+      <p class="kicker">Language Features</p>
+      <h2>语言特性学习</h2>
+      <div class="grid two">
+        <article><h3>表达式与标量</h3><p>Int、String、Bool、算术、比较和布尔逻辑。</p><a href="/docs/user/language-features.html#scalars-expressions">阅读并测试</a></article>
+        <article><h3>绑定与局部状态</h3><p>let、let mut、赋值和类型注解。</p><a href="/docs/user/language-features.html#bindings">阅读并测试</a></article>
+        <article><h3>函数与控制流</h3><p>fn、return、if/else、while 和函数调用。</p><a href="/docs/user/language-features.html#functions">阅读并测试</a></article>
+        <article><h3>数据声明与工具链</h3><p>module/import/export、struct、enum、AST/Check/Run/REPL。</p><a href="/docs/user/language-features.html#data-declarations">阅读并测试</a></article>
       </div>
     </section>
 

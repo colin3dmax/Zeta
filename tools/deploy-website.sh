@@ -9,6 +9,8 @@ NGINX_AVAILABLE="${ZETA_NGINX_AVAILABLE:-/etc/nginx/sites-available/zeta.jenniea
 NGINX_ENABLED="${ZETA_NGINX_ENABLED:-/etc/nginx/sites-enabled/zeta.jennieapp.com.conf}"
 SSH_OPTS="-o ProxyCommand=none -o ProxyJump=none"
 
+unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
+
 cd "$ROOT"
 sh tools/build-website.sh
 

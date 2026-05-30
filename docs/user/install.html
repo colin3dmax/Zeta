@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zeta 本地安装</title>
+  <link rel="stylesheet" href="../shared.css">
+</head>
+<body>
+  <main>
+    <nav class="doc-nav" aria-label="文档导航">
+      <a href="../../">官网首页</a>
+      <a href="../index.html">文档中心</a>
+      <a href="getting-started.html">快速开始</a>
+    </nav>
+    <h1>Zeta 本地安装</h1>
+    <p><strong>状态：</strong>draft</p>
+    <p><strong>更新时间：</strong>2026-05-30</p>
+    <p><strong>适用范围：</strong>Zeta Stage 0 命令行工具、REPL、官网安装入口和当前平台本地打包方法。</p>
+    <p><strong>验收标准：</strong>用户可以在 macOS、Linux 或 Windows 上从源码构建 Zeta，运行 <code>zeta repl</code>、<code>zeta check</code> 和 <code>zeta run</code>。</p>
+
+    <section class="hero">
+      <p class="eyebrow">Install</p>
+      <h2>当前推荐从源码安装，预构建安装包进入 release 自动化后开放。</h2>
+      <p>Zeta 还处在 Stage 0，命令行工具已经可本地运行，但跨平台预构建安装包尚未作为稳定 release 发布。官网先提供源码安装、本地 release 构建和当前平台打包方法，避免把实验产物误标为稳定下载。</p>
+    </section>
+
+    <h2>平台状态</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>平台</th>
+          <th>当前可用方式</th>
+          <th>预构建安装包</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>macOS arm64 / x86_64</td>
+          <td>源码构建、本地 release 构建、本地 <code>tar.gz</code> 打包。</td>
+          <td>规划中。</td>
+        </tr>
+        <tr>
+          <td>Linux x86_64 / aarch64</td>
+          <td>源码构建、本地 release 构建、本地 <code>tar.gz</code> 打包。</td>
+          <td>规划中。</td>
+        </tr>
+        <tr>
+          <td>Windows x86_64</td>
+          <td>通过 Rust/Cargo 在 PowerShell 或 Git Bash 中源码构建。</td>
+          <td>规划中。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>准备 Rust</h2>
+    <p>安装 Rust 后确认 <code>cargo</code> 可用。</p>
+    <pre><code>rustc --version
+cargo --version</code></pre>
+
+    <h2>从源码运行</h2>
+    <pre><code>git clone https://github.com/colin3dmax/Zeta.git
+cd Zeta
+cargo run -- repl</code></pre>
+
+    <h2>构建本地 release</h2>
+    <pre><code>cargo build --release
+./target/release/zeta repl
+./target/release/zeta check testdata/core_items.zeta
+./target/release/zeta run testdata/run_bool_logic.zeta</code></pre>
+
+    <h2>安装到 PATH</h2>
+    <p>macOS / Linux 可以把 release 二进制复制到用户本地 bin 目录。</p>
+    <pre><code>mkdir -p ~/.local/bin
+cp target/release/zeta ~/.local/bin/zeta
+export PATH="$HOME/.local/bin:$PATH"
+zeta repl</code></pre>
+    <p>Windows PowerShell 可以直接运行 release 产物，或把 <code>target\release</code> 加入用户 <code>Path</code>。</p>
+    <pre><code>cargo build --release
+.\target\release\zeta.exe repl</code></pre>
+
+    <h2>生成当前平台安装包</h2>
+    <p>本地打包脚本会构建 release，并把 <code>zeta</code>、README 和 HTML 文档打进 <code>dist/packages/</code>。</p>
+    <pre><code>sh tools/package-local.sh
+ls dist/packages</code></pre>
+
+    <h2>验证安装</h2>
+    <pre><code>zeta ast-dump testdata/core_items.zeta
+zeta check testdata/core_items.zeta
+zeta run testdata/run_bool_logic.zeta
+zeta repl</code></pre>
+
+    <h2>VS Code 插件</h2>
+    <p>编辑器插件当前通过本地脚本安装。</p>
+    <pre><code>sh editors/vscode-zeta/scripts/install-local.sh</code></pre>
+    <p>更多说明见 <a href="vscode.html">VS Code 插件使用说明</a>。</p>
+  </main>
+</body>
+</html>
