@@ -80,11 +80,14 @@ const publicDocs = [
   await page.locator(".toolbar.examples").getByRole("button", { name: "Struct", exact: true }).click();
   await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "Run", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
+  await page.locator(".toolbar.examples").getByRole("button", { name: "限定调用", exact: true }).click();
+  await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "Run Graph", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
   await page.locator(".toolbar.examples").getByRole("button", { name: "Enum", exact: true }).click();
   await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "Run", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
   await page.getByRole("button", { name: "Run All", exact: true }).click();
-  await page.waitForFunction(() => document.body.innerText.includes("11/11 passed"));
+  await page.waitForFunction(() => document.body.innerText.includes("12/12 passed"));
   const featureTestsPassed = await page.locator(".feature-test-card strong.pass").count();
 
   const docChecks = [];

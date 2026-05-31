@@ -65,6 +65,10 @@ fn run_mode(mode: &str, source: &str) -> String {
             Ok(()) => playground_json(true, "ok"),
             Err(errors) => playground_json(false, &format_source_diagnostics(&errors)),
         },
+        "run-module-graph" => match crate::module_graph::run_sources(&virtual_files(source)) {
+            Ok(value) => playground_json(true, &value.to_string()),
+            Err(errors) => playground_json(false, &format_source_diagnostics(&errors)),
+        },
         "run" => match crate::run_source(source) {
             Ok(value) => playground_json(true, &value.to_string()),
             Err(diagnostics) => playground_json(false, &format_diagnostics(&diagnostics)),

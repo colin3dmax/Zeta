@@ -1,0 +1,9 @@
+module demo.math;
+
+export fn answer() -> Int {
+  return helper();
+}
+
+fn helper() -> Int {
+  return 42;
+}

@@ -157,11 +157,30 @@ module demo.math;
 
 export fn answer() -> Int {
   return 42;
+}`,
+    modulesQualified: `// file: main.zeta
+module demo.app;
+import demo.math;
+
+fn main() -> Int {
+  return demo.math.answer();
+}
+
+// file: math.zeta
+module demo.math;
+
+export fn answer() -> Int {
+  return helper();
+}
+
+fn helper() -> Int {
+  return 42;
 }`
   };
 
   const featureTests = [
     { name: "模块/import/export", mode: "check-module-graph", example: "modules", expected: "ok" },
+    { name: "跨模块限定调用", mode: "run-module-graph", example: "modulesQualified", expected: "42" },
     { name: "Int 算术", mode: "run", source: "fn main() -> Int { return 40 + 2; }", expected: "42" },
     { name: "Bool 逻辑", mode: "run", example: "bool", expected: "true" },
     { name: "let mut / 赋值", mode: "run", example: "bindings", expected: "42" },
@@ -588,6 +607,7 @@ python3 tools/check-vscode-extension.py</code></pre>
         <button type="button" on:click={() => loadPlaygroundExample("match")}>Match</button>
         <button type="button" on:click={() => loadPlaygroundExample("data")}>数据声明</button>
         <button type="button" on:click={() => loadPlaygroundExample("modules")}>模块图</button>
+        <button type="button" on:click={() => loadPlaygroundExample("modulesQualified")}>限定调用</button>
       </div>
       <div class="tool-window playground-panel">
         <div class="window-chrome light">
@@ -633,6 +653,7 @@ python3 tools/check-vscode-extension.py</code></pre>
                 <button disabled={runningMode !== ""} on:click={() => runPlayground("ast")}>AST</button>
                 <button disabled={runningMode !== ""} on:click={() => runPlayground("check")}>Check</button>
                 <button disabled={runningMode !== ""} on:click={() => runPlayground("check-module-graph")}>Graph</button>
+                <button disabled={runningMode !== ""} on:click={() => runPlayground("run-module-graph")}>Run Graph</button>
                 <button disabled={runningMode !== ""} on:click={() => runPlayground("run")}>Run</button>
               </div>
             </div>

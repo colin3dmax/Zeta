@@ -450,11 +450,7 @@ impl Parser {
         let mut expr = self.parse_primary()?;
         loop {
             if self.consume_symbol(Symbol::LParen).is_some() {
-                let Expr::Name {
-                    name: callee,
-                    span: callee_span,
-                } = expr
-                else {
+                let Some((callee, callee_span)) = expr_path(&expr) else {
                     return Err(self.error_here(
                         "PARSE_EXPECTED_CALL_TARGET",
                         "expected function name before call arguments",
@@ -687,5 +683,24 @@ impl Parser {
 
     fn error_here(&self, code: &'static str, message: &'static str) -> Diagnostic {
         Diagnostic::new(code, message, self.peek().span)
+    }
+}
+
+fn expr_path(expr: &Expr) -> Option<(String, Span)> {
+    match expr {
+        Expr::Name { name, span } => Some((name.clone(), *span)),
+        Expr::FieldAccess {
+            base,
+            field,
+            field_span,
+            span,
+        } => {
+            let (base, _) = expr_path(base)?;
+            Some((
+                format!("{base}.{field}"),
+                Span::new(span.start, field_span.end),
+            ))
+        }
+        _ => None,
     }
 }
