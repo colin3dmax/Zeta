@@ -19,6 +19,20 @@ pub fn resolve_with_imports_and_functions(
     local_imports: &HashSet<String>,
     external_functions: &HashSet<String>,
 ) -> Result<(), Vec<Diagnostic>> {
+    resolve_with_imports_functions_and_ambiguous(
+        module,
+        local_imports,
+        external_functions,
+        &HashSet::new(),
+    )
+}
+
+pub fn resolve_with_imports_functions_and_ambiguous(
+    module: &Module,
+    local_imports: &HashSet<String>,
+    external_functions: &HashSet<String>,
+    ambiguous_external_functions: &HashSet<String>,
+) -> Result<(), Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
     check_top_level(module, local_imports, &mut diagnostics);
     let mut functions = function_names(module);
@@ -26,7 +40,13 @@ pub fn resolve_with_imports_and_functions(
     let top_level_names = top_level_names(module);
     for item in &module.items {
         if let Item::Function(function) = item {
-            check_function(function, &functions, &top_level_names, &mut diagnostics);
+            check_function(
+                function,
+                &functions,
+                &top_level_names,
+                ambiguous_external_functions,
+                &mut diagnostics,
+            );
         }
     }
 
@@ -88,6 +108,7 @@ fn check_function(
     function: &Function,
     functions: &HashSet<String>,
     top_level_names: &HashSet<String>,
+    ambiguous_external_functions: &HashSet<String>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let mut locals = HashMap::new();
@@ -111,6 +132,7 @@ fn check_function(
         &mut locals,
         functions,
         top_level_names,
+        ambiguous_external_functions,
         &function.name,
         diagnostics,
     );
@@ -121,6 +143,7 @@ fn check_stmts(
     locals: &mut HashMap<String, Binding>,
     functions: &HashSet<String>,
     top_level_names: &HashSet<String>,
+    ambiguous_external_functions: &HashSet<String>,
     function_name: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -138,6 +161,7 @@ fn check_stmts(
                     locals,
                     functions,
                     top_level_names,
+                    ambiguous_external_functions,
                     function_name,
                     diagnostics,
                 );
@@ -162,6 +186,7 @@ fn check_stmts(
                     locals,
                     functions,
                     top_level_names,
+                    ambiguous_external_functions,
                     function_name,
                     diagnostics,
                 );
@@ -192,6 +217,7 @@ fn check_stmts(
                     locals,
                     functions,
                     top_level_names,
+                    ambiguous_external_functions,
                     function_name,
                     diagnostics,
                 );
@@ -201,6 +227,7 @@ fn check_stmts(
                     &mut then_locals,
                     functions,
                     top_level_names,
+                    ambiguous_external_functions,
                     function_name,
                     diagnostics,
                 );
@@ -210,6 +237,7 @@ fn check_stmts(
                     &mut else_locals,
                     functions,
                     top_level_names,
+                    ambiguous_external_functions,
                     function_name,
                     diagnostics,
                 );
@@ -220,6 +248,7 @@ fn check_stmts(
                     locals,
                     functions,
                     top_level_names,
+                    ambiguous_external_functions,
                     function_name,
                     diagnostics,
                 );
@@ -229,6 +258,7 @@ fn check_stmts(
                     &mut loop_locals,
                     functions,
                     top_level_names,
+                    ambiguous_external_functions,
                     function_name,
                     diagnostics,
                 );
@@ -239,6 +269,7 @@ fn check_stmts(
                     locals,
                     functions,
                     top_level_names,
+                    ambiguous_external_functions,
                     function_name,
                     diagnostics,
                 );
@@ -249,6 +280,7 @@ fn check_stmts(
                         &mut arm_locals,
                         functions,
                         top_level_names,
+                        ambiguous_external_functions,
                         function_name,
                         diagnostics,
                     );
@@ -260,6 +292,7 @@ fn check_stmts(
                     locals,
                     functions,
                     top_level_names,
+                    ambiguous_external_functions,
                     function_name,
                     diagnostics,
                 );
@@ -274,6 +307,7 @@ fn check_expr(
     locals: &HashMap<String, Binding>,
     functions: &HashSet<String>,
     top_level_names: &HashSet<String>,
+    ambiguous_external_functions: &HashSet<String>,
     function_name: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -293,6 +327,7 @@ fn check_expr(
                 locals,
                 functions,
                 top_level_names,
+                ambiguous_external_functions,
                 function_name,
                 diagnostics,
             );
@@ -301,6 +336,7 @@ fn check_expr(
                 locals,
                 functions,
                 top_level_names,
+                ambiguous_external_functions,
                 function_name,
                 diagnostics,
             );
@@ -311,6 +347,7 @@ fn check_expr(
                 locals,
                 functions,
                 top_level_names,
+                ambiguous_external_functions,
                 function_name,
                 diagnostics,
             );
@@ -322,11 +359,21 @@ fn check_expr(
             ..
         } => {
             if !functions.contains(callee) {
-                diagnostics.push(Diagnostic::new(
-                    "RESOLVE_UNKNOWN_FUNCTION",
-                    format!("unknown function `{callee}` in function `{function_name}`"),
-                    *callee_span,
-                ));
+                if ambiguous_external_functions.contains(callee) {
+                    diagnostics.push(Diagnostic::new(
+                        "RESOLVE_AMBIGUOUS_FUNCTION",
+                        format!(
+                            "ambiguous imported function `{callee}` in function `{function_name}`; use a qualified call or import alias"
+                        ),
+                        *callee_span,
+                    ));
+                } else {
+                    diagnostics.push(Diagnostic::new(
+                        "RESOLVE_UNKNOWN_FUNCTION",
+                        format!("unknown function `{callee}` in function `{function_name}`"),
+                        *callee_span,
+                    ));
+                }
             }
             for arg in args {
                 check_expr(
@@ -334,6 +381,7 @@ fn check_expr(
                     locals,
                     functions,
                     top_level_names,
+                    ambiguous_external_functions,
                     function_name,
                     diagnostics,
                 );
@@ -346,6 +394,7 @@ fn check_expr(
                     locals,
                     functions,
                     top_level_names,
+                    ambiguous_external_functions,
                     function_name,
                     diagnostics,
                 );
@@ -357,6 +406,7 @@ fn check_expr(
                 locals,
                 functions,
                 top_level_names,
+                ambiguous_external_functions,
                 function_name,
                 diagnostics,
             );

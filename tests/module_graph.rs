@@ -57,6 +57,124 @@ export fn answer() -> Int {
 }
 
 #[test]
+fn module_graph_accepts_duplicate_imports_of_same_function_origin() {
+    let files = vec![
+        source_file(
+            "app.zeta",
+            r#"
+module demo.app;
+import demo.math;
+import demo.math as math;
+
+fn main() -> Int {
+  return answer();
+}
+"#,
+        ),
+        source_file(
+            "math.zeta",
+            r#"
+module demo.math;
+
+export fn answer() -> Int {
+  return 42;
+}
+"#,
+        ),
+    ];
+
+    zeta::module_graph::check_sources(&files)
+        .expect("duplicate imports of one module should not make short calls ambiguous");
+}
+
+#[test]
+fn module_graph_rejects_ambiguous_imported_short_function_call() {
+    let files = vec![
+        source_file(
+            "app.zeta",
+            r#"
+module demo.app;
+import demo.math;
+import demo.more;
+
+fn main() -> Int {
+  return answer();
+}
+"#,
+        ),
+        source_file(
+            "math.zeta",
+            r#"
+module demo.math;
+
+export fn answer() -> Int {
+  return 40;
+}
+"#,
+        ),
+        source_file(
+            "more.zeta",
+            r#"
+module demo.more;
+
+export fn answer() -> Int {
+  return 2;
+}
+"#,
+        ),
+    ];
+
+    let errors =
+        zeta::module_graph::check_sources(&files).expect_err("ambiguous short call should fail");
+    assert_eq!(errors[0].diagnostics[0].code, "RESOLVE_AMBIGUOUS_FUNCTION");
+    assert_eq!(
+        errors[0].diagnostics[0].span,
+        span_of(files[0].source.as_str(), "answer")
+    );
+}
+
+#[test]
+fn module_graph_accepts_qualified_calls_when_short_name_is_ambiguous() {
+    let files = vec![
+        source_file(
+            "app.zeta",
+            r#"
+module demo.app;
+import demo.math;
+import demo.more as more;
+
+fn main() -> Int {
+  return demo.math.answer() + more.answer();
+}
+"#,
+        ),
+        source_file(
+            "math.zeta",
+            r#"
+module demo.math;
+
+export fn answer() -> Int {
+  return 40;
+}
+"#,
+        ),
+        source_file(
+            "more.zeta",
+            r#"
+module demo.more;
+
+export fn answer() -> Int {
+  return 2;
+}
+"#,
+        ),
+    ];
+
+    let value = zeta::module_graph::run_sources(&files).expect("qualified calls should run");
+    assert_eq!(value.to_string(), "42");
+}
+
+#[test]
 fn module_graph_does_not_import_private_functions() {
     let files = vec![
         source_file(

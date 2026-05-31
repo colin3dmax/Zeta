@@ -27,7 +27,7 @@
 
     <h2 id="modules">模块、import 和 export</h2>
     <p><code>module</code> 声明当前文件模块名；<code>export</code> 标记函数或类型对外可见。单文件检查时，<code>import</code> 只接受标准 API 边界；目录检查或运行时，CLI 会递归读取目录内的 <code>.zeta</code> 文件，建立最小 module graph，并允许导入同批检查中的本地模块。</p>
-    <p>当前 resolver 接受 <code>std.core</code>、<code>std.io</code> 和 module graph 中存在的本地模块。导入本地模块后，可以直接调用该模块的 <code>export fn</code>，也可以使用 <code>demo.math.answer()</code> 这类限定调用写清来源；如果模块路径很长，可以写 <code>import demo.math as math;</code>，然后调用 <code>math.answer()</code>。未导出的函数不会进入当前文件作用域。未知路径会报告 <code>RESOLVE_UNKNOWN_IMPORT</code>，重复模块会报告 <code>RESOLVE_DUPLICATE_MODULE</code>。目录级 <code>run</code> 要求同批文件里只有一个 <code>main</code>，并会执行跨文件导出的函数调用。</p>
+    <p>当前 resolver 接受 <code>std.core</code>、<code>std.io</code> 和 module graph 中存在的本地模块。导入本地模块后，可以直接调用该模块的 <code>export fn</code>，也可以使用 <code>demo.math.answer()</code> 这类限定调用写清来源；如果模块路径很长，可以写 <code>import demo.math as math;</code>，然后调用 <code>math.answer()</code>。未导出的函数不会进入当前文件作用域。未知路径会报告 <code>RESOLVE_UNKNOWN_IMPORT</code>，重复模块会报告 <code>RESOLVE_DUPLICATE_MODULE</code>。如果多个导入模块导出同名函数，短名调用会报告 <code>RESOLVE_AMBIGUOUS_FUNCTION</code>，需要改用限定调用或 alias 调用。目录级 <code>run</code> 要求同批文件里只有一个 <code>main</code>，并会执行跨文件导出的函数调用。</p>
     <pre><code>module demo.core;
 import std.core;
 import std.io;
@@ -86,6 +86,12 @@ export fn answer() -&gt; Int {
   return 42;
 }</code></pre>
     <pre><code>cargo run -- run testdata/modules_alias</code></pre>
+    <pre><code>import demo.math;
+import demo.more;
+
+fn main() -&gt; Int {
+  return answer(); // RESOLVE_AMBIGUOUS_FUNCTION
+}</code></pre>
     <p><a class="button secondary" href="../../?example=overview#playground">在 Playground 测试模块示例</a></p>
 
     <h2 id="scalars-expressions">标量与表达式</h2>

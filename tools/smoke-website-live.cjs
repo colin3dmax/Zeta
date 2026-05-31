@@ -92,6 +92,9 @@ const publicDocs = [
   const aliasPreview = await page.locator(".editor-highlight").innerText();
   await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "运行", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
+  await page.locator(".toolbar.examples").getByRole("button", { name: "冲突诊断", exact: true }).click();
+  await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "检查", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector(".output")?.innerText.includes("RESOLVE_AMBIGUOUS_FUNCTION"));
   const outputWrapStyle = await page.locator(".output").evaluate((node) => {
     const style = getComputedStyle(node);
     return {
@@ -104,7 +107,7 @@ const publicDocs = [
   await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "运行", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
   await page.getByRole("button", { name: "Run All", exact: true }).click();
-  await page.waitForFunction(() => document.body.innerText.includes("14/14 passed"));
+  await page.waitForFunction(() => document.body.innerText.includes("15/15 passed"));
   const featureTestsPassed = await page.locator(".feature-test-card strong.pass").count();
 
   const docChecks = [];

@@ -103,6 +103,7 @@ fn check_parsed_sources(modules: &[ParsedSource]) -> Result<(), Vec<SourceDiagno
     let local_imports = module_infos.keys().cloned().collect::<HashSet<_>>();
     for parsed in modules {
         let external_functions = imported_external_functions(&parsed.module, &module_infos);
+        let ambiguous_functions = ambiguous_external_function_names(&parsed.module, &module_infos);
         let external_function_names = external_functions
             .iter()
             .map(|function| function.name.clone())
@@ -110,10 +111,11 @@ fn check_parsed_sources(modules: &[ParsedSource]) -> Result<(), Vec<SourceDiagno
         collect_result(
             &parsed.path,
             &parsed.source,
-            resolver::resolve_with_imports_and_functions(
+            resolver::resolve_with_imports_functions_and_ambiguous(
                 &parsed.module,
                 &local_imports,
                 &external_function_names,
+                &ambiguous_functions,
             ),
             &mut errors,
         );
@@ -387,12 +389,14 @@ fn imported_external_functions(
 ) -> Vec<ExternalFunction> {
     let mut functions = Vec::new();
     let mut seen = HashSet::new();
+    let ambiguous_short_names = ambiguous_external_function_names(module, module_infos);
     for import in local_imports(module) {
         let Some(info) = module_infos.get(&import.path) else {
             continue;
         };
         for function in &info.exported_functions {
-            if seen.insert(function.name.clone()) {
+            if !ambiguous_short_names.contains(&function.name) && seen.insert(function.name.clone())
+            {
                 functions.push(function.clone());
             }
             let qualified = qualified_function(function, &import.path);
@@ -419,14 +423,17 @@ fn imported_call_targets(
     module_infos: &HashMap<String, ModuleInfo>,
 ) -> HashMap<String, String> {
     let mut targets = HashMap::new();
+    let ambiguous_short_names = ambiguous_external_function_names(module, module_infos);
     for import in local_imports(module) {
         let Some(info) = module_infos.get(&import.path) else {
             continue;
         };
         for function in &info.exported_functions {
-            targets
-                .entry(function.name.clone())
-                .or_insert_with(|| format!("{}.{}", import.path, function.name));
+            if !ambiguous_short_names.contains(&function.name) {
+                targets
+                    .entry(function.name.clone())
+                    .or_insert_with(|| format!("{}.{}", import.path, function.name));
+            }
             if let Some(alias) = &import.alias {
                 targets
                     .entry(format!("{alias}.{}", function.name))
@@ -435,6 +442,28 @@ fn imported_call_targets(
         }
     }
     targets
+}
+
+fn ambiguous_external_function_names(
+    module: &Module,
+    module_infos: &HashMap<String, ModuleInfo>,
+) -> HashSet<String> {
+    let mut origins: HashMap<String, HashSet<String>> = HashMap::new();
+    for import in local_imports(module) {
+        let Some(info) = module_infos.get(&import.path) else {
+            continue;
+        };
+        for function in &info.exported_functions {
+            origins
+                .entry(function.name.clone())
+                .or_default()
+                .insert(import.path.clone());
+        }
+    }
+    origins
+        .into_iter()
+        .filter_map(|(name, origins)| (origins.len() > 1).then_some(name))
+        .collect()
 }
 
 #[derive(Debug, Clone)]
