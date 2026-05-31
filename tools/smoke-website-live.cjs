@@ -88,6 +88,10 @@ const publicDocs = [
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "ok");
   await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "运行", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
+  await page.locator(".toolbar.examples").getByRole("button", { name: "别名调用", exact: true }).click();
+  const aliasPreview = await page.locator(".editor-highlight").innerText();
+  await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "运行", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
   const outputWrapStyle = await page.locator(".output").evaluate((node) => {
     const style = getComputedStyle(node);
     return {
@@ -100,7 +104,7 @@ const publicDocs = [
   await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "运行", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
   await page.getByRole("button", { name: "Run All", exact: true }).click();
-  await page.waitForFunction(() => document.body.innerText.includes("13/13 passed"));
+  await page.waitForFunction(() => document.body.innerText.includes("14/14 passed"));
   const featureTestsPassed = await page.locator(".feature-test-card strong.pass").count();
 
   const docChecks = [];
@@ -133,6 +137,7 @@ const publicDocs = [
       letKeywordCount > 0 &&
       ltOperatorCount > 0 &&
       moduleModeGuide.includes("模块图") &&
+      aliasPreview.includes("import demo.math as math") &&
       outputWrapStyle.whiteSpace === "pre-wrap" &&
       outputWrapStyle.overflowWrap === "anywhere" &&
       docChecks.every((doc) => doc.ok),
@@ -146,6 +151,7 @@ const publicDocs = [
     previewLetKeywordTokens: letKeywordCount,
     previewLessThanOperatorTokens: ltOperatorCount,
     moduleModeGuide,
+    aliasPreviewHasImportAs: aliasPreview.includes("import demo.math as math"),
     outputWrapStyle,
     featureTestsPassed,
     docChecks,

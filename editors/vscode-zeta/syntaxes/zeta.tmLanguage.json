@@ -43,7 +43,7 @@
         },
         {
           "name": "keyword.declaration.zeta",
-          "match": "\\b(?:module|import|export|fn|let|mut|struct|enum)\\b"
+          "match": "\\b(?:module|import|as|export|fn|let|mut|struct|enum)\\b"
         },
         {
           "name": "constant.language.boolean.zeta",

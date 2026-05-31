@@ -137,8 +137,13 @@ pub const TOPICS: &[ReplTopic] = &[
     },
     ReplTopic {
         name: "import",
-        summary: "Import another module path.",
-        example: "import std.io;",
+        summary: "Import another module path. Use `as` to create a local alias in module graph programs.",
+        example: "import demo.math as math;",
+    },
+    ReplTopic {
+        name: "as",
+        summary: "Assign a local alias to an imported module path.",
+        example: "import demo.math as math;",
     },
     ReplTopic {
         name: "fn",
@@ -487,7 +492,8 @@ fn topic_summary(topic: &ReplTopic, language: Language) -> &'static str {
         "std" => "Stage 0 标准 API 边界；resolver 当前接受 import std.core; 和 import std.io;，未知标准库路径会报错。",
         "playground" => "官网 Playground 运行编译为 WebAssembly 的真实 Zeta 编译器前端。",
         "module" => "声明当前源码模块。",
-        "import" => "引入另一个模块路径。",
+        "import" => "引入另一个模块路径；module graph 程序中可用 as 创建本地别名。",
+        "as" => "为 import 创建本地别名，例如 import demo.math as math;。",
         "fn" => "声明函数。REPL 中语句会被包进临时函数执行。",
         "let" => "声明局部绑定，可以带类型注解；需要重新赋值时使用 let mut。",
         "mut" => "标记局部绑定可变，允许后续赋值语句更新它。",
@@ -600,6 +606,7 @@ fn push_highlighted_token(out: &mut String, token: &str) {
         token,
         "module"
             | "import"
+            | "as"
             | "export"
             | "fn"
             | "let"

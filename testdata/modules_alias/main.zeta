@@ -1,0 +1,6 @@
+module demo.app;
+import demo.math as math;
+
+fn main() -> Int {
+  return math.answer();
+}

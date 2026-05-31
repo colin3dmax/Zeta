@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { runZeta } from "./wasm-playground.js";
 
-  const keywords = new Set(["module", "import", "export", "fn", "let", "mut", "return", "if", "else", "while", "match", "struct", "enum"]);
+  const keywords = new Set(["module", "import", "as", "export", "fn", "let", "mut", "return", "if", "else", "while", "match", "struct", "enum"]);
   const types = new Set(["Int", "String", "Bool"]);
   const commands = [":help", ":api", ":topics", ":examples", ":doc", ":complete", ":quit"];
   const topics = [
@@ -13,6 +13,7 @@
     "playground",
     "module",
     "import",
+    "as",
     "fn",
     "let",
     "mut",
@@ -28,11 +29,12 @@
   const docs = {
     "getting-started": "从表达式开始：输入 40 + 2 可以直接执行；使用 let 声明局部绑定；需要重新赋值时使用 let mut；if/while 条件可以使用比较和布尔逻辑表达式。",
     tutorial: "推荐路径：表达式 -> let/let mut -> 比较/布尔逻辑/控制流 -> fn -> struct 字面量/字段访问 -> enum 变体 -> match -> check/run -> Playground/REPL。",
-    api: "Stage 0 API 覆盖 Int、String、Bool、module/import、std.core/std.io、fn、let/let mut、赋值、比较、布尔逻辑、return、if/while、struct 字面量、字段访问、enum 变体和 match。",
+    api: "Stage 0 API 覆盖 Int、String、Bool、module/import/import alias、std.core/std.io、fn、let/let mut、赋值、比较、布尔逻辑、return、if/while、struct 字面量、字段访问、enum 变体和 match。",
     std: "std 是 Stage 0 标准 API 边界。当前 resolver 接受 import std.core; 和 import std.io;，未知标准库路径会报错；具体 IO 函数在后续权限模型确定后接入。",
     playground: "Playground 通过 zeta.wasm 运行真实编译器前端，支持 AST、检查和运行。",
     module: "module 声明当前源码模块，例如 module demo.core;",
-    import: "import 引入模块路径。Stage 0 当前可导入 std.core 和 std.io，例如 import std.core;",
+    import: "import 引入模块路径。多文件模块可写 import demo.math as math; 然后调用 math.answer();",
+    as: "as 为 import 创建本地别名，例如 import demo.math as math;",
     fn: "fn 声明函数，例如 fn main() -> Int { return 42; }",
     let: "let 声明局部绑定，例如 let answer: Int = 40 + 2; 需要重新赋值时写 let mut answer: Int = 40;",
     mut: "mut 标记可变局部绑定，之后可以执行 answer = answer + 2;",
@@ -175,12 +177,27 @@ export fn answer() -> Int {
 
 fn helper() -> Int {
   return 42;
+}`,
+    modulesAlias: `// file: main.zeta
+module demo.app;
+import demo.math as math;
+
+fn main() -> Int {
+  return math.answer();
+}
+
+// file: math.zeta
+module demo.math;
+
+export fn answer() -> Int {
+  return 42;
 }`
   };
 
   const featureTests = [
     { name: "模块/import/export", mode: "check-module-graph", example: "modules", expected: "ok" },
     { name: "跨模块限定调用", mode: "run-module-graph", example: "modulesQualified", expected: "42" },
+    { name: "import alias 调用", mode: "run-module-graph", example: "modulesAlias", expected: "42" },
     { name: "Int 算术", mode: "run", source: "fn main() -> Int { return 40 + 2; }", expected: "42" },
     { name: "Bool 逻辑", mode: "run", example: "bool", expected: "true" },
     { name: "let mut / 赋值", mode: "run", example: "bindings", expected: "42" },
@@ -367,7 +384,7 @@ fn helper() -> Int {
   }
 
   function replApi() {
-    return "Zeta Stage 0 API\nInt/String/Bool\nmodule/import/std.core/std.io/fn/let/let mut/assignment/comparison/boolean logic/return/if/while/struct literal/field access/enum variants/match\nstd: 当前可导入 std.core 和 std.io；未知标准库路径会被 resolver 拒绝。";
+    return "Zeta Stage 0 API\nInt/String/Bool\nmodule/import/import alias/std.core/std.io/fn/let/let mut/assignment/comparison/boolean logic/return/if/while/struct literal/field access/enum variants/match\nstd: 当前可导入 std.core 和 std.io；未知标准库路径会被 resolver 拒绝。";
   }
 
   async function submitRepl() {
@@ -626,6 +643,7 @@ python3 tools/check-vscode-extension.py</code></pre>
         <button type="button" on:click={() => loadPlaygroundExample("data")}>数据声明</button>
         <button type="button" on:click={() => loadPlaygroundExample("modules")}>模块图</button>
         <button type="button" on:click={() => loadPlaygroundExample("modulesQualified")}>限定调用</button>
+        <button type="button" on:click={() => loadPlaygroundExample("modulesAlias")}>别名调用</button>
       </div>
       <div class="tool-window playground-panel">
         <div class="window-chrome light">

@@ -87,7 +87,7 @@
       <li><strong>枚举与 match 执行：</strong>枚举变体值、简单模式匹配、MIR lower 和 runtime 行为。</li>
       <li><strong>Option / Result 最小模型：</strong>显式错误路径和自举编译器所需的基础代数数据类型。</li>
       <li><strong>MIR verifier：</strong>已接入最小检查，覆盖 local 引用、调用参数、条件类型、return 类型、enum variant 和非 Unit 函数返回路径；下一步扩展完整 CFG 和初始化路径。</li>
-      <li><strong>跨模块解析：</strong>目录级最小 <code>module/import</code> 图、跨文件 <code>export fn</code> 调用、多文件 <code>run</code> corpus 和 <code>demo.math.answer()</code> 限定调用已进入；下一步补 alias import、re-export 和更完整的符号 mangling。</li>
+      <li><strong>跨模块解析：</strong>目录级最小 <code>module/import</code> 图、跨文件 <code>export fn</code> 调用、多文件 <code>run</code> corpus、<code>demo.math.answer()</code> 限定调用和 <code>import demo.math as math;</code> 别名调用已进入；下一步补 re-export 和更完整的符号 mangling。</li>
       <li><strong>WASM/WASI smoke：</strong>让同一 corpus 在解释器和 WASI 执行路径上输出一致。</li>
     </ol>
 

@@ -20,6 +20,7 @@ pub enum TokenKind {
 pub enum Keyword {
     Module,
     Import,
+    As,
     Export,
     Fn,
     Let,
@@ -121,6 +122,7 @@ impl<'a> Lexer<'a> {
         let kind = match text {
             "module" => TokenKind::Keyword(Keyword::Module),
             "import" => TokenKind::Keyword(Keyword::Import),
+            "as" => TokenKind::Keyword(Keyword::As),
             "export" => TokenKind::Keyword(Keyword::Export),
             "fn" => TokenKind::Keyword(Keyword::Fn),
             "let" => TokenKind::Keyword(Keyword::Let),

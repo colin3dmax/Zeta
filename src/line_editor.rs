@@ -295,6 +295,7 @@ fn is_keyword(value: &str) -> bool {
         value,
         "module"
             | "import"
+            | "as"
             | "export"
             | "fn"
             | "let"

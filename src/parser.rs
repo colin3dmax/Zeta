@@ -51,8 +51,19 @@ impl Parser {
 
         if self.consume_keyword(Keyword::Import).is_some() {
             let (path, path_span) = self.parse_path_span()?;
+            let (alias, alias_span) = if self.consume_keyword(Keyword::As).is_some() {
+                let (name, span) = self.expect_ident_span("expected import alias after `as`")?;
+                (Some(name), Some(span))
+            } else {
+                (None, None)
+            };
             self.expect_symbol(Symbol::Semicolon, "expected `;` after import")?;
-            return Ok(Item::Import { path, path_span });
+            return Ok(Item::Import {
+                path,
+                path_span,
+                alias,
+                alias_span,
+            });
         }
 
         let exported = self.consume_keyword(Keyword::Export).is_some();

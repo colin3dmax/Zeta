@@ -64,7 +64,8 @@ cargo run -- run testdata/run_bool_logic.zeta
 cargo run -- run testdata/run_struct.zeta
 cargo run -- run testdata/run_enum.zeta
 cargo run -- run testdata/modules_ok
-cargo run -- run testdata/modules_qualified</code></pre>
+cargo run -- run testdata/modules_qualified
+cargo run -- run testdata/modules_alias</code></pre>
 
     <h2>可变绑定和赋值</h2>
     <p>Zeta 默认局部绑定不可变。需要在后续语句里重新赋值时，声明时必须写 <code>let mut</code>；否则 <code>check</code> 会报告 <code>RESOLVE_ASSIGN_IMMUTABLE</code>。</p>

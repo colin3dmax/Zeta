@@ -32,6 +32,12 @@ fn parses_dotted_module_declaration() {
 }
 
 #[test]
+fn dumps_import_alias() {
+    let dump = zeta::dump_ast("import demo.math as math;\n").expect("source should parse");
+    assert_eq!(dump, "Module\n  Import path=demo.math alias=math\n");
+}
+
+#[test]
 fn dumps_mutable_binding_and_assignment() {
     let dump = zeta::dump_ast(
         r#"

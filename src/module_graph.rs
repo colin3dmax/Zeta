@@ -312,11 +312,10 @@ fn rewrite_expr(
                     is_main_module,
                 );
             }
-            if callee.contains('.') {
-                return;
-            }
             if let Some(target) = imported_targets.get(callee) {
                 *callee = target.clone();
+            } else if callee.contains('.') {
+                return;
             } else if !is_main_module && local_functions.contains(callee) {
                 if let Some(module_name) = current_module {
                     *callee = format!("{module_name}.{callee}");
@@ -388,17 +387,27 @@ fn imported_external_functions(
 ) -> Vec<ExternalFunction> {
     let mut functions = Vec::new();
     let mut seen = HashSet::new();
-    for import in local_import_paths(module) {
-        let Some(info) = module_infos.get(&import) else {
+    for import in local_imports(module) {
+        let Some(info) = module_infos.get(&import.path) else {
             continue;
         };
         for function in &info.exported_functions {
             if seen.insert(function.name.clone()) {
                 functions.push(function.clone());
             }
-            let qualified = qualified_function(function, &import);
+            let qualified = qualified_function(function, &import.path);
             if seen.insert(qualified.name.clone()) {
                 functions.push(qualified);
+            }
+            if let Some(alias) = &import.alias {
+                let alias_qualified = ExternalFunction {
+                    name: format!("{alias}.{}", function.name),
+                    params: function.params.clone(),
+                    return_type: function.return_type.clone(),
+                };
+                if seen.insert(alias_qualified.name.clone()) {
+                    functions.push(alias_qualified);
+                }
             }
         }
     }
@@ -410,25 +419,39 @@ fn imported_call_targets(
     module_infos: &HashMap<String, ModuleInfo>,
 ) -> HashMap<String, String> {
     let mut targets = HashMap::new();
-    for import in local_import_paths(module) {
-        let Some(info) = module_infos.get(&import) else {
+    for import in local_imports(module) {
+        let Some(info) = module_infos.get(&import.path) else {
             continue;
         };
         for function in &info.exported_functions {
             targets
                 .entry(function.name.clone())
-                .or_insert_with(|| format!("{import}.{}", function.name));
+                .or_insert_with(|| format!("{}.{}", import.path, function.name));
+            if let Some(alias) = &import.alias {
+                targets
+                    .entry(format!("{alias}.{}", function.name))
+                    .or_insert_with(|| format!("{}.{}", import.path, function.name));
+            }
         }
     }
     targets
 }
 
-fn local_import_paths(module: &Module) -> Vec<String> {
+#[derive(Debug, Clone)]
+struct LocalImport {
+    path: String,
+    alias: Option<String>,
+}
+
+fn local_imports(module: &Module) -> Vec<LocalImport> {
     module
         .items
         .iter()
         .filter_map(|item| match item {
-            Item::Import { path, .. } => Some(path.join(".")),
+            Item::Import { path, alias, .. } => Some(LocalImport {
+                path: path.join("."),
+                alias: alias.clone(),
+            }),
             _ => None,
         })
         .collect()

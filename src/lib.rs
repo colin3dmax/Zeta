@@ -92,6 +92,6 @@ pub fn repl_run_source_for_line(line: &str) -> Option<String> {
 fn starts_with_top_level_item(line: &str) -> bool {
     matches!(
         line.split_whitespace().next(),
-        Some("module" | "import" | "export" | "fn" | "struct" | "enum")
+        Some("module" | "import" | "as" | "export" | "fn" | "struct" | "enum")
     )
 }

@@ -28,6 +28,35 @@ export fn answer() -> Int {
 }
 
 #[test]
+fn module_graph_accepts_import_alias_qualified_calls() {
+    let files = vec![
+        source_file(
+            "app.zeta",
+            r#"
+module demo.app;
+import demo.math as math;
+
+fn main() -> Int {
+  return math.answer();
+}
+"#,
+        ),
+        source_file(
+            "math.zeta",
+            r#"
+module demo.math;
+
+export fn answer() -> Int {
+  return 42;
+}
+"#,
+        ),
+    ];
+
+    zeta::module_graph::check_sources(&files).expect("import alias should resolve");
+}
+
+#[test]
 fn module_graph_does_not_import_private_functions() {
     let files = vec![
         source_file(
@@ -138,6 +167,25 @@ fn cli_run_executes_qualified_module_call() {
     let binary = env!("CARGO_BIN_EXE_zeta");
     let output = std::process::Command::new(binary)
         .args(["run", "testdata/modules_qualified"])
+        .output()
+        .expect("zeta run should run");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout should be utf-8"),
+        "42\n"
+    );
+}
+
+#[test]
+fn cli_run_executes_import_alias_module_call() {
+    let binary = env!("CARGO_BIN_EXE_zeta");
+    let output = std::process::Command::new(binary)
+        .args(["run", "testdata/modules_alias"])
         .output()
         .expect("zeta run should run");
 

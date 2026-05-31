@@ -7,8 +7,16 @@ pub struct Module {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Item {
-    ModuleDecl { name: String, name_span: Span },
-    Import { path: Vec<String>, path_span: Span },
+    ModuleDecl {
+        name: String,
+        name_span: Span,
+    },
+    Import {
+        path: Vec<String>,
+        path_span: Span,
+        alias: Option<String>,
+        alias_span: Option<Span>,
+    },
     Struct(StructDecl),
     Enum(EnumDecl),
     Function(Function),
@@ -195,8 +203,15 @@ impl Item {
             Item::ModuleDecl { name, .. } => {
                 out.push_str(&format!("{pad}ModuleDecl name={name}\n"));
             }
-            Item::Import { path, .. } => {
-                out.push_str(&format!("{pad}Import path={}\n", path.join(".")));
+            Item::Import { path, alias, .. } => {
+                if let Some(alias) = alias {
+                    out.push_str(&format!(
+                        "{pad}Import path={} alias={alias}\n",
+                        path.join(".")
+                    ));
+                } else {
+                    out.push_str(&format!("{pad}Import path={}\n", path.join(".")));
+                }
             }
             Item::Struct(decl) => {
                 out.push_str(&format!(

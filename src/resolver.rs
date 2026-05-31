@@ -44,7 +44,10 @@ fn check_top_level(
 ) {
     let mut names = HashSet::new();
     for item in &module.items {
-        if let Item::Import { path, path_span } = item {
+        if let Item::Import {
+            path, path_span, ..
+        } = item
+        {
             check_import(path, *path_span, local_imports, diagnostics);
         }
         let Some((name, span)) = item_name(item) else {

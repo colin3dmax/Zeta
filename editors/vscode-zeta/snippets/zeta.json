@@ -6,6 +6,13 @@
     ],
     "description": "Declare a Zeta module"
   },
+  "import alias": {
+    "prefix": "importas",
+    "body": [
+      "import ${1:demo.module} as ${2:alias};"
+    ],
+    "description": "Import a module path with a local alias"
+  },
   "function": {
     "prefix": "fn",
     "body": [

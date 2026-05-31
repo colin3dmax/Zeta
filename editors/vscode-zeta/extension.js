@@ -2,7 +2,8 @@ const vscode = require("vscode");
 
 const TOPICS = [
   ["module", "Declare the current source module.", "module demo;"],
-  ["import", "Import another module path.", "import std.io;"],
+  ["import", "Import another module path. Use `as` to create a local alias for module-qualified calls.", "import demo.math as math;"],
+  ["as", "Assign a local alias to an imported module path.", "import demo.math as math;"],
   ["fn", "Declare a function.", "fn main(name: String) -> Int { return 0; }"],
   ["let", "Declare a local binding with an optional type annotation. Use let mut for reassignment.", "let mut answer: Int = 40;"],
   ["mut", "Mark a local binding as mutable so later assignment is allowed.", "let mut answer: Int = 40;\nanswer = answer + 2;"],
