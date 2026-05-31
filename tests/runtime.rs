@@ -155,3 +155,22 @@ fn main(name: String) -> Int {
 
     assert_eq!(diagnostics[0].code, "RUNTIME_MAIN_PARAMS");
 }
+
+#[test]
+fn run_rejects_missing_main_return() {
+    let diagnostics = zeta::run_source(
+        r#"
+fn main() -> Int {
+  let answer: Int = 42;
+}
+"#,
+    )
+    .expect_err("missing main return should be rejected");
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "MIR_MISSING_RETURN"),
+        "diagnostics: {diagnostics:?}"
+    );
+}

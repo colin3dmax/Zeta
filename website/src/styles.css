@@ -397,6 +397,14 @@ textarea {
   min-height: 100%;
   margin-top: 0;
   border: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.output code {
+  white-space: inherit;
+  overflow-wrap: inherit;
 }
 
 .playground {
@@ -450,6 +458,19 @@ textarea {
   min-height: 32px;
   padding: 5px 10px;
   font-size: 12px;
+}
+
+.playground-output {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.mode-guide {
+  padding: 8px 16px;
+  border-bottom: 1px solid #111;
+  color: #555;
+  font-size: 12px;
+  line-height: 1.45;
+  background: #fafafa;
 }
 
 .tool-window {

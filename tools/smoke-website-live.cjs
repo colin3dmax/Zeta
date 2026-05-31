@@ -61,7 +61,7 @@ const publicDocs = [
   const escapedPreviewText = await page.locator(".editor-highlight").evaluate((node) => node.textContent || "");
   const letKeywordCount = await page.locator(".editor-highlight .tok-keyword").filter({ hasText: /^let$/ }).count();
   const ltOperatorCount = await page.locator(".editor-highlight .tok-operator").filter({ hasText: "<" }).count();
-  await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "Run", exact: true }).click();
+  await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "运行", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
 
   const wasmName = await page.evaluate(() => {
@@ -75,19 +75,32 @@ const publicDocs = [
   await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "AST", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.includes("Unary op=not"));
   await page.locator(".toolbar.examples").getByRole("button", { name: "Match", exact: true }).click();
-  await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "Run", exact: true }).click();
+  await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "运行", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
   await page.locator(".toolbar.examples").getByRole("button", { name: "Struct", exact: true }).click();
-  await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "Run", exact: true }).click();
+  await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "运行", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
   await page.locator(".toolbar.examples").getByRole("button", { name: "限定调用", exact: true }).click();
-  await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "Run Graph", exact: true }).click();
+  const moduleModeGuide = await page.locator(".mode-guide").innerText();
+  await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "运行多文件", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
+  await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "检查", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "ok");
+  await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "运行", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
+  const outputWrapStyle = await page.locator(".output").evaluate((node) => {
+    const style = getComputedStyle(node);
+    return {
+      whiteSpace: style.whiteSpace,
+      overflowWrap: style.overflowWrap,
+      wordBreak: style.wordBreak,
+    };
+  });
   await page.locator(".toolbar.examples").getByRole("button", { name: "Enum", exact: true }).click();
-  await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "Run", exact: true }).click();
+  await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "运行", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.trim() === "42");
   await page.getByRole("button", { name: "Run All", exact: true }).click();
-  await page.waitForFunction(() => document.body.innerText.includes("12/12 passed"));
+  await page.waitForFunction(() => document.body.innerText.includes("13/13 passed"));
   const featureTestsPassed = await page.locator(".feature-test-card strong.pass").count();
 
   const docChecks = [];
@@ -119,6 +132,9 @@ const publicDocs = [
       !escapedPreviewText.includes("&lt;") &&
       letKeywordCount > 0 &&
       ltOperatorCount > 0 &&
+      moduleModeGuide.includes("模块图") &&
+      outputWrapStyle.whiteSpace === "pre-wrap" &&
+      outputWrapStyle.overflowWrap === "anywhere" &&
       docChecks.every((doc) => doc.ok),
     url: baseUrl,
     wasm: wasmName,
@@ -129,6 +145,8 @@ const publicDocs = [
     previewLeaksHtmlEntity: escapedPreviewText.includes("&lt;"),
     previewLetKeywordTokens: letKeywordCount,
     previewLessThanOperatorTokens: ltOperatorCount,
+    moduleModeGuide,
+    outputWrapStyle,
     featureTestsPassed,
     docChecks,
     consoleErrors,

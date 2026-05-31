@@ -197,7 +197,7 @@
         </tr>
         <tr>
           <td>MIR</td>
-          <td>定义 locals、temporaries、call、return、控制流和 drop；当前 MIR verifier 先检查 Stage 0 MIR 的 local 引用、调用参数、条件类型、return 类型和 enum variant，后续扩展到 CFG、drop/cleanup 和初始化路径。</td>
+          <td>定义 locals、temporaries、call、return、控制流和 drop；当前 MIR verifier 先检查 Stage 0 MIR 的 local 引用、调用参数、条件类型、return 类型、enum variant 和非 Unit 函数返回路径，后续扩展到 CFG、drop/cleanup 和初始化路径。</td>
           <td>未定义 local、错误调用参数、错误 return 类型、缺少终结指令或 return path 不完整。</td>
         </tr>
         <tr>

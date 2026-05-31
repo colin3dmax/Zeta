@@ -625,7 +625,17 @@ impl<'a> MirVerifier<'a> {
             .as_ref()
             .map(|ty| MirType::named(ty.clone()))
             .unwrap_or(MirType::Unit);
-        self.verify_stmts(&function.body, &mut locals, &expected_return);
+        let guarantees_return = self.verify_stmts(&function.body, &mut locals, &expected_return);
+        if expected_return != MirType::Unit && !guarantees_return {
+            self.error(
+                "MIR_MISSING_RETURN",
+                format!(
+                    "function `{}` must return `{}` on all paths",
+                    function.name,
+                    expected_return.display()
+                ),
+            );
+        }
     }
 
     fn verify_stmts(
@@ -633,10 +643,13 @@ impl<'a> MirVerifier<'a> {
         stmts: &[MirStmt],
         locals: &mut HashMap<String, MirType>,
         expected_return: &MirType,
-    ) {
+    ) -> bool {
         for stmt in stmts {
-            self.verify_stmt(stmt, locals, expected_return);
+            if self.verify_stmt(stmt, locals, expected_return) {
+                return true;
+            }
         }
+        false
     }
 
     fn verify_stmt(
@@ -644,7 +657,7 @@ impl<'a> MirVerifier<'a> {
         stmt: &MirStmt,
         locals: &mut HashMap<String, MirType>,
         expected_return: &MirType,
-    ) {
+    ) -> bool {
         match stmt {
             MirStmt::Local {
                 name, ty, value, ..
@@ -671,6 +684,7 @@ impl<'a> MirVerifier<'a> {
                     ),
                 );
                 locals.insert(name.clone(), local_ty);
+                false
             }
             MirStmt::Store { name, value } => {
                 let value_ty = self.verify_expr(value, locals);
@@ -679,7 +693,7 @@ impl<'a> MirVerifier<'a> {
                         "MIR_UNKNOWN_LOCAL",
                         format!("store target `{name}` is not defined"),
                     );
-                    return;
+                    return false;
                 };
                 self.expect_type(
                     &value_ty,
@@ -691,6 +705,7 @@ impl<'a> MirVerifier<'a> {
                         value_ty.display()
                     ),
                 );
+                false
             }
             MirStmt::If {
                 condition,
@@ -699,22 +714,31 @@ impl<'a> MirVerifier<'a> {
             } => {
                 self.expect_bool(condition, locals, "MIR_IF_CONDITION", "if condition");
                 let mut then_locals = locals.clone();
-                self.verify_stmts(then_body, &mut then_locals, expected_return);
+                let then_returns = self.verify_stmts(then_body, &mut then_locals, expected_return);
                 let mut else_locals = locals.clone();
-                self.verify_stmts(else_body, &mut else_locals, expected_return);
+                let else_returns = self.verify_stmts(else_body, &mut else_locals, expected_return);
+                then_returns && else_returns
             }
             MirStmt::While { condition, body } => {
                 self.expect_bool(condition, locals, "MIR_WHILE_CONDITION", "while condition");
                 let mut body_locals = locals.clone();
                 self.verify_stmts(body, &mut body_locals, expected_return);
+                false
             }
             MirStmt::Match { value, arms } => {
                 let value_ty = self.verify_expr(value, locals);
+                let mut all_arms_return = !arms.is_empty();
+                let mut has_wildcard = false;
                 for arm in arms {
                     self.verify_pattern(&arm.pattern, &value_ty);
+                    if matches!(arm.pattern, MirPattern::Wildcard) {
+                        has_wildcard = true;
+                    }
                     let mut arm_locals = locals.clone();
-                    self.verify_stmts(&arm.body, &mut arm_locals, expected_return);
+                    all_arms_return &=
+                        self.verify_stmts(&arm.body, &mut arm_locals, expected_return);
                 }
+                all_arms_return && has_wildcard
             }
             MirStmt::Return(Some(value)) => {
                 let value_ty = self.verify_expr(value, locals);
@@ -728,6 +752,7 @@ impl<'a> MirVerifier<'a> {
                         value_ty.display()
                     ),
                 );
+                true
             }
             MirStmt::Return(None) => {
                 self.expect_type(
@@ -739,9 +764,11 @@ impl<'a> MirVerifier<'a> {
                         expected_return.display()
                     ),
                 );
+                true
             }
             MirStmt::Drop(value) => {
                 self.verify_expr(value, locals);
+                false
             }
         }
     }

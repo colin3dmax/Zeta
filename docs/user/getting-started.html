@@ -51,7 +51,12 @@ python3 tools/check-vscode-extension.py</code></pre>
     <p>当前检查范围包括重复定义、未知名字、<code>Int</code> / <code>String</code> / <code>Bool</code>、算术表达式、比较表达式、布尔逻辑表达式、函数调用、<code>let</code> 注解、<code>let mut</code> 可变绑定、赋值语句、<code>if</code> / <code>while</code> 条件和 <code>return</code> 类型。</p>
 
     <h2>执行程序</h2>
-    <p><code>run</code> 会先 lower 到结构化 MIR，通过 MIR verifier 后，再由 Stage 0 MIR interpreter 执行无参数 <code>main</code>。这里的 MIR interpreter 不是生成机器码，而是直接读取 MIR 指令并执行，用来在早期验证 Zeta 的运行语义；当前支持整数算术、比较运算、布尔逻辑、函数调用、<code>let</code>、<code>let mut</code>、赋值、<code>return</code> 和基础 <code>if</code> / <code>while</code>。传入目录时，<code>run</code> 会复用 module graph，找到唯一 <code>main</code> 并执行跨文件 <code>export fn</code> 调用。</p>
+    <p><code>run</code> 会先 lower 到结构化 MIR，通过 MIR verifier 后，再由 Stage 0 MIR interpreter 执行无参数 <code>main</code>。这里的 MIR interpreter 不是生成机器码，而是直接读取 MIR 指令并执行，用来在早期验证 Zeta 的运行语义；当前支持整数算术、比较运算、布尔逻辑、函数调用、<code>let</code>、<code>let mut</code>、赋值、<code>return</code> 和基础 <code>if</code> / <code>while</code>。声明 <code>-&gt; Int</code>、<code>-&gt; Bool</code> 等非 <code>Unit</code> 返回类型的函数，必须让 verifier 能静态确认所有路径都会 <code>return</code>；当前不会把 <code>while true</code> 当作保证返回。传入目录时，<code>run</code> 会复用 module graph，找到唯一 <code>main</code> 并执行跨文件 <code>export fn</code> 调用。</p>
+    <pre><code>fn main() -&gt; Int {
+  let answer: Int = 42;
+}
+
+# run 会报告 MIR_MISSING_RETURN，因为 main 声明返回 Int 但没有 return。</code></pre>
     <pre><code>cargo run -- run testdata/run_basic.zeta
 cargo run -- run testdata/run_call.zeta
 cargo run -- run testdata/run_compare.zeta
@@ -160,8 +165,8 @@ fn main() -&gt; Int {
         </tr>
         <tr>
           <td><code>Run</code></td>
-          <td>执行无参数 <code>main</code> 并返回 Stage 0 interpreter 结果。</td>
-          <td>在线试运行整数算术、函数调用和基础控制流。</td>
+          <td>通过 MIR verifier 后执行无参数 <code>main</code> 并返回 Stage 0 interpreter 结果。</td>
+          <td>在线试运行整数算术、函数调用、基础控制流，并验证非 Unit 函数返回路径。</td>
         </tr>
       </tbody>
     </table>

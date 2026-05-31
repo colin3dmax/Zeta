@@ -30,7 +30,7 @@
     tutorial: "推荐路径：表达式 -> let/let mut -> 比较/布尔逻辑/控制流 -> fn -> struct 字面量/字段访问 -> enum 变体 -> match -> check/run -> Playground/REPL。",
     api: "Stage 0 API 覆盖 Int、String、Bool、module/import、std.core/std.io、fn、let/let mut、赋值、比较、布尔逻辑、return、if/while、struct 字面量、字段访问、enum 变体和 match。",
     std: "std 是 Stage 0 标准 API 边界。当前 resolver 接受 import std.core; 和 import std.io;，未知标准库路径会报错；具体 IO 函数在后续权限模型确定后接入。",
-    playground: "Playground 通过 zeta.wasm 运行真实编译器前端，支持 AST、Check 和 Run。",
+    playground: "Playground 通过 zeta.wasm 运行真实编译器前端，支持 AST、检查和运行。",
     module: "module 声明当前源码模块，例如 module demo.core;",
     import: "import 引入模块路径。Stage 0 当前可导入 std.core 和 std.io，例如 import std.core;",
     fn: "fn 声明函数，例如 fn main() -> Int { return 42; }",
@@ -190,12 +190,13 @@ fn helper() -> Int {
     { name: "enum 变体", mode: "run", example: "enum", expected: "42" },
     { name: "match 分支", mode: "run", example: "match", expected: "42" },
     { name: "数据声明 AST", mode: "ast", example: "data", expectedIncludes: "Struct name=User" },
-    { name: "标准 import 边界", mode: "check", source: "import std.core;\nimport std.io;\nfn main() -> Int { return 42; }", expected: "ok" }
+    { name: "标准 import 边界", mode: "check", source: "import std.core;\nimport std.io;\nfn main() -> Int { return 42; }", expected: "ok" },
+    { name: "MIR 返回路径诊断", mode: "run", source: "fn main() -> Int {\n  let answer: Int = 42;\n}", expectedOk: false, expectedIncludes: "MIR_MISSING_RETURN" }
   ];
 
   let active = "overview";
   let source = sample;
-  let output = "选择 AST、Check 或 Run 查看真实 Zeta 编译器前端结果。";
+  let output = "选择 AST、检查、运行查看真实 Zeta 编译器前端结果。多文件示例会自动使用模块图。";
   let runningMode = "";
   let sourceScrollTop = 0;
   let sourceScrollLeft = 0;
@@ -209,21 +210,36 @@ fn helper() -> Int {
   let replCompletionOpen = false;
   let replCompletionPrefix = "";
   let replInputEl;
+  $: playgroundModeHint = hasVirtualFiles(source)
+    ? "当前源码包含多个 // file: 文件块：检查和运行会自动使用模块图，跨文件 import/export 可以一起解析。"
+    : "当前源码按单文件执行：检查只验证当前文件，运行执行当前文件里的无参数 main。";
   let replLines = [
     { kind: "system", text: "Zeta Web REPL · 输入 :help 查看命令，输入 40 + 2 直接运行。" }
   ];
 
   async function runPlayground(mode) {
-    runningMode = mode;
+    const effectiveMode = playgroundModeForSource(mode, source);
+    runningMode = effectiveMode;
     output = "running...";
     try {
-      const result = await runZeta(mode, source);
+      const result = await runZeta(effectiveMode, source);
       output = result.output;
     } catch (error) {
       output = `Playground failed: ${error.message}`;
     } finally {
       runningMode = "";
     }
+  }
+
+  function playgroundModeForSource(mode, value) {
+    if (!hasVirtualFiles(value)) return mode;
+    if (mode === "check") return "check-module-graph";
+    if (mode === "run") return "run-module-graph";
+    return mode;
+  }
+
+  function hasVirtualFiles(value) {
+    return /^\/\/\s*file:\s+\S+/m.test(value);
   }
 
   async function runFeatureTests() {
@@ -235,11 +251,13 @@ fn helper() -> Int {
       const testSource = test.source ?? playgroundExamples[test.example];
       try {
         const result = await runZeta(test.mode, testSource);
-        const passed = result.ok && (
+        const expectedOk = test.expectedOk ?? true;
+        const outputMatches = (
           test.expectedIncludes
             ? result.output.includes(test.expectedIncludes)
             : result.output.trim() === test.expected
         );
+        const passed = result.ok === expectedOk && outputMatches;
         results.push({ ...test, passed, output: result.output });
       } catch (error) {
         results.push({ ...test, passed: false, output: error.message });
@@ -253,7 +271,7 @@ fn helper() -> Int {
 
   function loadFeatureTest(test) {
     source = test.source ?? playgroundExamples[test.example] ?? sample;
-    output = `Feature test: ${test.name}\nMode: ${test.mode}\nExpected: ${test.expected ?? test.expectedIncludes}`;
+    output = `Feature test: ${test.name}\nMode: ${test.mode}\nExpected: ${test.expected ?? test.expectedIncludes}\nExpected ok: ${test.expectedOk ?? true}`;
     active = "playground";
   }
 
@@ -417,7 +435,7 @@ fn helper() -> Int {
   function loadPlaygroundExample(name) {
     const example = playgroundExamples[name] ?? playgroundExamples.overview;
     source = example;
-    output = "选择 AST、Check 或 Run 查看真实 Zeta 编译器前端结果。";
+    output = "选择 AST、检查、运行查看真实 Zeta 编译器前端结果。多文件示例会自动使用模块图。";
     active = "playground";
   }
 
@@ -650,23 +668,24 @@ python3 tools/check-vscode-extension.py</code></pre>
             <div class="pane-head">
               <span>Output</span>
               <div class="toolbar compact">
-                <button disabled={runningMode !== ""} on:click={() => runPlayground("ast")}>AST</button>
-                <button disabled={runningMode !== ""} on:click={() => runPlayground("check")}>Check</button>
-                <button disabled={runningMode !== ""} on:click={() => runPlayground("check-module-graph")}>Graph</button>
-                <button disabled={runningMode !== ""} on:click={() => runPlayground("run-module-graph")}>Run Graph</button>
-                <button disabled={runningMode !== ""} on:click={() => runPlayground("run")}>Run</button>
+                <button title="解析当前源码并输出 AST 结构" disabled={runningMode !== ""} on:click={() => runPlayground("ast")}>AST</button>
+                <button title="检查单文件；多文件源码会自动切换为模块图检查" disabled={runningMode !== ""} on:click={() => runPlayground("check")}>检查</button>
+                <button title="强制按多个 // file: 文件块建立模块图并检查 import/export" disabled={runningMode !== ""} on:click={() => runPlayground("check-module-graph")}>检查多文件</button>
+                <button title="强制按模块图执行多文件程序" disabled={runningMode !== ""} on:click={() => runPlayground("run-module-graph")}>运行多文件</button>
+                <button title="运行单文件 main；多文件源码会自动切换为模块图运行" disabled={runningMode !== ""} on:click={() => runPlayground("run")}>运行</button>
               </div>
             </div>
+            <div class="mode-guide">{playgroundModeHint}</div>
             <pre class="output"><code>{output}</code></pre>
           </div>
         </div>
         <div class="window-statusbar light">
           <span>wasm frontend</span>
           <span>{runningMode || "idle"}</span>
-          <span>AST · Check · Run</span>
+          <span>AST · 检查 · 运行</span>
         </div>
       </div>
-      <p class="note">Playground 直接加载 Zeta 编译器前端编译出的 <code>zeta.wasm</code>，AST、Check 和 Run 都执行当前仓库里的真实 Stage 0 编译器逻辑。</p>
+      <p class="note">Playground 直接加载 Zeta 编译器前端编译出的 <code>zeta.wasm</code>，AST、检查和运行都执行当前仓库里的真实 Stage 0 编译器逻辑。</p>
       <div class="feature-tests">
         <div class="feature-tests-head">
           <div>
@@ -710,7 +729,7 @@ python3 tools/check-vscode-extension.py</code></pre>
         <article><h3>表达式与标量</h3><p>Int、String、Bool、算术、比较和布尔逻辑。</p><a href="/docs/user/language-features.html#scalars-expressions">阅读并测试</a></article>
         <article><h3>绑定与局部状态</h3><p>let、let mut、赋值和类型注解。</p><a href="/docs/user/language-features.html#bindings">阅读并测试</a></article>
         <article><h3>函数与控制流</h3><p>fn、return、if/else、while 和函数调用。</p><a href="/docs/user/language-features.html#functions">阅读并测试</a></article>
-        <article><h3>数据声明与工具链</h3><p>module/import/export、struct、enum、AST/Check/Run/REPL。</p><a href="/docs/user/language-features.html#data-declarations">阅读并测试</a></article>
+        <article><h3>数据声明与工具链</h3><p>module/import/export、struct、enum、AST、检查、运行和 REPL。</p><a href="/docs/user/language-features.html#data-declarations">阅读并测试</a></article>
       </div>
     </section>
 
