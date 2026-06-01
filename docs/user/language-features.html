@@ -4,22 +4,45 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Zeta 语言特性学习</title>
-  <link rel="stylesheet" href="../shared.css">
+  <link rel="stylesheet" href="../shared.css?v=20260601-doc-layout">
 </head>
 <body>
-  <main>
-    <nav class="doc-nav" aria-label="文档导航">
+  <header class="doc-topbar">
+    <a class="doc-brand" href="../index.html">Zeta Docs</a>
+    <nav class="doc-topnav" aria-label="模块导航">
       <a href="../../">官网首页</a>
       <a href="../index.html">文档中心</a>
-      <a href="getting-started.html">快速开始</a>
+      <a href="getting-started.html" aria-current="page">用户指南</a>
+      <a href="../tutorial/index.html">在线教程</a>
+      <a href="../project/stage-roadmap.html">路线图</a>
+      <a href="../compiler/bootstrap.html">编译器</a>
+      <a href="../../#playground">Playground</a>
     </nav>
+  </header>
+  <main class="doc-shell">
+    <aside class="doc-sidebar" aria-label="文章列表">
+      <p class="doc-sidebar-title">Feature Guide</p>
+      <section class="doc-sidebar-section">
+        <h2>本文目录</h2>
+        <a href="#overview" aria-current="page">能力概览</a>
+        <a href="#modules">模块与导入</a>
+        <a href="#scalars-expressions">标量与表达式</a>
+        <a href="#bindings">绑定和赋值</a>
+        <a href="#functions">函数和 return</a>
+        <a href="#control-flow">控制流</a>
+        <a href="#data-declarations">数据声明</a>
+        <a href="#tooling">CLI / REPL / 编辑器</a>
+        <a href="#online-testing">在线测试</a>
+      </section>
+    </aside>
+    <article class="doc-content">
     <h1>Zeta 语言特性学习</h1>
     <p><strong>状态：</strong>draft</p>
     <p><strong>更新时间：</strong>2026-05-30</p>
     <p><strong>适用范围：</strong>Zeta Stage 0 已实现语言功能、用户示例、CLI 验证方式和官网 Playground 在线测试入口。</p>
     <p><strong>验收标准：</strong>每个已实现语言功能都有用途说明、规则、示例和可复用 Playground 测试入口。</p>
 
-    <section class="hero">
+    <section id="overview" class="hero">
       <p class="eyebrow">Feature Guide</p>
       <h2>每个语言能力都应该能读、能跑、能在线验证。</h2>
       <p>本页覆盖当前 Stage 0 已实现的语言表面。标记为 parse / dump 的能力表示编译器前端已识别，但运行时语义仍在后续阶段补齐。</p>
@@ -92,7 +115,7 @@ import demo.more;
 fn main() -&gt; Int {
   return answer(); // RESOLVE_AMBIGUOUS_FUNCTION
 }</code></pre>
-    <p><a class="button secondary" href="../../?example=overview#playground">在 Playground 测试模块示例</a></p>
+    <p><a class="button secondary" href="../../?example=overview#playground" target="feature-playground">在本页测试模块示例</a></p>
 
     <h2 id="scalars-expressions">标量与表达式</h2>
     <p>当前标量类型包括 <code>Int</code>、<code>String</code> 和 <code>Bool</code>。整数算术支持 <code>+ - * /</code>，乘除优先级高于加减。</p>
@@ -107,7 +130,7 @@ fn main() -&gt; Int {
     <pre><code>fn main() -&gt; Bool {
   return true &amp;&amp; !false;
 }</code></pre>
-    <p><a class="button secondary" href="../../?example=bool#playground">在 Playground 测试布尔逻辑</a></p>
+    <p><a class="button secondary" href="../../?example=bool#playground" target="feature-playground">在本页测试布尔逻辑</a></p>
 
     <h2 id="bindings">let、let mut 和赋值</h2>
     <p>Zeta 默认局部绑定不可变。需要后续赋值时，必须在声明处写 <code>let mut</code>。给不可变绑定赋值会被 resolver/typecheck 拒绝。</p>
@@ -116,7 +139,7 @@ fn main() -&gt; Int {
   answer = answer + 2;
   return answer;
 }</code></pre>
-    <p><a class="button secondary" href="../../?example=bindings#playground">在 Playground 测试绑定和赋值</a></p>
+    <p><a class="button secondary" href="../../?example=bindings#playground" target="feature-playground">在本页测试绑定和赋值</a></p>
 
     <h2 id="functions">函数、参数和 return</h2>
     <p><code>fn</code> 声明函数，参数和返回值使用显式类型。<code>run</code> 当前执行无参数 <code>main</code>。函数调用会检查参数数量和参数类型。</p>
@@ -127,7 +150,7 @@ fn main() -&gt; Int {
 fn main() -&gt; Int {
   return add(40, 2);
 }</code></pre>
-    <p><a class="button secondary" href="../../?example=functions#playground">在 Playground 测试函数调用</a></p>
+    <p><a class="button secondary" href="../../?example=functions#playground" target="feature-playground">在本页测试函数调用</a></p>
 
     <h2 id="control-flow">if/else 和 while</h2>
     <p><code>if</code> 和 <code>while</code> 的条件必须是 <code>Bool</code>。比较表达式和布尔逻辑可以直接作为条件。</p>
@@ -141,7 +164,7 @@ fn main() -&gt; Int {
   }
   return 0;
 }</code></pre>
-    <p><a class="button secondary" href="../../?example=control#playground">在 Playground 测试控制流</a></p>
+    <p><a class="button secondary" href="../../?example=control#playground" target="feature-playground">在本页测试控制流</a></p>
 
     <h2 id="data-declarations">struct、enum 和 match</h2>
     <p><code>struct</code> 当前支持结构体字面量和字段访问，适合先表达稳定记录数据。<code>enum</code> 当前支持限定变体值，例如 <code>ResultTag.Ok</code>。<code>match</code> 可以对 <code>Int</code>、<code>String</code>、<code>Bool</code>、枚举变体和 <code>_</code> 通配模式执行分支。</p>
@@ -187,10 +210,10 @@ fn main() -&gt; Int {
   }
   return 0;
 }</code></pre>
-    <p><a class="button secondary" href="../../?example=struct#playground">在 Playground 运行 struct 示例</a></p>
-    <p><a class="button secondary" href="../../?example=match#playground">在 Playground 运行 match 示例</a></p>
-    <p><a class="button secondary" href="../../?example=enum#playground">在 Playground 运行 enum 示例</a></p>
-    <p><a class="button secondary" href="../../?example=data#playground">在 Playground 查看数据声明 AST</a></p>
+    <p><a class="button secondary" href="../../?example=struct#playground" target="feature-playground">在本页运行 struct 示例</a></p>
+    <p><a class="button secondary" href="../../?example=match#playground" target="feature-playground">在本页运行 match 示例</a></p>
+    <p><a class="button secondary" href="../../?example=enum#playground" target="feature-playground">在本页运行 enum 示例</a></p>
+    <p><a class="button secondary" href="../../?example=data#playground" target="feature-playground">在本页查看数据声明 AST</a></p>
 
     <h2 id="tooling">CLI、REPL 和编辑器</h2>
     <p>CLI 提供 <code>ast-dump</code>、<code>hir-dump</code>、<code>mir-dump</code>、<code>check</code>、<code>run</code> 和 <code>repl</code>。REPL 支持表达式执行、语句执行、文档查询、补全和输入着色。</p>
@@ -199,9 +222,10 @@ zeta check testdata/core_items.zeta
 zeta run testdata/run_enum.zeta
 zeta repl</code></pre>
 
-    <h2>在线测试</h2>
+    <h2 id="online-testing">在线测试</h2>
     <p>下面的嵌入区域复用官网真实 WASM Playground。Playground 底部提供“语言特性在线测试”，每个已实现特性都有对应用例，可以一键运行全部测试，也可以点击单项把用例载入编辑区。</p>
-    <iframe class="embedded-playground" src="../../?example=overview#playground" title="Zeta Playground"></iframe>
+    <iframe id="feature-playground" name="feature-playground" class="embedded-playground" src="../../?example=overview#playground" title="Zeta Playground"></iframe>
+    </article>
   </main>
 </body>
 </html>

@@ -4,29 +4,52 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Zeta 本地安装</title>
-  <link rel="stylesheet" href="../shared.css">
+  <link rel="stylesheet" href="../shared.css?v=20260601-doc-layout">
 </head>
 <body>
-  <main>
-    <nav class="doc-nav" aria-label="文档导航">
+  <header class="doc-topbar">
+    <a class="doc-brand" href="../index.html">Zeta Docs</a>
+    <nav class="doc-topnav" aria-label="模块导航">
       <a href="../../">官网首页</a>
       <a href="../index.html">文档中心</a>
-      <a href="getting-started.html">快速开始</a>
+      <a href="getting-started.html" aria-current="page">用户指南</a>
+      <a href="../tutorial/index.html">在线教程</a>
+      <a href="../project/stage-roadmap.html">路线图</a>
+      <a href="../compiler/bootstrap.html">编译器</a>
+      <a href="../../#playground">Playground</a>
     </nav>
+  </header>
+  <main class="doc-shell">
+    <aside class="doc-sidebar" aria-label="文章列表">
+      <p class="doc-sidebar-title">Install</p>
+      <section class="doc-sidebar-section">
+        <h2>本文目录</h2>
+        <a href="#overview" aria-current="page">安装概览</a>
+        <a href="#platform-status">平台状态</a>
+        <a href="#rust">准备 Rust</a>
+        <a href="#source">从源码运行</a>
+        <a href="#release">构建 release</a>
+        <a href="#path">安装到 PATH</a>
+        <a href="#package">生成安装包</a>
+        <a href="#verify">验证安装</a>
+        <a href="#vscode">VS Code 插件</a>
+      </section>
+    </aside>
+    <article class="doc-content">
     <h1>Zeta 本地安装</h1>
     <p><strong>状态：</strong>accepted</p>
     <p><strong>更新时间：</strong>2026-05-30</p>
     <p><strong>适用范围：</strong>Zeta Stage 0 命令行工具、REPL、官网安装入口和当前平台本地打包方法。</p>
     <p><strong>验收标准：</strong>用户可以在 macOS、Linux 或 Windows 上从源码构建 Zeta，运行 <code>zeta repl</code>、<code>zeta check</code> 和 <code>zeta run</code>。</p>
 
-    <section class="hero">
+    <section id="overview" class="hero">
       <p class="eyebrow">Install</p>
       <h2>当前推荐从源码安装；release 打包脚本已经可复用。</h2>
       <p>Zeta 还处在 Stage 0，命令行工具已经可本地运行。官网提供源码安装、本地 release 构建和脚本化打包方法；预构建下载会在发布机或 CI 跑同一套脚本后开放。</p>
       <p><a class="button" href="downloads.html">查看已发布 CLI 包</a></p>
     </section>
 
-    <h2>平台状态</h2>
+    <h2 id="platform-status">平台状态</h2>
     <table>
       <thead>
         <tr>
@@ -54,23 +77,23 @@
       </tbody>
     </table>
 
-    <h2>准备 Rust</h2>
+    <h2 id="rust">准备 Rust</h2>
     <p>安装 Rust 后确认 <code>cargo</code> 可用。</p>
     <pre><code>rustc --version
 cargo --version</code></pre>
 
-    <h2>从源码运行</h2>
+    <h2 id="source">从源码运行</h2>
     <pre><code>git clone https://github.com/colin3dmax/Zeta.git
 cd Zeta
 cargo run -- repl</code></pre>
 
-    <h2>构建本地 release</h2>
+    <h2 id="release">构建本地 release</h2>
     <pre><code>cargo build --release
 ./target/release/zeta repl
 ./target/release/zeta check testdata/core_items.zeta
 ./target/release/zeta run testdata/run_bool_logic.zeta</code></pre>
 
-    <h2>安装到 PATH</h2>
+    <h2 id="path">安装到 PATH</h2>
     <p>macOS / Linux 可以把 release 二进制复制到用户本地 bin 目录。</p>
     <pre><code>mkdir -p ~/.local/bin
 cp target/release/zeta ~/.local/bin/zeta
@@ -80,7 +103,7 @@ zeta repl</code></pre>
     <pre><code>cargo build --release
 .\target\release\zeta.exe repl</code></pre>
 
-    <h2>生成安装包</h2>
+    <h2 id="package">生成安装包</h2>
     <p>打包脚本会构建 release，并把 <code>zeta</code>、README、HTML 文档、<code>INSTALL.txt</code> 和校验信息打进 <code>dist/packages/</code>。</p>
     <pre><code>sh tools/package-release.sh
 ls dist/packages</code></pre>
@@ -96,16 +119,17 @@ sh tools/package-release.sh --target x86_64-pc-windows-msvc</code></pre>
     <p>兼容旧入口：</p>
     <pre><code>sh tools/package-local.sh</code></pre>
 
-    <h2>验证安装</h2>
+    <h2 id="verify">验证安装</h2>
     <pre><code>zeta ast-dump testdata/core_items.zeta
 zeta check testdata/core_items.zeta
 zeta run testdata/run_bool_logic.zeta
 zeta repl</code></pre>
 
-    <h2>VS Code 插件</h2>
+    <h2 id="vscode">VS Code 插件</h2>
     <p>编辑器插件当前通过本地脚本安装。</p>
     <pre><code>sh editors/vscode-zeta/scripts/install-local.sh</code></pre>
     <p>更多说明见 <a href="vscode.html">VS Code 插件使用说明</a>。</p>
+    </article>
   </main>
 </body>
 </html>

@@ -20,6 +20,7 @@
 
 html {
   background: var(--page);
+  scroll-behavior: smooth;
 }
 
 body {
@@ -225,6 +226,10 @@ main {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
+}
+
+.doc-content :target {
+  scroll-margin-top: 88px;
 }
 
 .doc-content h1 {
@@ -485,7 +490,7 @@ textarea {
 
 .embedded-playground {
   width: 100%;
-  min-height: 720px;
+  min-height: min(1200px, calc(100vh - 96px));
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   background: #fff;
@@ -553,6 +558,6 @@ textarea {
   }
 
   .embedded-playground {
-    min-height: 820px;
+    min-height: 760px;
   }
 }

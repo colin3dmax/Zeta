@@ -33,9 +33,10 @@ const publicDocs = [
   { path: "docs/project/decision-record.html", title: "Zeta 构建决策记录", layout: "legacy" },
   { path: "docs/project/language-design-process.html", title: "Zeta 语言设计过程", layout: "legacy" },
   { path: "docs/project/stage-roadmap.html", title: "Zeta 阶段路线图", layout: "legacy" },
-  { path: "docs/user/language-features.html", title: "Zeta 语言特性学习", layout: "legacy" },
-  { path: "docs/user/install.html", title: "Zeta 本地安装", layout: "legacy" },
-  { path: "docs/user/downloads.html", title: "Zeta 下载", layout: "legacy" },
+  { path: "docs/user/language-features.html", title: "Zeta 语言特性学习", layout: "shell" },
+  { path: "docs/user/install.html", title: "Zeta 本地安装", layout: "shell" },
+  { path: "docs/user/downloads.html", title: "Zeta 下载", layout: "shell" },
+  { path: "docs/user/vscode.html", title: "Zeta VS Code 插件使用说明", layout: "shell" },
 ];
 
 (async () => {
@@ -139,6 +140,25 @@ const publicDocs = [
     const layoutOk = layout === "shell"
       ? shellLayout?.shellDisplay === "grid" && shellLayout?.sidebarPosition === "sticky" && shellLayout?.topbarPosition === "sticky"
       : true;
+    const sidebarExternalLinks = layout === "shell"
+      ? await page.locator(".doc-sidebar a").evaluateAll((nodes) =>
+          nodes
+            .map((node) => node.getAttribute("href") || "")
+            .filter((href) => !href.startsWith("#"))
+        )
+      : [];
+    const sidebarOk = layout !== "shell" || sidebarExternalLinks.length === 0;
+    const embeddedPlaygroundOk = path.endsWith("language-features.html")
+      ? await page.evaluate(() => {
+          const frame = document.querySelector("#feature-playground");
+          const targets = Array.from(document.querySelectorAll('a.button[href*="example="]'))
+            .map((node) => node.getAttribute("target"));
+          if (!frame || targets.length === 0) return false;
+          return frame.getAttribute("name") === "feature-playground"
+            && frame.clientHeight >= 720
+            && targets.every((target) => target === "feature-playground");
+        })
+      : true;
     docChecks.push({
       path,
       status: response ? response.status() : 0,
@@ -148,7 +168,9 @@ const publicDocs = [
       navDocs,
       navLinkColor,
       shellLayout,
-      ok: Boolean(response?.ok()) && h1 === title && navHome > 0 && navDocs > 0 && navLinkColor === "rgb(17, 17, 17)" && layoutOk,
+      sidebarExternalLinks,
+      embeddedPlaygroundOk,
+      ok: Boolean(response?.ok()) && h1 === title && navHome > 0 && navDocs > 0 && navLinkColor === "rgb(17, 17, 17)" && layoutOk && sidebarOk && embeddedPlaygroundOk,
     });
   }
 

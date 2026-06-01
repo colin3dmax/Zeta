@@ -21,26 +21,34 @@
   </header>
   <main class="doc-shell">
     <aside class="doc-sidebar" aria-label="文章列表">
-      <p class="doc-sidebar-title">Help Articles</p>
+      <p class="doc-sidebar-title">Quick Start</p>
       <section class="doc-sidebar-section">
-        <h2>用户帮助</h2>
-        <a href="getting-started.html" aria-current="page">快速开始</a>
-        <a href="language-features.html">语言特性学习</a>
-        <a href="install.html">本地安装</a>
-        <a href="downloads.html">CLI 下载</a>
-        <a href="vscode.html">VS Code 插件</a>
+        <h2>开始使用</h2>
+        <a href="#requirements" aria-current="page">安装前提</a>
+        <a href="#verify">验证环境</a>
+        <a href="#ast">查看 AST</a>
+        <a href="#hir">查看 HIR</a>
+        <a href="#mir">查看 MIR</a>
+        <a href="#check">检查源码</a>
+        <a href="#run">执行程序</a>
       </section>
       <section class="doc-sidebar-section">
-        <h2>学习路径</h2>
-        <a href="../tutorial/index.html">在线教程</a>
-        <a href="../../#playground">在线 Playground</a>
-        <a href="../compiler/glossary.html">编译器术语解释</a>
+        <h2>语言基础</h2>
+        <a href="#bindings">可变绑定和赋值</a>
+        <a href="#comparison">比较表达式</a>
+        <a href="#bool">布尔逻辑</a>
+        <a href="#match">标量 match</a>
+        <a href="#struct">结构体字段访问</a>
+        <a href="#enum">枚举变体</a>
       </section>
       <section class="doc-sidebar-section">
-        <h2>项目与设计</h2>
-        <a href="../project/stage-roadmap.html">阶段路线图</a>
-        <a href="../project/decision-record.html">构建决策记录</a>
-        <a href="../spec/core-std-api.html">Core / Std API</a>
+        <h2>工具入口</h2>
+        <a href="#playground">在线 Playground</a>
+        <a href="#repl">进入 REPL</a>
+        <a href="#rich-repl">高级 REPL</a>
+        <a href="#repl-commands">REPL 命令</a>
+        <a href="#examples">示例输入</a>
+        <a href="#limits">当前限制</a>
       </section>
     </aside>
     <article class="doc-content">
@@ -52,36 +60,36 @@
 
     <p>如果你第一次接触编译器术语，可以先打开 <a href="../compiler/glossary.html">编译器术语解释</a>。里面解释了 AST、HIR、MIR、MIR interpreter、backend、corpus 和 golden test 等文档里常见的词。</p>
 
-    <h2>安装前提</h2>
+    <h2 id="requirements">安装前提</h2>
     <ul>
       <li>需要 Rust 和 Cargo。</li>
       <li>当前 Stage 0 编译器从源码运行，不提供预编译安装包。</li>
       <li>命令默认从仓库根目录执行。</li>
     </ul>
 
-    <h2>验证环境</h2>
+    <h2 id="verify">验证环境</h2>
     <pre><code>cargo test
 python3 tools/check-docs.py
 python3 tools/check-vscode-extension.py</code></pre>
 
-    <h2>查看 AST</h2>
+    <h2 id="ast">查看 AST</h2>
     <p><code>ast-dump</code> 会解析 Zeta 源码并输出稳定 AST dump。AST 可以理解成“源码语法结构的树状记录”，适合调试 parser 和 golden corpus。</p>
     <pre><code>cargo run -- ast-dump testdata/core_items.zeta</code></pre>
 
-    <h2>查看 HIR</h2>
+    <h2 id="hir">查看 HIR</h2>
     <p><code>hir-dump</code> 会先通过 name resolution 和 typecheck，再输出稳定 HIR 文本。HIR 是比 AST 更规整的中间表示，作为后续 MIR 和 backend golden tests 的输入基线。</p>
     <pre><code>cargo run -- hir-dump testdata/core_items.zeta</code></pre>
 
-    <h2>查看 MIR</h2>
+    <h2 id="mir">查看 MIR</h2>
     <p><code>mir-dump</code> 当前覆盖 Stage 0 可运行子集，会输出 locals、temps、store、return、call 和基础控制流的稳定 MIR 文本。MIR 更接近“程序执行步骤”，方便解释器和未来后端共用同一语义。</p>
     <pre><code>cargo run -- mir-dump testdata/run_mut.zeta</code></pre>
 
-    <h2>检查源码</h2>
+    <h2 id="check">检查源码</h2>
     <p><code>check</code> 当前执行 parser、最小 name resolution 和基础 typecheck。</p>
     <pre><code>cargo run -- check testdata/core_items.zeta</code></pre>
     <p>当前检查范围包括重复定义、未知名字、<code>Int</code> / <code>String</code> / <code>Bool</code>、算术表达式、比较表达式、布尔逻辑表达式、函数调用、<code>let</code> 注解、<code>let mut</code> 可变绑定、赋值语句、<code>if</code> / <code>while</code> 条件和 <code>return</code> 类型。</p>
 
-    <h2>执行程序</h2>
+    <h2 id="run">执行程序</h2>
     <p><code>run</code> 会先 lower 到结构化 MIR，通过 MIR verifier 后，再由 Stage 0 MIR interpreter 执行无参数 <code>main</code>。这里的 MIR interpreter 不是生成机器码，而是直接读取 MIR 指令并执行，用来在早期验证 Zeta 的运行语义；当前支持整数算术、比较运算、布尔逻辑、函数调用、<code>let</code>、<code>let mut</code>、赋值、<code>return</code> 和基础 <code>if</code> / <code>while</code>。声明 <code>-&gt; Int</code>、<code>-&gt; Bool</code> 等非 <code>Unit</code> 返回类型的函数，必须让 verifier 能静态确认所有路径都会 <code>return</code>；当前不会把 <code>while true</code> 当作保证返回。传入目录时，<code>run</code> 会复用 module graph，找到唯一 <code>main</code> 并执行跨文件 <code>export fn</code> 调用。</p>
     <pre><code>fn main() -&gt; Int {
   let answer: Int = 42;
@@ -98,7 +106,7 @@ cargo run -- run testdata/modules_ok
 cargo run -- run testdata/modules_qualified
 cargo run -- run testdata/modules_alias</code></pre>
 
-    <h2>可变绑定和赋值</h2>
+    <h2 id="bindings">可变绑定和赋值</h2>
     <p>Zeta 默认局部绑定不可变。需要在后续语句里重新赋值时，声明时必须写 <code>let mut</code>；否则 <code>check</code> 会报告 <code>RESOLVE_ASSIGN_IMMUTABLE</code>。</p>
     <pre><code>fn main() -&gt; Int {
   let mut answer: Int = 40;
@@ -107,7 +115,7 @@ cargo run -- run testdata/modules_alias</code></pre>
 }</code></pre>
     <pre><code>cargo run -- run testdata/run_mut.zeta</code></pre>
 
-    <h2>比较表达式</h2>
+    <h2 id="comparison">比较表达式</h2>
     <p>比较运算返回 <code>Bool</code>，可直接作为 <code>if</code> 和 <code>while</code> 条件。<code>&lt;</code>、<code>&lt;=</code>、<code>&gt;</code>、<code>&gt;=</code> 当前只支持 <code>Int</code>；<code>==</code> 和 <code>!=</code> 要求左右类型一致。</p>
     <pre><code>fn main() -&gt; Int {
   let mut count: Int = 0;
@@ -120,7 +128,7 @@ cargo run -- run testdata/modules_alias</code></pre>
   return 0;
 }</code></pre>
 
-    <h2>布尔逻辑</h2>
+    <h2 id="bool">布尔逻辑</h2>
     <p><code>&amp;&amp;</code>、<code>||</code> 和 <code>!</code> 用于组合或取反 <code>Bool</code> 表达式；<code>&amp;&amp;</code> 和 <code>||</code> 使用短路语义。</p>
     <pre><code>fn main() -&gt; Int {
   let ready: Bool = true;
@@ -131,7 +139,7 @@ cargo run -- run testdata/modules_alias</code></pre>
   return 0;
 }</code></pre>
 
-    <h2>标量 match</h2>
+    <h2 id="match">标量 match</h2>
     <p><code>match</code> 当前支持 <code>Int</code>、<code>String</code>、<code>Bool</code> 字面量模式和 <code>_</code> 通配模式，分支体可以直接 <code>return</code>。</p>
     <pre><code>fn main() -&gt; Int {
   let value: Int = 2;
@@ -144,7 +152,7 @@ cargo run -- run testdata/modules_alias</code></pre>
 }</code></pre>
     <pre><code>cargo run -- run testdata/run_match.zeta</code></pre>
 
-    <h2>结构体值和字段访问</h2>
+    <h2 id="struct">结构体值和字段访问</h2>
     <p><code>struct</code> 可以声明记录类型；运行时当前支持结构体字面量和 <code>value.field</code> 字段访问。结构体字面量必须提供声明中的全部字段，字段值类型必须匹配声明。</p>
     <pre><code>struct User {
   name: String,
@@ -157,7 +165,7 @@ fn main() -&gt; Int {
 }</code></pre>
     <pre><code>cargo run -- run testdata/run_struct.zeta</code></pre>
 
-    <h2>枚举变体和 match</h2>
+    <h2 id="enum">枚举变体和 match</h2>
     <p><code>enum</code> 当前支持限定变体值，例如 <code>ResultTag.Ok</code>。枚举值可以赋给局部变量，也可以在 <code>match</code> 中用同样的限定变体模式分支。</p>
     <pre><code>enum ResultTag {
   Ok,
@@ -174,7 +182,7 @@ fn main() -&gt; Int {
 }</code></pre>
     <pre><code>cargo run -- run testdata/run_enum.zeta</code></pre>
 
-    <h2>在线 Playground</h2>
+    <h2 id="playground">在线 Playground</h2>
     <p>官网的 Playground 直接加载 Zeta 编译器前端编译出的 <code>zeta.wasm</code>，不是 JavaScript 模拟器。当前支持三个模式：</p>
     <table>
       <thead>
@@ -210,7 +218,7 @@ export fn main() -> Int {
   return answer;
 }</code></pre>
 
-    <h2>进入 REPL</h2>
+    <h2 id="repl">进入 REPL</h2>
     <pre><code>cargo run -- repl</code></pre>
     <p>当前 REPL 是 Stage 0 交互式语法终端：表达式会直接执行并返回结果，语句会执行并输出 <code>ok</code>。真实 TTY 下会启用无依赖 line editor，支持输入时语法高亮、Tab 补全、hint、历史上下切换和左右光标移动。</p>
     <p>REPL 默认会根据语言偏好显示中文或英文：优先读取 <code>ZETA_LANG</code> 环境变量，其次读取 <code>~/.zeta/config.toml</code> 里的 <code>language</code> 或 <code>lang</code>，最后根据系统 <code>LANG</code> / <code>LC_ALL</code> 判断。简体中文环境默认显示中文。会话内可以用 <code>:lang zh</code> 或 <code>:lang en</code> 临时切换。</p>
@@ -219,7 +227,7 @@ cargo run -- repl</code></pre>
     <pre><code>mkdir -p ~/.zeta
 printf 'language = "zh"\n' &gt; ~/.zeta/config.toml</code></pre>
 
-    <h2>高级 REPL</h2>
+    <h2 id="rich-repl">高级 REPL</h2>
     <p>高级 REPL 使用可选 <code>reedline</code> 依赖，默认不启用，避免影响离线和跨平台基础构建。</p>
     <pre><code>cargo run --features repl-rich -- repl</code></pre>
     <p>如果当前终端不支持 <code>reedline</code> 需要的 cursor 查询，高级 REPL 会自动退回内置 line editor，继续保留基础高亮、补全和历史能力。</p>
@@ -229,7 +237,7 @@ export http_proxy=http://127.0.0.1:33210
 export all_proxy=socks5://127.0.0.1:33211
 cargo test --features repl-rich</code></pre>
 
-    <h2>REPL 命令</h2>
+    <h2 id="repl-commands">REPL 命令</h2>
     <table>
       <thead>
         <tr>
@@ -282,7 +290,7 @@ cargo test --features repl-rich</code></pre>
       </tbody>
     </table>
 
-    <h2>示例输入</h2>
+    <h2 id="examples">示例输入</h2>
     <pre><code>40 + 2
 let answer: Int = 40 + 2;
 let mut count: Int = 1;
@@ -292,7 +300,7 @@ true &amp;&amp; !false;
 :complete Str
 :quit</code></pre>
 
-    <h2>当前限制</h2>
+    <h2 id="limits">当前限制</h2>
     <ul>
       <li>默认 REPL 使用无依赖 line editor；启用 <code>repl-rich</code> feature 后会使用 <code>reedline</code>。</li>
       <li>管道输入和非 TTY 环境会自动退回普通行输入。</li>
