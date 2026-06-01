@@ -29,12 +29,13 @@ try {
 
 const baseUrl = process.env.ZETA_LIVE_URL || "https://zeta.jennieapp.com/";
 const publicDocs = [
-  ["docs/project/decision-record.html", "Zeta 构建决策记录"],
-  ["docs/project/language-design-process.html", "Zeta 语言设计过程"],
-  ["docs/project/stage-roadmap.html", "Zeta 阶段路线图"],
-  ["docs/user/language-features.html", "Zeta 语言特性学习"],
-  ["docs/user/install.html", "Zeta 本地安装"],
-  ["docs/user/downloads.html", "Zeta 下载"],
+  { path: "docs/user/getting-started.html", title: "Zeta 用户快速开始", layout: "shell" },
+  { path: "docs/project/decision-record.html", title: "Zeta 构建决策记录", layout: "legacy" },
+  { path: "docs/project/language-design-process.html", title: "Zeta 语言设计过程", layout: "legacy" },
+  { path: "docs/project/stage-roadmap.html", title: "Zeta 阶段路线图", layout: "legacy" },
+  { path: "docs/user/language-features.html", title: "Zeta 语言特性学习", layout: "legacy" },
+  { path: "docs/user/install.html", title: "Zeta 本地安装", layout: "legacy" },
+  { path: "docs/user/downloads.html", title: "Zeta 下载", layout: "legacy" },
 ];
 
 (async () => {
@@ -115,20 +116,39 @@ const publicDocs = [
   const featureTestsPassed = await page.locator(".feature-test-card strong.pass").count();
 
   const docChecks = [];
-  for (const [path, title] of publicDocs) {
+  for (const { path, title, layout } of publicDocs) {
     const response = await page.goto(new URL(path, baseUrl).toString(), { waitUntil: "networkidle" });
     const h1 = await page.locator("h1").first().innerText();
-    const navHome = await page.locator(".doc-nav a", { hasText: "官网首页" }).count();
-    const navDocs = await page.locator(".doc-nav a", { hasText: "文档中心" }).count();
-    const navLinkColor = await page.locator(".doc-nav a").first().evaluate((node) => getComputedStyle(node).color);
+    const navSelector = layout === "shell" ? ".doc-topnav a" : ".doc-nav a";
+    const navHome = await page.locator(navSelector, { hasText: "官网首页" }).count();
+    const navDocs = await page.locator(navSelector, { hasText: "文档中心" }).count();
+    const navLinkColor = await page.locator(navSelector).first().evaluate((node) => getComputedStyle(node).color);
+    const shellLayout = layout === "shell"
+      ? await page.evaluate(() => {
+          const shell = document.querySelector(".doc-shell");
+          const sidebar = document.querySelector(".doc-sidebar");
+          const topbar = document.querySelector(".doc-topbar");
+          if (!shell || !sidebar || !topbar) return null;
+          return {
+            shellDisplay: getComputedStyle(shell).display,
+            sidebarPosition: getComputedStyle(sidebar).position,
+            topbarPosition: getComputedStyle(topbar).position,
+          };
+        })
+      : null;
+    const layoutOk = layout === "shell"
+      ? shellLayout?.shellDisplay === "grid" && shellLayout?.sidebarPosition === "sticky" && shellLayout?.topbarPosition === "sticky"
+      : true;
     docChecks.push({
       path,
       status: response ? response.status() : 0,
       h1,
+      layout,
       navHome,
       navDocs,
       navLinkColor,
-      ok: Boolean(response?.ok()) && h1 === title && navHome > 0 && navDocs > 0 && navLinkColor === "rgb(17, 17, 17)",
+      shellLayout,
+      ok: Boolean(response?.ok()) && h1 === title && navHome > 0 && navDocs > 0 && navLinkColor === "rgb(17, 17, 17)" && layoutOk,
     });
   }
 
