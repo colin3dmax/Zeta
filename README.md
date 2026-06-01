@@ -75,7 +75,9 @@ sh tools/verify.sh
 `tools/verify.sh` 会依次执行格式检查、Rust 测试、WASM smoke、文档检查、VS Code 插件检查、WASM/官网构建和 `git diff --check`；任一步失败都会立即以非零状态退出。需要发布并跑线上 smoke 时使用：
 
 ```sh
-ZETA_PLAYWRIGHT_REQUIRE=/path/to/node_modules/playwright sh tools/verify.sh --deploy --live
+cd website && npm install
+cd ..
+sh tools/verify.sh --deploy --live
 ```
 
 ## 本地安装

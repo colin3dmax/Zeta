@@ -24,9 +24,9 @@ Options:
   --deploy  deploy website after local verification
   --live    run live website smoke after deploy/build
 
-Live smoke requires Playwright. Install it globally with npm, install it
-locally where Node can resolve it, or set ZETA_PLAYWRIGHT_REQUIRE to a
-playwright package path.
+Live smoke requires Playwright. The default project-local install path is
+website/node_modules/playwright; run `npm install` in website/ before live
+smoke. A global npm install is accepted as a fallback.
 EOF
 }
 

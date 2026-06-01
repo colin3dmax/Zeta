@@ -1,19 +1,23 @@
-const playwrightRequire = process.env.ZETA_PLAYWRIGHT_REQUIRE || "playwright";
+const { existsSync } = require("node:fs");
+const { join } = require("node:path");
+const { execFileSync } = require("node:child_process");
+
+const localPlaywright = join(__dirname, "..", "website", "node_modules", "playwright");
+const playwrightRequire = process.env.ZETA_PLAYWRIGHT_REQUIRE
+  || (existsSync(localPlaywright) ? localPlaywright : "playwright");
 
 let chromium;
 try {
   ({ chromium } = require(playwrightRequire));
 } catch (error) {
   try {
-    const { execFileSync } = require("node:child_process");
-    const { join } = require("node:path");
     const globalRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
     ({ chromium } = require(join(globalRoot, "playwright")));
   } catch (globalError) {
     console.error(
       [
         "Unable to load Playwright.",
-        "Install it where Node can resolve `playwright`, install it globally with npm, or set ZETA_PLAYWRIGHT_REQUIRE to a playwright package path.",
+        "Run `npm install` in `website/`, install Playwright globally with npm, or set ZETA_PLAYWRIGHT_REQUIRE to a playwright package path.",
         `Tried: ${playwrightRequire}`,
         error.message,
         globalError.message,
