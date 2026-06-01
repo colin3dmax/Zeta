@@ -713,9 +713,11 @@ export fn answer() -> Int {
 
   .feature-tests {
     margin-top: 22px;
-    padding: 20px;
+    padding: clamp(18px, 3vw, 28px);
     border: 1px solid #111;
+    border-radius: 8px;
     background: #fff;
+    box-shadow: 8px 8px 0 #d9d9d9;
   }
 
   .feature-tests-head {
@@ -723,42 +725,68 @@ export fn answer() -> Int {
     justify-content: space-between;
     gap: 16px;
     align-items: flex-start;
+    padding-bottom: 18px;
+    border-bottom: 1px solid #d7d7d7;
   }
 
   .feature-test-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-    gap: 10px;
-    margin-top: 14px;
+    grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+    gap: 12px;
+    margin-top: 18px;
+    background: transparent;
   }
 
   .feature-test-card {
     display: grid;
-    gap: 7px;
+    gap: 10px;
     justify-items: start;
+    min-width: 0;
+    min-height: 112px;
+    margin: 0;
+    padding: 16px;
+    border: 1px solid #d7d7d7;
+    border-radius: 8px;
     text-align: left;
     background: #fff;
     color: #111;
     box-shadow: none;
   }
 
+  .feature-test-card:hover {
+    border-color: #111;
+    background: #f7f7f7;
+    color: #111;
+    transform: none;
+  }
+
   .feature-test-card span {
+    min-width: 0;
     font-weight: 850;
+    line-height: 1.25;
   }
 
   .feature-test-card small {
+    max-width: 100%;
     color: #555;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   .feature-test-card strong {
     width: fit-content;
+    max-width: 100%;
     padding: 2px 6px;
     border: 1px solid #111;
+    border-radius: 4px;
     background: #111;
     color: #fff;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 12px;
+    overflow-wrap: anywhere;
   }
 
   .feature-test-card strong.pass {
