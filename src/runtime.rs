@@ -18,6 +18,7 @@ pub enum Value {
     Enum {
         ty: String,
         variant: String,
+        payload: Option<Box<Value>>,
     },
     Unit,
 }
@@ -50,7 +51,7 @@ pub fn run_mir(program: &Program) -> Result<Value, Vec<Diagnostic>> {
 pub struct ReplSession {
     locals: HashMap<String, Value>,
     functions: HashMap<String, Function>,
-    enum_variants: HashMap<String, Vec<String>>,
+    enum_variants: HashMap<String, HashMap<String, Option<String>>>,
 }
 
 impl ReplSession {
@@ -65,8 +66,13 @@ impl ReplSession {
                     .insert(function.name.clone(), function.clone());
             }
             if let Item::Enum(decl) = item {
-                self.enum_variants
-                    .insert(decl.name.clone(), decl.variants.clone());
+                self.enum_variants.insert(
+                    decl.name.clone(),
+                    decl.variants
+                        .iter()
+                        .map(|variant| (variant.name.clone(), variant.payload_type.clone()))
+                        .collect(),
+                );
             }
         }
 
@@ -105,7 +111,7 @@ fn find_mir_main(program: &Program) -> Option<&MirFunction> {
 
 struct MirRuntime {
     functions: HashMap<String, MirFunction>,
-    enum_variants: HashMap<String, Vec<String>>,
+    enum_variants: HashMap<String, HashMap<String, Option<String>>>,
     loop_steps: usize,
 }
 
@@ -121,6 +127,15 @@ impl MirRuntime {
                 .enums
                 .iter()
                 .map(|enum_decl| (enum_decl.name.clone(), enum_decl.variants.clone()))
+                .map(|(name, variants)| {
+                    (
+                        name,
+                        variants
+                            .into_iter()
+                            .map(|variant| (variant.name, variant.payload_type))
+                            .collect(),
+                    )
+                })
                 .collect(),
             loop_steps: 0,
         }
@@ -217,8 +232,11 @@ impl MirRuntime {
             MirStmt::Match { value, arms } => {
                 let value = self.eval_expr(value, locals)?;
                 for arm in arms {
-                    if mir_pattern_matches(&arm.pattern, &value)? {
-                        return self.eval_stmts(&arm.body, locals);
+                    if let Some(bindings) = mir_pattern_bindings(&arm.pattern, &value)? {
+                        let saved = apply_bindings(locals, bindings);
+                        let result = self.eval_stmts(&arm.body, locals);
+                        restore_bindings(locals, saved);
+                        return result;
                     }
                 }
                 Err(runtime_error(
@@ -283,9 +301,17 @@ impl MirRuntime {
                     Control::Continue => Ok(Value::Unit),
                 }
             }
-            MirExpr::EnumVariant { enum_name, variant } => Ok(Value::Enum {
+            MirExpr::EnumVariant {
+                enum_name,
+                variant,
+                payload,
+            } => Ok(Value::Enum {
                 ty: enum_name.clone(),
                 variant: variant.clone(),
+                payload: payload
+                    .as_ref()
+                    .map(|payload| self.eval_expr(payload, locals).map(Box::new))
+                    .transpose()?,
             }),
             MirExpr::StructLiteral { ty, fields } => {
                 let mut values = BTreeMap::new();
@@ -300,10 +326,11 @@ impl MirRuntime {
             MirExpr::FieldAccess { base, field } => {
                 if let MirExpr::Load(enum_name) = base.as_ref() {
                     if let Some(variants) = self.enum_variants.get(enum_name) {
-                        if variants.iter().any(|variant| variant == field) {
+                        if variants.contains_key(field) {
                             return Ok(Value::Enum {
                                 ty: enum_name.clone(),
                                 variant: field.clone(),
+                                payload: None,
                             });
                         }
                         return Err(runtime_error(
@@ -368,14 +395,14 @@ impl MirRuntime {
 
 struct Runtime {
     functions: HashMap<String, Function>,
-    enum_variants: HashMap<String, Vec<String>>,
+    enum_variants: HashMap<String, HashMap<String, Option<String>>>,
     loop_steps: usize,
 }
 
 impl Runtime {
     fn from_parts(
         functions: HashMap<String, Function>,
-        enum_variants: HashMap<String, Vec<String>>,
+        enum_variants: HashMap<String, HashMap<String, Option<String>>>,
     ) -> Self {
         Self {
             functions,
@@ -467,8 +494,11 @@ impl Runtime {
             Stmt::Match { value, arms } => {
                 let value = self.eval_expr(value, locals)?;
                 for arm in arms {
-                    if pattern_matches(&arm.pattern, &value)? {
-                        return self.eval_stmts(&arm.body, locals);
+                    if let Some(bindings) = pattern_bindings(&arm.pattern, &value)? {
+                        let saved = apply_bindings(locals, bindings);
+                        let result = self.eval_stmts(&arm.body, locals);
+                        restore_bindings(locals, saved);
+                        return result;
                     }
                 }
                 Err(runtime_error(
@@ -510,6 +540,22 @@ impl Runtime {
                 eval_unary(*op, value)
             }
             Expr::Call { callee, args, .. } => {
+                if let Some((enum_name, variant)) = callee.rsplit_once('.') {
+                    if self
+                        .enum_variants
+                        .get(enum_name)
+                        .is_some_and(|variants| variants.contains_key(variant))
+                    {
+                        return Ok(Value::Enum {
+                            ty: enum_name.to_string(),
+                            variant: variant.to_string(),
+                            payload: args
+                                .first()
+                                .map(|arg| self.eval_expr(arg, locals).map(Box::new))
+                                .transpose()?,
+                        });
+                    }
+                }
                 let Some(function) = self.functions.get(callee).cloned() else {
                     return Err(runtime_error(
                         "RUNTIME_UNKNOWN_FUNCTION",
@@ -551,10 +597,11 @@ impl Runtime {
                 } = base.as_ref()
                 {
                     if let Some(variants) = self.enum_variants.get(enum_name) {
-                        if variants.iter().any(|variant| variant == field) {
+                        if variants.contains_key(field) {
                             return Ok(Value::Enum {
                                 ty: enum_name.clone(),
                                 variant: field.clone(),
+                                payload: None,
                             });
                         }
                         return Err(runtime_error(
@@ -687,15 +734,61 @@ fn expect_bool(value: Value, code: &'static str) -> Result<bool, Diagnostic> {
     Ok(value)
 }
 
-fn mir_pattern_matches(pattern: &MirPattern, value: &Value) -> Result<bool, Diagnostic> {
+type BindingSnapshot = Vec<(String, Option<Value>)>;
+
+fn apply_bindings(
+    locals: &mut HashMap<String, Value>,
+    bindings: HashMap<String, Value>,
+) -> BindingSnapshot {
+    bindings
+        .into_iter()
+        .map(|(name, value)| {
+            let old = locals.insert(name.clone(), value);
+            (name, old)
+        })
+        .collect()
+}
+
+fn restore_bindings(locals: &mut HashMap<String, Value>, saved: BindingSnapshot) {
+    for (name, old) in saved {
+        if let Some(old) = old {
+            locals.insert(name, old);
+        } else {
+            locals.remove(&name);
+        }
+    }
+}
+
+fn mir_pattern_bindings(
+    pattern: &MirPattern,
+    value: &Value,
+) -> Result<Option<HashMap<String, Value>>, Diagnostic> {
     match pattern {
-        MirPattern::Name(name) => Err(runtime_error(
-            "RUNTIME_UNSUPPORTED_PATTERN",
-            format!("name pattern `{name}` is not executable yet"),
-        )),
-        MirPattern::Variant { enum_name, variant } => Ok(
-            matches!(value, Value::Enum { ty, variant: value_variant } if ty == enum_name && value_variant == variant),
-        ),
+        MirPattern::Name(name) => Ok(Some(HashMap::from([(name.clone(), value.clone())]))),
+        MirPattern::Variant {
+            enum_name,
+            variant,
+            binding,
+        } => match value {
+            Value::Enum {
+                ty,
+                variant: value_variant,
+                payload,
+            } if ty == enum_name && value_variant == variant => {
+                let mut bindings = HashMap::new();
+                if let Some(binding) = binding {
+                    let Some(payload) = payload else {
+                        return Err(runtime_error(
+                            "RUNTIME_PATTERN_PAYLOAD",
+                            format!("variant `{enum_name}.{variant}` has no payload to bind"),
+                        ));
+                    };
+                    bindings.insert(binding.clone(), payload.as_ref().clone());
+                }
+                Ok(Some(bindings))
+            }
+            _ => Ok(None),
+        },
         MirPattern::Int(pattern) => {
             let parsed = pattern.parse::<i64>().map_err(|_| {
                 runtime_error(
@@ -703,25 +796,48 @@ fn mir_pattern_matches(pattern: &MirPattern, value: &Value) -> Result<bool, Diag
                     format!("invalid Int match pattern `{pattern}`"),
                 )
             })?;
-            Ok(matches!(value, Value::Int(value) if *value == parsed))
+            Ok(matches!(value, Value::Int(value) if *value == parsed).then(HashMap::new))
         }
         MirPattern::String(pattern) => {
-            Ok(matches!(value, Value::String(value) if value == pattern))
+            Ok(matches!(value, Value::String(value) if value == pattern).then(HashMap::new))
         }
-        MirPattern::Bool(pattern) => Ok(matches!(value, Value::Bool(value) if value == pattern)),
-        MirPattern::Wildcard => Ok(true),
+        MirPattern::Bool(pattern) => {
+            Ok(matches!(value, Value::Bool(value) if value == pattern).then(HashMap::new))
+        }
+        MirPattern::Wildcard => Ok(Some(HashMap::new())),
     }
 }
 
-fn pattern_matches(pattern: &Pattern, value: &Value) -> Result<bool, Diagnostic> {
+fn pattern_bindings(
+    pattern: &Pattern,
+    value: &Value,
+) -> Result<Option<HashMap<String, Value>>, Diagnostic> {
     match pattern {
-        Pattern::Name(name) => Err(runtime_error(
-            "RUNTIME_UNSUPPORTED_PATTERN",
-            format!("name pattern `{name}` is not executable yet"),
-        )),
-        Pattern::Variant { enum_name, variant } => Ok(
-            matches!(value, Value::Enum { ty, variant: value_variant } if ty == enum_name && value_variant == variant),
-        ),
+        Pattern::Name(name) => Ok(Some(HashMap::from([(name.clone(), value.clone())]))),
+        Pattern::Variant {
+            enum_name,
+            variant,
+            binding,
+        } => match value {
+            Value::Enum {
+                ty,
+                variant: value_variant,
+                payload,
+            } if ty == enum_name && value_variant == variant => {
+                let mut bindings = HashMap::new();
+                if let Some(binding) = binding {
+                    let Some(payload) = payload else {
+                        return Err(runtime_error(
+                            "RUNTIME_PATTERN_PAYLOAD",
+                            format!("variant `{enum_name}.{variant}` has no payload to bind"),
+                        ));
+                    };
+                    bindings.insert(binding.clone(), payload.as_ref().clone());
+                }
+                Ok(Some(bindings))
+            }
+            _ => Ok(None),
+        },
         Pattern::Int(pattern) => {
             let parsed = pattern.parse::<i64>().map_err(|_| {
                 runtime_error(
@@ -729,11 +845,15 @@ fn pattern_matches(pattern: &Pattern, value: &Value) -> Result<bool, Diagnostic>
                     format!("invalid Int match pattern `{pattern}`"),
                 )
             })?;
-            Ok(matches!(value, Value::Int(value) if *value == parsed))
+            Ok(matches!(value, Value::Int(value) if *value == parsed).then(HashMap::new))
         }
-        Pattern::String(pattern) => Ok(matches!(value, Value::String(value) if value == pattern)),
-        Pattern::Bool(pattern) => Ok(matches!(value, Value::Bool(value) if value == pattern)),
-        Pattern::Wildcard => Ok(true),
+        Pattern::String(pattern) => {
+            Ok(matches!(value, Value::String(value) if value == pattern).then(HashMap::new))
+        }
+        Pattern::Bool(pattern) => {
+            Ok(matches!(value, Value::Bool(value) if value == pattern).then(HashMap::new))
+        }
+        Pattern::Wildcard => Ok(Some(HashMap::new())),
     }
 }
 
@@ -755,7 +875,17 @@ impl fmt::Display for Value {
                     .join(", ");
                 write!(f, "{ty} {{ {fields} }}")
             }
-            Value::Enum { ty, variant } => write!(f, "{ty}.{variant}"),
+            Value::Enum {
+                ty,
+                variant,
+                payload,
+            } => {
+                if let Some(payload) = payload {
+                    write!(f, "{ty}.{variant}({payload})")
+                } else {
+                    write!(f, "{ty}.{variant}")
+                }
+            }
             Value::Unit => write!(f, "()"),
         }
     }

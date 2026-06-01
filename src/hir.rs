@@ -38,7 +38,11 @@ fn dump_item(item: &Item, indent: usize, out: &mut String) {
                 visibility(decl.exported)
             ));
             for variant in &decl.variants {
-                out.push_str(&format!("{pad}  variant {variant}\n"));
+                out.push_str(&format!("{pad}  variant {}", variant.name));
+                if let Some(payload_type) = &variant.payload_type {
+                    out.push_str(&format!(" payload={payload_type}"));
+                }
+                out.push('\n');
             }
         }
         Item::Function(function) => {
@@ -172,7 +176,17 @@ fn dump_expr(expr: &Expr, indent: usize, out: &mut String) {
 fn pattern_text(pattern: &Pattern) -> String {
     match pattern {
         Pattern::Name(name) => format!("name:{name}"),
-        Pattern::Variant { enum_name, variant } => format!("variant:{enum_name}.{variant}"),
+        Pattern::Variant {
+            enum_name,
+            variant,
+            binding,
+        } => {
+            if let Some(binding) = binding {
+                format!("variant:{enum_name}.{variant}({binding})")
+            } else {
+                format!("variant:{enum_name}.{variant}")
+            }
+        }
         Pattern::Int(value) => format!("int:{value}"),
         Pattern::String(value) => format!("string:{value:?}"),
         Pattern::Bool(value) => format!("bool:{value}"),

@@ -10,6 +10,7 @@ fn verifier_accepts_lowered_run_corpus() {
         include_str!("../testdata/run_mut.zeta"),
         include_str!("../testdata/run_struct.zeta"),
         include_str!("../testdata/run_enum.zeta"),
+        include_str!("../testdata/run_enum_payload.zeta"),
         include_str!("../testdata/run_match.zeta"),
     ] {
         let module = zeta::parse_source(source).expect("source should parse");

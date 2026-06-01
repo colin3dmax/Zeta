@@ -236,8 +236,12 @@ fn check_stmts(
             Stmt::Match { value, arms } => {
                 let value_type = infer_expr(value, locals, functions, structs, enums, diagnostics);
                 for arm in arms {
-                    check_pattern(&arm.pattern, &value_type, value.span(), enums, diagnostics);
                     let mut arm_locals = locals.clone();
+                    for (name, ty) in
+                        check_pattern(&arm.pattern, &value_type, value.span(), enums, diagnostics)
+                    {
+                        arm_locals.insert(name, Binding { ty, mutable: false });
+                    }
                     check_stmts(
                         &arm.body,
                         &mut arm_locals,
@@ -281,9 +285,13 @@ fn check_pattern(
     value_span: Span,
     enums: &HashMap<String, EnumType>,
     diagnostics: &mut Vec<Diagnostic>,
-) {
+) -> Vec<(String, Type)> {
     match pattern {
-        Pattern::Variant { enum_name, variant } => {
+        Pattern::Variant {
+            enum_name,
+            variant,
+            binding,
+        } => {
             expect_type(
                 value_type,
                 &Type::Named(enum_name.clone()),
@@ -292,12 +300,31 @@ fn check_pattern(
                 diagnostics,
             );
             match enums.get(enum_name) {
-                Some(enum_type) if enum_type.variants.iter().any(|known| known == variant) => {}
-                Some(_) => diagnostics.push(Diagnostic::new(
-                    "TYPE_UNKNOWN_VARIANT",
-                    format!("unknown variant `{variant}` on enum `{enum_name}`"),
-                    value_span,
-                )),
+                Some(enum_type) => match enum_type.variants.get(variant) {
+                    Some(payload_type) => match (payload_type, binding) {
+                        (Some(payload_type), Some(binding)) => {
+                            return vec![(binding.clone(), payload_type.clone())];
+                        }
+                        (Some(_), None) => diagnostics.push(Diagnostic::new(
+                            "TYPE_ENUM_PATTERN_ARITY",
+                            format!(
+                                "variant `{enum_name}.{variant}` carries a payload and must bind it"
+                            ),
+                            value_span,
+                        )),
+                        (None, Some(_)) => diagnostics.push(Diagnostic::new(
+                            "TYPE_ENUM_PATTERN_ARITY",
+                            format!("variant `{enum_name}.{variant}` does not carry a payload"),
+                            value_span,
+                        )),
+                        (None, None) => {}
+                    },
+                    None => diagnostics.push(Diagnostic::new(
+                        "TYPE_UNKNOWN_VARIANT",
+                        format!("unknown variant `{variant}` on enum `{enum_name}`"),
+                        value_span,
+                    )),
+                },
                 None => diagnostics.push(Diagnostic::new(
                     "TYPE_UNKNOWN_ENUM",
                     format!("unknown enum `{enum_name}`"),
@@ -326,8 +353,10 @@ fn check_pattern(
             value_span,
             diagnostics,
         ),
-        Pattern::Name(_) | Pattern::Wildcard => {}
+        Pattern::Name(name) => return vec![(name.clone(), value_type.clone())],
+        Pattern::Wildcard => {}
     }
+    Vec::new()
 }
 
 fn infer_expr(
@@ -436,6 +465,22 @@ fn infer_expr(
             args,
             ..
         } => {
+            if let Some((enum_name, variant)) = callee.rsplit_once('.') {
+                if let Some(enum_type) = enums.get(enum_name) {
+                    return infer_enum_variant_call(
+                        enum_name,
+                        variant,
+                        *callee_span,
+                        args,
+                        locals,
+                        functions,
+                        structs,
+                        enums,
+                        enum_type,
+                        diagnostics,
+                    );
+                }
+            }
             let Some(signature) = functions.get(callee) else {
                 return Type::Error;
             };
@@ -533,18 +578,26 @@ fn infer_expr(
             {
                 if !locals.contains_key(enum_name) {
                     match enums.get(enum_name) {
-                        Some(enum_type)
-                            if enum_type.variants.iter().any(|known| known == field) =>
-                        {
-                            return Type::Named(enum_name.clone());
-                        }
-                        Some(_) => {
-                            diagnostics.push(Diagnostic::new(
-                                "TYPE_UNKNOWN_VARIANT",
-                                format!("unknown variant `{field}` on enum `{enum_name}`"),
-                                *field_span,
-                            ));
-                            return Type::Named(enum_name.clone());
+                        Some(enum_type) => {
+                            if let Some(payload_type) = enum_type.variants.get(field) {
+                                if payload_type.is_some() {
+                                    diagnostics.push(Diagnostic::new(
+                                        "TYPE_ENUM_VARIANT_ARITY",
+                                        format!(
+                                            "variant `{enum_name}.{field}` carries a payload and must be called"
+                                        ),
+                                        *field_span,
+                                    ));
+                                }
+                                return Type::Named(enum_name.clone());
+                            } else {
+                                diagnostics.push(Diagnostic::new(
+                                    "TYPE_UNKNOWN_VARIANT",
+                                    format!("unknown variant `{field}` on enum `{enum_name}`"),
+                                    *field_span,
+                                ));
+                                return Type::Named(enum_name.clone());
+                            }
                         }
                         None => {}
                     }
@@ -579,6 +632,66 @@ fn infer_expr(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn infer_enum_variant_call(
+    enum_name: &str,
+    variant: &str,
+    callee_span: Span,
+    args: &[Expr],
+    locals: &HashMap<String, Binding>,
+    functions: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    enum_type: &EnumType,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Type {
+    match enum_type.variants.get(variant) {
+        Some(Some(payload_type)) => {
+            if args.len() != 1 {
+                diagnostics.push(Diagnostic::new(
+                    "TYPE_ENUM_VARIANT_ARITY",
+                    format!(
+                        "variant `{enum_name}.{variant}` expects 1 payload argument, found {}",
+                        args.len()
+                    ),
+                    callee_span,
+                ));
+            }
+            for arg in args {
+                let found = infer_expr(arg, locals, functions, structs, enums, diagnostics);
+                expect_type(
+                    &found,
+                    payload_type,
+                    "TYPE_ENUM_VARIANT_PAYLOAD",
+                    arg.span(),
+                    diagnostics,
+                );
+            }
+        }
+        Some(None) => {
+            if !args.is_empty() {
+                diagnostics.push(Diagnostic::new(
+                    "TYPE_ENUM_VARIANT_ARITY",
+                    format!(
+                        "variant `{enum_name}.{variant}` expects no payload arguments, found {}",
+                        args.len()
+                    ),
+                    callee_span,
+                ));
+            }
+            for arg in args {
+                let _ = infer_expr(arg, locals, functions, structs, enums, diagnostics);
+            }
+        }
+        None => diagnostics.push(Diagnostic::new(
+            "TYPE_UNKNOWN_VARIANT",
+            format!("unknown variant `{variant}` on enum `{enum_name}`"),
+            callee_span,
+        )),
+    }
+    Type::Named(enum_name.to_string())
+}
+
 #[derive(Debug, Clone)]
 struct FunctionSignature {
     params: Vec<Type>,
@@ -592,7 +705,7 @@ struct StructType {
 
 #[derive(Debug, Clone)]
 struct EnumType {
-    variants: Vec<String>,
+    variants: HashMap<String, Option<Type>>,
 }
 
 #[derive(Debug, Clone)]
@@ -654,7 +767,16 @@ fn enum_types(module: &Module) -> HashMap<String, EnumType> {
             Item::Enum(decl) => Some((
                 decl.name.clone(),
                 EnumType {
-                    variants: decl.variants.clone(),
+                    variants: decl
+                        .variants
+                        .iter()
+                        .map(|variant| {
+                            (
+                                variant.name.clone(),
+                                variant.payload_type.as_deref().map(parse_type),
+                            )
+                        })
+                        .collect(),
                 },
             )),
             _ => None,

@@ -1,4 +1,4 @@
-use crate::ast::{Expr, Function, Item, Module, Stmt};
+use crate::ast::{Expr, Function, Item, Module, Pattern, Stmt};
 use crate::diagnostic::{Diagnostic, Span};
 use crate::std_api;
 use std::collections::{HashMap, HashSet};
@@ -38,12 +38,14 @@ pub fn resolve_with_imports_functions_and_ambiguous(
     let mut functions = function_names(module);
     functions.extend(external_functions.iter().cloned());
     let top_level_names = top_level_names(module);
+    let enum_variants = enum_variants(module);
     for item in &module.items {
         if let Item::Function(function) = item {
             check_function(
                 function,
                 &functions,
                 &top_level_names,
+                &enum_variants,
                 ambiguous_external_functions,
                 &mut diagnostics,
             );
@@ -108,6 +110,7 @@ fn check_function(
     function: &Function,
     functions: &HashSet<String>,
     top_level_names: &HashSet<String>,
+    enum_variants: &HashMap<String, HashSet<String>>,
     ambiguous_external_functions: &HashSet<String>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -132,6 +135,7 @@ fn check_function(
         &mut locals,
         functions,
         top_level_names,
+        enum_variants,
         ambiguous_external_functions,
         &function.name,
         diagnostics,
@@ -143,6 +147,7 @@ fn check_stmts(
     locals: &mut HashMap<String, Binding>,
     functions: &HashSet<String>,
     top_level_names: &HashSet<String>,
+    enum_variants: &HashMap<String, HashSet<String>>,
     ambiguous_external_functions: &HashSet<String>,
     function_name: &str,
     diagnostics: &mut Vec<Diagnostic>,
@@ -161,6 +166,7 @@ fn check_stmts(
                     locals,
                     functions,
                     top_level_names,
+                    enum_variants,
                     ambiguous_external_functions,
                     function_name,
                     diagnostics,
@@ -186,6 +192,7 @@ fn check_stmts(
                     locals,
                     functions,
                     top_level_names,
+                    enum_variants,
                     ambiguous_external_functions,
                     function_name,
                     diagnostics,
@@ -217,6 +224,7 @@ fn check_stmts(
                     locals,
                     functions,
                     top_level_names,
+                    enum_variants,
                     ambiguous_external_functions,
                     function_name,
                     diagnostics,
@@ -227,6 +235,7 @@ fn check_stmts(
                     &mut then_locals,
                     functions,
                     top_level_names,
+                    enum_variants,
                     ambiguous_external_functions,
                     function_name,
                     diagnostics,
@@ -237,6 +246,7 @@ fn check_stmts(
                     &mut else_locals,
                     functions,
                     top_level_names,
+                    enum_variants,
                     ambiguous_external_functions,
                     function_name,
                     diagnostics,
@@ -248,6 +258,7 @@ fn check_stmts(
                     locals,
                     functions,
                     top_level_names,
+                    enum_variants,
                     ambiguous_external_functions,
                     function_name,
                     diagnostics,
@@ -258,6 +269,7 @@ fn check_stmts(
                     &mut loop_locals,
                     functions,
                     top_level_names,
+                    enum_variants,
                     ambiguous_external_functions,
                     function_name,
                     diagnostics,
@@ -269,17 +281,20 @@ fn check_stmts(
                     locals,
                     functions,
                     top_level_names,
+                    enum_variants,
                     ambiguous_external_functions,
                     function_name,
                     diagnostics,
                 );
                 for arm in arms {
                     let mut arm_locals = locals.clone();
+                    add_pattern_bindings(&arm.pattern, &mut arm_locals);
                     check_stmts(
                         &arm.body,
                         &mut arm_locals,
                         functions,
                         top_level_names,
+                        enum_variants,
                         ambiguous_external_functions,
                         function_name,
                         diagnostics,
@@ -292,6 +307,7 @@ fn check_stmts(
                     locals,
                     functions,
                     top_level_names,
+                    enum_variants,
                     ambiguous_external_functions,
                     function_name,
                     diagnostics,
@@ -307,6 +323,7 @@ fn check_expr(
     locals: &HashMap<String, Binding>,
     functions: &HashSet<String>,
     top_level_names: &HashSet<String>,
+    enum_variants: &HashMap<String, HashSet<String>>,
     ambiguous_external_functions: &HashSet<String>,
     function_name: &str,
     diagnostics: &mut Vec<Diagnostic>,
@@ -327,6 +344,7 @@ fn check_expr(
                 locals,
                 functions,
                 top_level_names,
+                enum_variants,
                 ambiguous_external_functions,
                 function_name,
                 diagnostics,
@@ -336,6 +354,7 @@ fn check_expr(
                 locals,
                 functions,
                 top_level_names,
+                enum_variants,
                 ambiguous_external_functions,
                 function_name,
                 diagnostics,
@@ -347,6 +366,7 @@ fn check_expr(
                 locals,
                 functions,
                 top_level_names,
+                enum_variants,
                 ambiguous_external_functions,
                 function_name,
                 diagnostics,
@@ -358,7 +378,7 @@ fn check_expr(
             args,
             ..
         } => {
-            if !functions.contains(callee) {
+            if !functions.contains(callee) && !is_enum_variant_call(callee, enum_variants) {
                 if ambiguous_external_functions.contains(callee) {
                     diagnostics.push(Diagnostic::new(
                         "RESOLVE_AMBIGUOUS_FUNCTION",
@@ -381,6 +401,7 @@ fn check_expr(
                     locals,
                     functions,
                     top_level_names,
+                    enum_variants,
                     ambiguous_external_functions,
                     function_name,
                     diagnostics,
@@ -394,6 +415,7 @@ fn check_expr(
                     locals,
                     functions,
                     top_level_names,
+                    enum_variants,
                     ambiguous_external_functions,
                     function_name,
                     diagnostics,
@@ -406,6 +428,7 @@ fn check_expr(
                 locals,
                 functions,
                 top_level_names,
+                enum_variants,
                 ambiguous_external_functions,
                 function_name,
                 diagnostics,
@@ -420,12 +443,57 @@ struct Binding {
     mutable: bool,
 }
 
+fn add_pattern_bindings(pattern: &Pattern, locals: &mut HashMap<String, Binding>) {
+    match pattern {
+        Pattern::Name(name) => {
+            locals.insert(name.clone(), Binding { mutable: false });
+        }
+        Pattern::Variant {
+            binding: Some(binding),
+            ..
+        } => {
+            locals.insert(binding.clone(), Binding { mutable: false });
+        }
+        Pattern::Variant { binding: None, .. }
+        | Pattern::Int(_)
+        | Pattern::String(_)
+        | Pattern::Bool(_)
+        | Pattern::Wildcard => {}
+    }
+}
+
+fn is_enum_variant_call(callee: &str, enum_variants: &HashMap<String, HashSet<String>>) -> bool {
+    let Some((enum_name, variant)) = callee.rsplit_once('.') else {
+        return false;
+    };
+    enum_variants
+        .get(enum_name)
+        .is_some_and(|variants| variants.contains(variant))
+}
+
 fn function_names(module: &Module) -> HashSet<String> {
     module
         .items
         .iter()
         .filter_map(|item| match item {
             Item::Function(function) => Some(function.name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn enum_variants(module: &Module) -> HashMap<String, HashSet<String>> {
+    module
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Enum(decl) => Some((
+                decl.name.clone(),
+                decl.variants
+                    .iter()
+                    .map(|variant| variant.name.clone())
+                    .collect(),
+            )),
             _ => None,
         })
         .collect()

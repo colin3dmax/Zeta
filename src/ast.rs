@@ -42,7 +42,14 @@ pub struct EnumDecl {
     pub exported: bool,
     pub name: String,
     pub name_span: Span,
-    pub variants: Vec<String>,
+    pub variants: Vec<EnumVariant>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnumVariant {
+    pub name: String,
+    pub name_span: Span,
+    pub payload_type: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,7 +116,11 @@ pub struct StructExprField {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pattern {
     Name(String),
-    Variant { enum_name: String, variant: String },
+    Variant {
+        enum_name: String,
+        variant: String,
+        binding: Option<String>,
+    },
     Int(String),
     String(String),
     Bool(bool),
@@ -231,7 +242,11 @@ impl Item {
                     decl.name, decl.exported
                 ));
                 for variant in &decl.variants {
-                    out.push_str(&format!("{pad}  Variant name={variant}\n"));
+                    out.push_str(&format!("{pad}  Variant name={}", variant.name));
+                    if let Some(payload_type) = &variant.payload_type {
+                        out.push_str(&format!(" payload={payload_type}"));
+                    }
+                    out.push('\n');
                 }
             }
             Item::Function(function) => {
@@ -339,7 +354,17 @@ impl Pattern {
     fn dump(&self) -> String {
         match self {
             Pattern::Name(name) => format!("name:{name}"),
-            Pattern::Variant { enum_name, variant } => format!("variant:{enum_name}.{variant}"),
+            Pattern::Variant {
+                enum_name,
+                variant,
+                binding,
+            } => {
+                if let Some(binding) = binding {
+                    format!("variant:{enum_name}.{variant}({binding})")
+                } else {
+                    format!("variant:{enum_name}.{variant}")
+                }
+            }
             Pattern::Int(value) => format!("int:{value}"),
             Pattern::String(value) => format!("string:{value:?}"),
             Pattern::Bool(value) => format!("bool:{value}"),

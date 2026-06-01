@@ -144,6 +144,45 @@ fn main() -> Int {
 }
 
 #[test]
+fn check_rejects_enum_payload_type_mismatch() {
+    let source = r#"
+enum OptionInt {
+  Some(Int),
+  None,
+}
+
+fn main() -> Int {
+  let value: OptionInt = OptionInt.Some("not int");
+  return 0;
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("payload mismatch should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_ENUM_VARIANT_PAYLOAD");
+    assert_eq!(diagnostics[0].span, span_of(source, "\"not int\""));
+}
+
+#[test]
+fn check_rejects_enum_payload_pattern_without_binding() {
+    let source = r#"
+enum OptionInt {
+  Some(Int),
+  None,
+}
+
+fn main() -> Int {
+  let value: OptionInt = OptionInt.Some(42);
+  match value {
+    OptionInt.Some -> { return 1; },
+    OptionInt.None -> { return 0; },
+  }
+  return 0;
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("missing binding should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_ENUM_PATTERN_ARITY");
+}
+
+#[test]
 fn cli_check_renders_line_column_and_source_snippet() {
     let source = r#"
 fn main() {

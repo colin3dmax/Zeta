@@ -11,7 +11,13 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MirEnum {
     pub name: String,
-    pub variants: Vec<String>,
+    pub variants: Vec<MirEnumVariant>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirEnumVariant {
+    pub name: String,
+    pub payload_type: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,7 +66,11 @@ pub struct MirMatchArm {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MirPattern {
     Name(String),
-    Variant { enum_name: String, variant: String },
+    Variant {
+        enum_name: String,
+        variant: String,
+        binding: Option<String>,
+    },
     Int(String),
     String(String),
     Bool(bool),
@@ -89,6 +99,7 @@ pub enum MirExpr {
     EnumVariant {
         enum_name: String,
         variant: String,
+        payload: Option<Box<MirExpr>>,
     },
     StructLiteral {
         ty: String,
@@ -115,7 +126,14 @@ pub fn lower(module: &Module) -> Program {
             .filter_map(|item| match item {
                 Item::Enum(decl) => Some(MirEnum {
                     name: decl.name.clone(),
-                    variants: decl.variants.clone(),
+                    variants: decl
+                        .variants
+                        .iter()
+                        .map(|variant| MirEnumVariant {
+                            name: variant.name.clone(),
+                            payload_type: variant.payload_type.clone(),
+                        })
+                        .collect(),
                 }),
                 _ => None,
             })
@@ -141,7 +159,15 @@ pub fn dump_program(program: &Program) -> String {
         out.push_str(&format!(
             "  enum {} variants={}\n",
             enum_decl.name,
-            enum_decl.variants.join(",")
+            enum_decl
+                .variants
+                .iter()
+                .map(|variant| match &variant.payload_type {
+                    Some(payload_type) => format!("{}({payload_type})", variant.name),
+                    None => variant.name.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join(",")
         ));
     }
     for function in &program.functions {
@@ -162,7 +188,7 @@ pub fn verify(program: &Program) -> Result<(), Vec<Diagnostic>> {
 
 fn lower_function(
     function: &Function,
-    enum_variants: &HashMap<String, Vec<String>>,
+    enum_variants: &HashMap<String, HashMap<String, Option<String>>>,
 ) -> MirFunction {
     MirFunction {
         name: function.name.clone(),
@@ -176,7 +202,10 @@ fn lower_function(
     }
 }
 
-fn lower_stmt(stmt: &Stmt, enum_variants: &HashMap<String, Vec<String>>) -> MirStmt {
+fn lower_stmt(
+    stmt: &Stmt,
+    enum_variants: &HashMap<String, HashMap<String, Option<String>>>,
+) -> MirStmt {
     match stmt {
         Stmt::Let {
             mutable,
@@ -240,9 +269,14 @@ fn lower_stmt(stmt: &Stmt, enum_variants: &HashMap<String, Vec<String>>) -> MirS
 fn lower_pattern(pattern: &Pattern) -> MirPattern {
     match pattern {
         Pattern::Name(name) => MirPattern::Name(name.clone()),
-        Pattern::Variant { enum_name, variant } => MirPattern::Variant {
+        Pattern::Variant {
+            enum_name,
+            variant,
+            binding,
+        } => MirPattern::Variant {
             enum_name: enum_name.clone(),
             variant: variant.clone(),
+            binding: binding.clone(),
         },
         Pattern::Int(value) => MirPattern::Int(value.clone()),
         Pattern::String(value) => MirPattern::String(value.clone()),
@@ -251,7 +285,10 @@ fn lower_pattern(pattern: &Pattern) -> MirPattern {
     }
 }
 
-fn lower_expr(expr: &Expr, enum_variants: &HashMap<String, Vec<String>>) -> MirExpr {
+fn lower_expr(
+    expr: &Expr,
+    enum_variants: &HashMap<String, HashMap<String, Option<String>>>,
+) -> MirExpr {
     match expr {
         Expr::Name { name, .. } => MirExpr::Load(name.clone()),
         Expr::Int { value, .. } => MirExpr::Int(value.clone()),
@@ -268,13 +305,29 @@ fn lower_expr(expr: &Expr, enum_variants: &HashMap<String, Vec<String>>) -> MirE
             op: *op,
             expr: Box::new(lower_expr(expr, enum_variants)),
         },
-        Expr::Call { callee, args, .. } => MirExpr::Call {
-            callee: callee.clone(),
-            args: args
-                .iter()
-                .map(|arg| lower_expr(arg, enum_variants))
-                .collect(),
-        },
+        Expr::Call { callee, args, .. } => {
+            if let Some((enum_name, variant)) = callee.rsplit_once('.') {
+                if enum_variants
+                    .get(enum_name)
+                    .is_some_and(|variants| variants.contains_key(variant))
+                {
+                    return MirExpr::EnumVariant {
+                        enum_name: enum_name.to_string(),
+                        variant: variant.to_string(),
+                        payload: args
+                            .first()
+                            .map(|arg| Box::new(lower_expr(arg, enum_variants))),
+                    };
+                }
+            }
+            MirExpr::Call {
+                callee: callee.clone(),
+                args: args
+                    .iter()
+                    .map(|arg| lower_expr(arg, enum_variants))
+                    .collect(),
+            }
+        }
         Expr::StructLiteral { ty, fields, .. } => MirExpr::StructLiteral {
             ty: ty.clone(),
             fields: fields
@@ -292,11 +345,12 @@ fn lower_expr(expr: &Expr, enum_variants: &HashMap<String, Vec<String>>) -> MirE
             {
                 if enum_variants
                     .get(enum_name)
-                    .is_some_and(|variants| variants.iter().any(|variant| variant == field))
+                    .is_some_and(|variants| variants.contains_key(field))
                 {
                     return MirExpr::EnumVariant {
                         enum_name: enum_name.clone(),
                         variant: field.clone(),
+                        payload: None,
                     };
                 }
             }
@@ -308,12 +362,18 @@ fn lower_expr(expr: &Expr, enum_variants: &HashMap<String, Vec<String>>) -> MirE
     }
 }
 
-fn enum_variants(module: &Module) -> HashMap<String, Vec<String>> {
+fn enum_variants(module: &Module) -> HashMap<String, HashMap<String, Option<String>>> {
     module
         .items
         .iter()
         .filter_map(|item| match item {
-            Item::Enum(decl) => Some((decl.name.clone(), decl.variants.clone())),
+            Item::Enum(decl) => Some((
+                decl.name.clone(),
+                decl.variants
+                    .iter()
+                    .map(|variant| (variant.name.clone(), variant.payload_type.clone()))
+                    .collect(),
+            )),
             _ => None,
         })
         .collect()
@@ -467,9 +527,22 @@ impl DumpCtx {
                 ));
                 temp
             }
-            MirExpr::EnumVariant { enum_name, variant } => {
+            MirExpr::EnumVariant {
+                enum_name,
+                variant,
+                payload,
+            } => {
+                let payload_temp = payload
+                    .as_ref()
+                    .map(|payload| self.dump_expr(payload, indent, out));
                 let temp = self.temp();
-                out.push_str(&format!("{pad}{temp} = enum {enum_name}.{variant}\n"));
+                if let Some(payload_temp) = payload_temp {
+                    out.push_str(&format!(
+                        "{pad}{temp} = enum {enum_name}.{variant}({payload_temp})\n"
+                    ));
+                } else {
+                    out.push_str(&format!("{pad}{temp} = enum {enum_name}.{variant}\n"));
+                }
                 temp
             }
             MirExpr::StructLiteral { ty, fields } => {
@@ -504,7 +577,17 @@ impl DumpCtx {
 fn pattern_text(pattern: &MirPattern) -> String {
     match pattern {
         MirPattern::Name(name) => format!("name:{name}"),
-        MirPattern::Variant { enum_name, variant } => format!("variant:{enum_name}.{variant}"),
+        MirPattern::Variant {
+            enum_name,
+            variant,
+            binding,
+        } => {
+            if let Some(binding) = binding {
+                format!("variant:{enum_name}.{variant}({binding})")
+            } else {
+                format!("variant:{enum_name}.{variant}")
+            }
+        }
         MirPattern::Int(value) => format!("int:{value}"),
         MirPattern::String(value) => format!("string:{value:?}"),
         MirPattern::Bool(value) => format!("bool:{value}"),
@@ -563,7 +646,7 @@ impl MirType {
 struct MirVerifier<'a> {
     program: &'a Program,
     functions: HashMap<&'a str, &'a MirFunction>,
-    enums: HashMap<&'a str, HashSet<&'a str>>,
+    enums: HashMap<&'a str, HashMap<&'a str, Option<&'a str>>>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -585,8 +668,8 @@ impl<'a> MirVerifier<'a> {
                         enum_decl
                             .variants
                             .iter()
-                            .map(String::as_str)
-                            .collect::<HashSet<_>>(),
+                            .map(|variant| (variant.name.as_str(), variant.payload_type.as_deref()))
+                            .collect(),
                     )
                 })
                 .collect(),
@@ -730,11 +813,18 @@ impl<'a> MirVerifier<'a> {
                 let mut all_arms_return = !arms.is_empty();
                 let mut has_wildcard = false;
                 for arm in arms {
-                    self.verify_pattern(&arm.pattern, &value_ty);
                     if matches!(arm.pattern, MirPattern::Wildcard) {
                         has_wildcard = true;
                     }
                     let mut arm_locals = locals.clone();
+                    for (name, ty) in self.verify_pattern(&arm.pattern, &value_ty) {
+                        if arm_locals.insert(name.clone(), ty).is_some() {
+                            self.error(
+                                "MIR_DUPLICATE_LOCAL",
+                                format!("duplicate MIR match binding `{name}`"),
+                            );
+                        }
+                    }
                     all_arms_return &=
                         self.verify_stmts(&arm.body, &mut arm_locals, expected_return);
                 }
@@ -793,8 +883,38 @@ impl<'a> MirVerifier<'a> {
                 }
             },
             MirExpr::Call { callee, args } => self.verify_call(callee, args, locals),
-            MirExpr::EnumVariant { enum_name, variant } => {
-                self.verify_enum_variant(enum_name, variant);
+            MirExpr::EnumVariant {
+                enum_name,
+                variant,
+                payload,
+            } => {
+                let payload_type = self.verify_enum_variant(enum_name, variant);
+                match (payload_type, payload) {
+                    (Some(expected), Some(payload)) => {
+                        let payload_ty = self.verify_expr(payload, locals);
+                        self.expect_type(
+                            &payload_ty,
+                            &MirType::named(&expected),
+                            "MIR_ENUM_PAYLOAD_TYPE",
+                            format!(
+                                "variant `{enum_name}.{variant}` expects payload `{expected}`, found `{}`",
+                                payload_ty.display()
+                            ),
+                        );
+                    }
+                    (Some(_), None) => self.error(
+                        "MIR_ENUM_PAYLOAD_ARITY",
+                        format!("variant `{enum_name}.{variant}` requires a payload"),
+                    ),
+                    (None, Some(payload)) => {
+                        self.verify_expr(payload, locals);
+                        self.error(
+                            "MIR_ENUM_PAYLOAD_ARITY",
+                            format!("variant `{enum_name}.{variant}` does not accept a payload"),
+                        );
+                    }
+                    (None, None) => {}
+                }
                 MirType::named(enum_name.clone())
             }
             MirExpr::StructLiteral { ty, fields } => {
@@ -906,11 +1026,20 @@ impl<'a> MirVerifier<'a> {
             .unwrap_or(MirType::Unit)
     }
 
-    fn verify_pattern(&mut self, pattern: &MirPattern, value_ty: &MirType) {
+    fn verify_pattern(
+        &mut self,
+        pattern: &MirPattern,
+        value_ty: &MirType,
+    ) -> Vec<(String, MirType)> {
         match pattern {
-            MirPattern::Name(_) | MirPattern::Wildcard => {}
-            MirPattern::Variant { enum_name, variant } => {
-                self.verify_enum_variant(enum_name, variant);
+            MirPattern::Name(name) => return vec![(name.clone(), value_ty.clone())],
+            MirPattern::Wildcard => {}
+            MirPattern::Variant {
+                enum_name,
+                variant,
+                binding,
+            } => {
+                let payload_type = self.verify_enum_variant(enum_name, variant);
                 self.expect_type(
                     &MirType::named(enum_name.clone()),
                     value_ty,
@@ -920,6 +1049,20 @@ impl<'a> MirVerifier<'a> {
                         value_ty.display()
                     ),
                 );
+                match (payload_type, binding) {
+                    (Some(payload_type), Some(binding)) => {
+                        return vec![(binding.clone(), MirType::named(payload_type))];
+                    }
+                    (Some(_), None) => self.error(
+                        "MIR_ENUM_PATTERN_ARITY",
+                        format!("variant `{enum_name}.{variant}` requires a payload binding"),
+                    ),
+                    (None, Some(_)) => self.error(
+                        "MIR_ENUM_PATTERN_ARITY",
+                        format!("variant `{enum_name}.{variant}` does not carry a payload"),
+                    ),
+                    (None, None) => {}
+                }
             }
             MirPattern::Int(_) => {
                 self.expect_named(value_ty, "Int", "MIR_MATCH_PATTERN", "match pattern")
@@ -931,21 +1074,26 @@ impl<'a> MirVerifier<'a> {
                 self.expect_named(value_ty, "Bool", "MIR_MATCH_PATTERN", "match pattern")
             }
         }
+        Vec::new()
     }
 
-    fn verify_enum_variant(&mut self, enum_name: &str, variant: &str) {
+    fn verify_enum_variant(&mut self, enum_name: &str, variant: &str) -> Option<String> {
         let Some(variants) = self.enums.get(enum_name) else {
             self.error(
                 "MIR_UNKNOWN_ENUM",
                 format!("enum `{enum_name}` is not defined"),
             );
-            return;
+            return None;
         };
-        if !variants.contains(variant) {
-            self.error(
-                "MIR_UNKNOWN_VARIANT",
-                format!("enum `{enum_name}` has no variant `{variant}`"),
-            );
+        match variants.get(variant) {
+            Some(payload_type) => payload_type.map(str::to_string),
+            None => {
+                self.error(
+                    "MIR_UNKNOWN_VARIANT",
+                    format!("enum `{enum_name}` has no variant `{variant}`"),
+                );
+                None
+            }
         }
     }
 

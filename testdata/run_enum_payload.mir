@@ -1,0 +1,41 @@
+MirModule
+  enum OptionInt variants=Some(Int),None
+  enum ResultInt variants=Ok(Int),Err(String)
+  fn unwrap_or_zero -> Int
+    param value: OptionInt
+    block entry
+      _t0 = load value
+      match _t0
+        arm variant:OptionInt.Some(answer)
+          _t1 = load answer
+          return _t1
+        arm variant:OptionInt.None
+          _t2 = const Int 0
+          return _t2
+      end_match
+      _t3 = const Int 0
+      return _t3
+  fn main -> Int
+    block entry
+      local first: OptionInt mutability=immutable
+      _t0 = const Int 40
+      _t1 = enum OptionInt.Some(_t0)
+      store first, _t1
+      local second: ResultInt mutability=immutable
+      _t2 = const Int 2
+      _t3 = enum ResultInt.Ok(_t2)
+      store second, _t3
+      _t4 = load second
+      match _t4
+        arm variant:ResultInt.Ok(delta)
+          _t5 = load first
+          _t6 = call unwrap_or_zero(_t5)
+          _t7 = load delta
+          _t8 = binary add _t6, _t7
+          return _t8
+        arm variant:ResultInt.Err(message)
+          _t9 = const Int 0
+          return _t9
+      end_match
+      _t10 = const Int 0
+      return _t10

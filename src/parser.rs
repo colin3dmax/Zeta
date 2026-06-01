@@ -1,6 +1,6 @@
 use crate::ast::{
-    BinaryOp, EnumDecl, Expr, Field, Function, Item, MatchArm, Module, Param, Pattern, Stmt,
-    StructDecl, StructExprField, UnaryOp,
+    BinaryOp, EnumDecl, EnumVariant, Expr, Field, Function, Item, MatchArm, Module, Param, Pattern,
+    Stmt, StructDecl, StructExprField, UnaryOp,
 };
 use crate::diagnostic::{Diagnostic, Span};
 use crate::lexer::{Keyword, Symbol, Token, TokenKind};
@@ -114,7 +114,20 @@ impl Parser {
         self.expect_symbol(Symbol::LBrace, "expected `{` after enum name")?;
         let mut variants = Vec::new();
         while !self.check_symbol(Symbol::RBrace) && !self.at_eof() {
-            variants.push(self.expect_ident("expected enum variant name")?);
+            let (variant_name, variant_span) =
+                self.expect_ident_span("expected enum variant name")?;
+            let payload_type = if self.consume_symbol(Symbol::LParen).is_some() {
+                let ty = self.expect_ident("expected enum variant payload type")?;
+                self.expect_symbol(Symbol::RParen, "expected `)` after enum variant payload")?;
+                Some(ty)
+            } else {
+                None
+            };
+            variants.push(EnumVariant {
+                name: variant_name,
+                name_span: variant_span,
+                payload_type,
+            });
             if self.consume_symbol(Symbol::Comma).is_none() {
                 break;
             }
@@ -299,9 +312,17 @@ impl Parser {
                 self.pos += 1;
                 if self.consume_symbol(Symbol::Dot).is_some() {
                     let variant = self.expect_ident("expected enum variant name after `.`")?;
+                    let binding = if self.consume_symbol(Symbol::LParen).is_some() {
+                        let binding = self.expect_ident("expected variant payload binding")?;
+                        self.expect_symbol(Symbol::RParen, "expected `)` after variant pattern")?;
+                        Some(binding)
+                    } else {
+                        None
+                    };
                     return Ok(Pattern::Variant {
                         enum_name: name,
                         variant,
+                        binding,
                     });
                 }
                 Ok(Pattern::Name(name))

@@ -48,3 +48,11 @@ fn dumps_run_enum_mir() {
     let dump = zeta::dump_mir(source).expect("source should lower to MIR");
     assert_eq!(dump, expected);
 }
+
+#[test]
+fn dumps_run_enum_payload_mir() {
+    let source = include_str!("../testdata/run_enum_payload.zeta");
+    let expected = include_str!("../testdata/run_enum_payload.mir");
+    let dump = zeta::dump_mir(source).expect("source should lower to MIR");
+    assert_eq!(dump, expected);
+}

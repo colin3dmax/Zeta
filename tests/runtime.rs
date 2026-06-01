@@ -62,6 +62,13 @@ fn run_executes_enum_variant_match() {
 }
 
 #[test]
+fn run_executes_enum_payload_match_binding() {
+    let value = zeta::run_source(include_str!("../testdata/run_enum_payload.zeta"))
+        .expect("program should run");
+    assert_eq!(value.to_string(), "42");
+}
+
+#[test]
 fn mir_interpreter_executes_lowered_program() {
     let source = include_str!("../testdata/run_mut.zeta");
     let module = zeta::parse_source(source).expect("source should parse");
