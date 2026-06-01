@@ -115,7 +115,7 @@ import demo.more;
 fn main() -&gt; Int {
   return answer(); // RESOLVE_AMBIGUOUS_FUNCTION
 }</code></pre>
-    <p><a class="button secondary" href="../../?example=overview#playground" target="feature-playground">在本页测试模块示例</a></p>
+    <p><a class="button secondary" href="#online-testing" data-zeta-example="overview">在本页测试模块示例</a></p>
 
     <h2 id="scalars-expressions">标量与表达式</h2>
     <p>当前标量类型包括 <code>Int</code>、<code>String</code> 和 <code>Bool</code>。整数算术支持 <code>+ - * /</code>，乘除优先级高于加减。</p>
@@ -130,7 +130,7 @@ fn main() -&gt; Int {
     <pre><code>fn main() -&gt; Bool {
   return true &amp;&amp; !false;
 }</code></pre>
-    <p><a class="button secondary" href="../../?example=bool#playground" target="feature-playground">在本页测试布尔逻辑</a></p>
+    <p><a class="button secondary" href="#online-testing" data-zeta-example="bool">在本页测试布尔逻辑</a></p>
 
     <h2 id="bindings">let、let mut 和赋值</h2>
     <p>Zeta 默认局部绑定不可变。需要后续赋值时，必须在声明处写 <code>let mut</code>。给不可变绑定赋值会被 resolver/typecheck 拒绝。</p>
@@ -139,7 +139,7 @@ fn main() -&gt; Int {
   answer = answer + 2;
   return answer;
 }</code></pre>
-    <p><a class="button secondary" href="../../?example=bindings#playground" target="feature-playground">在本页测试绑定和赋值</a></p>
+    <p><a class="button secondary" href="#online-testing" data-zeta-example="bindings">在本页测试绑定和赋值</a></p>
 
     <h2 id="functions">函数、参数和 return</h2>
     <p><code>fn</code> 声明函数，参数和返回值使用显式类型。<code>run</code> 当前执行无参数 <code>main</code>。函数调用会检查参数数量和参数类型。</p>
@@ -150,7 +150,7 @@ fn main() -&gt; Int {
 fn main() -&gt; Int {
   return add(40, 2);
 }</code></pre>
-    <p><a class="button secondary" href="../../?example=functions#playground" target="feature-playground">在本页测试函数调用</a></p>
+    <p><a class="button secondary" href="#online-testing" data-zeta-example="functions">在本页测试函数调用</a></p>
 
     <h2 id="control-flow">if/else 和 while</h2>
     <p><code>if</code> 和 <code>while</code> 的条件必须是 <code>Bool</code>。比较表达式和布尔逻辑可以直接作为条件。</p>
@@ -164,7 +164,7 @@ fn main() -&gt; Int {
   }
   return 0;
 }</code></pre>
-    <p><a class="button secondary" href="../../?example=control#playground" target="feature-playground">在本页测试控制流</a></p>
+    <p><a class="button secondary" href="#online-testing" data-zeta-example="control">在本页测试控制流</a></p>
 
     <h2 id="data-declarations">struct、enum 和 match</h2>
     <p><code>struct</code> 当前支持结构体字面量和字段访问，适合先表达稳定记录数据。<code>enum</code> 当前支持限定变体值，例如 <code>ResultTag.Ok</code>。<code>match</code> 可以对 <code>Int</code>、<code>String</code>、<code>Bool</code>、枚举变体和 <code>_</code> 通配模式执行分支。</p>
@@ -210,10 +210,10 @@ fn main() -&gt; Int {
   }
   return 0;
 }</code></pre>
-    <p><a class="button secondary" href="../../?example=struct#playground" target="feature-playground">在本页运行 struct 示例</a></p>
-    <p><a class="button secondary" href="../../?example=match#playground" target="feature-playground">在本页运行 match 示例</a></p>
-    <p><a class="button secondary" href="../../?example=enum#playground" target="feature-playground">在本页运行 enum 示例</a></p>
-    <p><a class="button secondary" href="../../?example=data#playground" target="feature-playground">在本页查看数据声明 AST</a></p>
+    <p><a class="button secondary" href="#online-testing" data-zeta-example="struct">在本页运行 struct 示例</a></p>
+    <p><a class="button secondary" href="#online-testing" data-zeta-example="match">在本页运行 match 示例</a></p>
+    <p><a class="button secondary" href="#online-testing" data-zeta-example="enum">在本页运行 enum 示例</a></p>
+    <p><a class="button secondary" href="#online-testing" data-zeta-example="data">在本页查看数据声明 AST</a></p>
 
     <h2 id="tooling">CLI、REPL 和编辑器</h2>
     <p>CLI 提供 <code>ast-dump</code>、<code>hir-dump</code>、<code>mir-dump</code>、<code>check</code>、<code>run</code> 和 <code>repl</code>。REPL 支持表达式执行、语句执行、文档查询、补全和输入着色。</p>
@@ -223,8 +223,9 @@ zeta run testdata/run_enum.zeta
 zeta repl</code></pre>
 
     <h2 id="online-testing">在线测试</h2>
-    <p>下面的嵌入区域复用官网真实 WASM Playground。Playground 底部提供“语言特性在线测试”，每个已实现特性都有对应用例，可以一键运行全部测试，也可以点击单项把用例载入编辑区。</p>
-    <iframe id="feature-playground" name="feature-playground" class="embedded-playground" src="../../?example=overview#playground" title="Zeta Playground"></iframe>
+    <p>下面直接挂载官网真实 WASM Playground 组件。Playground 底部提供“语言特性在线测试”，每个已实现特性都有对应用例，可以一键运行全部测试，也可以点击单项把用例载入编辑区。</p>
+    <zeta-playground example="overview"></zeta-playground>
+    <script type="module" src="/assets/playground-component.js"></script>
     </article>
   </main>
 </body>

@@ -29,10 +29,13 @@ try {
 
 const baseUrl = process.env.ZETA_LIVE_URL || "https://zeta.jennieapp.com/";
 const publicDocs = [
+  { path: "docs/index.html", title: "Zeta 编程语言", layout: "shell" },
   { path: "docs/user/getting-started.html", title: "Zeta 用户快速开始", layout: "shell" },
   { path: "docs/project/decision-record.html", title: "Zeta 构建决策记录", layout: "legacy" },
   { path: "docs/project/language-design-process.html", title: "Zeta 语言设计过程", layout: "legacy" },
-  { path: "docs/project/stage-roadmap.html", title: "Zeta 阶段路线图", layout: "legacy" },
+  { path: "docs/project/stage-roadmap.html", title: "Zeta 阶段路线图", layout: "shell" },
+  { path: "docs/tutorial/index.html", title: "Zeta 在线教程", layout: "shell" },
+  { path: "docs/compiler/bootstrap.html", title: "Zeta 编译器与自举路线", layout: "shell" },
   { path: "docs/user/language-features.html", title: "Zeta 语言特性学习", layout: "shell" },
   { path: "docs/user/install.html", title: "Zeta 本地安装", layout: "shell" },
   { path: "docs/user/downloads.html", title: "Zeta 下载", layout: "shell" },
@@ -50,6 +53,19 @@ const publicDocs = [
   page.on("pageerror", (err) => consoleErrors.push(err.message));
 
   await page.goto(new URL("?example=functions#playground", baseUrl).toString(), { waitUntil: "networkidle" });
+  const homeLayout = await page.evaluate(() => {
+    const topbar = document.querySelector(".home-topbar");
+    const shell = document.querySelector(".home-main");
+    const sidebar = document.querySelector(".home-sidebar");
+    const content = document.querySelector(".home-content");
+    if (!topbar || !shell || !sidebar || !content) return null;
+    return {
+      topbarPosition: getComputedStyle(topbar).position,
+      shellDisplay: getComputedStyle(shell).display,
+      sidebarPosition: getComputedStyle(sidebar).position,
+      contentBorder: getComputedStyle(content).borderTopWidth,
+    };
+  });
   const loadedExample = await page.locator(".source-pane textarea").inputValue();
 
   await page.locator('a[href="#repl"]').click();
@@ -61,8 +77,9 @@ const publicDocs = [
   await replInput.press("Enter");
   await page.waitForFunction(() => document.body.innerText.includes("true"));
 
-  await page.getByRole("link", { name: "Playground", exact: true }).click();
+  await page.locator(".home-topnav").getByRole("link", { name: "Playground", exact: true }).click();
   await page.locator(".toolbar.examples").getByRole("button", { name: "控制流", exact: true }).click();
+  const activeControlExample = await page.locator(".toolbar.examples").getByRole("button", { name: "控制流", exact: true }).getAttribute("aria-pressed");
   const previewText = await page.locator(".editor-highlight").innerText();
   const escapedPreviewText = await page.locator(".editor-highlight").evaluate((node) => node.textContent || "");
   const letKeywordCount = await page.locator(".editor-highlight .tok-keyword").filter({ hasText: /^let$/ }).count();
@@ -78,6 +95,7 @@ const publicDocs = [
   });
 
   await page.locator(".toolbar.examples").getByRole("button", { name: "布尔逻辑", exact: true }).click();
+  const activeBoolExample = await page.locator(".toolbar.examples").getByRole("button", { name: "布尔逻辑", exact: true }).getAttribute("aria-pressed");
   await page.locator(".playground-output .toolbar.compact").getByRole("button", { name: "AST", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".output")?.innerText.includes("Unary op=not"));
   await page.locator(".toolbar.examples").getByRole("button", { name: "Match", exact: true }).click();
@@ -150,13 +168,16 @@ const publicDocs = [
     const sidebarOk = layout !== "shell" || sidebarExternalLinks.length === 0;
     const embeddedPlaygroundOk = path.endsWith("language-features.html")
       ? await page.evaluate(() => {
-          const frame = document.querySelector("#feature-playground");
-          const targets = Array.from(document.querySelectorAll('a.button[href*="example="]'))
-            .map((node) => node.getAttribute("target"));
-          if (!frame || targets.length === 0) return false;
-          return frame.getAttribute("name") === "feature-playground"
-            && frame.clientHeight >= 720
-            && targets.every((target) => target === "feature-playground");
+          const component = document.querySelector("zeta-playground");
+          const frame = document.querySelector("iframe");
+          const targets = Array.from(document.querySelectorAll("[data-zeta-example]"))
+            .map((node) => node.getAttribute("data-zeta-example"));
+          const hasEditor = Boolean(document.querySelector("zeta-playground .playground-panel textarea"));
+          return Boolean(component)
+            && !frame
+            && hasEditor
+            && targets.includes("bool")
+            && targets.includes("struct");
         })
       : true;
     docChecks.push({
@@ -177,8 +198,14 @@ const publicDocs = [
   const result = {
     ok:
       consoleErrors.length === 0 &&
+      homeLayout?.topbarPosition === "sticky" &&
+      homeLayout?.shellDisplay === "grid" &&
+      homeLayout?.sidebarPosition === "sticky" &&
+      homeLayout?.contentBorder === "1px" &&
       Boolean(wasmName) &&
       loadedExample.includes("fn add") &&
+      activeControlExample === "true" &&
+      activeBoolExample === "true" &&
       operatorCount > 0 &&
       boolCount > 0 &&
       previewText.includes("while count < 3") &&
@@ -192,7 +219,10 @@ const publicDocs = [
       docChecks.every((doc) => doc.ok),
     url: baseUrl,
     wasm: wasmName,
+    homeLayout,
     loadedExample: loadedExample.includes("fn add"),
+    activeControlExample,
+    activeBoolExample,
     replOperatorTokens: operatorCount,
     replBoolTokens: boolCount,
     previewHasRawLessThan: previewText.includes("while count < 3"),

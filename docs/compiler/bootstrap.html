@@ -4,15 +4,41 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Zeta 编译器与自举路线</title>
-  <link rel="stylesheet" href="../shared.css">
+  <link rel="stylesheet" href="../shared.css?v=20260601-doc-layout">
 </head>
 <body>
-  <main>
-    <nav class="doc-nav" aria-label="文档导航">
+  <header class="doc-topbar">
+    <a class="doc-brand" href="../index.html">Zeta Docs</a>
+    <nav class="doc-topnav" aria-label="模块导航">
       <a href="../../">官网首页</a>
       <a href="../index.html">文档中心</a>
-      <a href="../user/getting-started.html">快速开始</a>
+      <a href="../user/getting-started.html">用户指南</a>
+      <a href="../tutorial/index.html">在线教程</a>
+      <a href="../project/stage-roadmap.html">路线图</a>
+      <a href="bootstrap.html" aria-current="page">编译器</a>
+      <a href="../../#playground">Playground</a>
     </nav>
+  </header>
+  <main class="doc-shell">
+    <aside class="doc-sidebar" aria-label="文章列表">
+      <p class="doc-sidebar-title">Compiler</p>
+      <section class="doc-sidebar-section">
+        <h2>本文目录</h2>
+        <a href="#principles" aria-current="page">自举原则</a>
+        <a href="#host-stack">宿主技术栈</a>
+        <a href="#backend-order">早期后端顺序</a>
+        <a href="#exit-conditions">决策退出条件</a>
+        <a href="#goals">路线目标与非目标</a>
+        <a href="#self-hosting-subset">Self-hosting MVP</a>
+        <a href="#stages">阶段定义</a>
+        <a href="#pipeline">编译器管线</a>
+        <a href="#quality-gates">质量闸门</a>
+        <a href="#corpus">最小 Corpus</a>
+        <a href="#golden">Golden 测试格式</a>
+        <a href="#risks">主要风险</a>
+      </section>
+    </aside>
+    <article class="doc-content">
     <h1>Zeta 编译器与自举路线</h1>
     <p><strong>状态：</strong>accepted</p>
     <p><strong>更新时间：</strong>2026-05-29</p>
@@ -20,10 +46,10 @@
     <p><strong>验收标准：</strong>Stage 0 能运行 MVP corpus；parser、typechecker、HIR、MIR、backend 和 bootstrap 均有明确质量闸门。</p>
     <p>术语说明见 <a href="glossary.html">编译器术语解释</a>。如果你不熟悉 AST、HIR、MIR、backend 或 self-hosting，建议先读术语页再看本路线。</p>
 
-    <h2>自举原则</h2>
+    <h2 id="principles">自举原则</h2>
     <p>自编译是最终目标，但第一版编译器必须使用成熟宿主语言实现。Stage 0 主体采用 Rust，以降低早期调试、包管理、测试和 golden corpus 维护成本。</p>
 
-    <h2>宿主技术栈决策</h2>
+    <h2 id="host-stack">宿主技术栈决策</h2>
     <p>Stage 0 冻结决策：编译器主体使用 Rust；Zig 不进入当前必需依赖。该决策只覆盖 bootstrap 阶段，不否定后续在平台 glue、allocator/panic adapter 或 cross-linker 中按需引入 Zig。</p>
     <table>
       <thead>
@@ -57,7 +83,7 @@
       </tbody>
     </table>
 
-    <h2>早期后端顺序</h2>
+    <h2 id="backend-order">早期后端顺序</h2>
     <p>早期语义验证按可调试性优先排序，不把 LLVM 作为唯一真相源。所有 backend 必须通过同一 corpus，行为差异必须先在 MIR 层解释清楚。这里的 MIR 可以理解成“比源码更简单、更接近执行步骤的中间指令”。</p>
     <ol>
       <li><strong>MIR interpreter：</strong>直接读取并执行 MIR 指令，作为第一语义基线，服务 golden tests、REPL/run 原型和错误定位。</li>
@@ -66,14 +92,14 @@
       <li><strong>WASM Component backend：</strong>在 tool/plugin/capability sandbox 需求稳定后接入，不阻塞 Stage 0。</li>
     </ol>
 
-    <h2>决策退出条件</h2>
+    <h2 id="exit-conditions">决策退出条件</h2>
     <ul>
       <li>如果 Rust 工具链无法稳定覆盖目标平台 smoke、WASM 产物、CI 或诊断/golden 流程，必须重新评估宿主语言。</li>
       <li>如果出现 Android/iOS native glue、C ABI、allocator、panic 或 cross-linker 需求，且 Rust 实现会显著扩大维护成本，可以开启 Zig adapter 评估任务。</li>
       <li>如果 LLVM native smoke 与 MIR interpreter 对同一 corpus 行为不一致，以 MIR 语义和规范文档为裁决依据，不能让 backend 反向定义语言语义。</li>
     </ul>
 
-    <h2>路线目标与非目标</h2>
+    <h2 id="goals">路线目标与非目标</h2>
     <ul>
       <li><strong>目标：</strong>建立可验证、可复现、可逐步替换宿主实现的 self-hosting 路线。</li>
       <li><strong>目标：</strong>让 Stage 0 成为规范执行器、测试基准和冷启动 seed，而不是一次性脚手架。</li>
@@ -82,7 +108,7 @@
       <li><strong>非目标：</strong>自举路径不纳入 async、宏、复杂泛型、完整 borrow checker 和完整 AI agent 语法。</li>
     </ul>
 
-    <h2>Self-hosting MVP 子集</h2>
+    <h2 id="self-hosting-subset">Self-hosting MVP 子集</h2>
     <p>语言、工具链、runtime 和 AI 能力的统一取舍以 <a href="../project/mvp-baseline.html">Zeta MVP Baseline 与冻结边界</a> 为准；本节只展开自举路径所需的编译器子集。</p>
     <table>
       <thead>
@@ -121,7 +147,7 @@
       </tbody>
     </table>
 
-    <h2>阶段定义</h2>
+    <h2 id="stages">阶段定义</h2>
     <table>
       <thead>
         <tr>
@@ -159,7 +185,7 @@
       </tbody>
     </table>
 
-    <h2>编译器管线</h2>
+    <h2 id="pipeline">编译器管线</h2>
     <p>Parser、AST、span、错误恢复和 AST golden dump 的第一版冻结规则见 <a href="parser-ast-span.html">Parser / AST / Span 第一版规格</a>。</p>
     <pre><code>Zeta Source
   -> Lexer / Parser
@@ -170,7 +196,7 @@
   -> Backend Interface
   -> LLVM Native / WASM Component / Interpreter</code></pre>
 
-    <h2>质量闸门</h2>
+    <h2 id="quality-gates">质量闸门</h2>
     <table>
       <thead>
         <tr>
@@ -213,7 +239,7 @@
       </tbody>
     </table>
 
-    <h2>最小 Compiler Corpus</h2>
+    <h2 id="corpus">最小 Compiler Corpus</h2>
     <p>Compiler corpus 是 Stage 0 的回归边界。每个样例必须有稳定输入、预期输出或预期诊断；新增语言特性必须先补 corpus，再进入 parser、typechecker、MIR 或 backend 实现。</p>
     <table>
       <thead>
@@ -264,7 +290,7 @@
       </tbody>
     </table>
 
-    <h2>Golden 测试格式</h2>
+    <h2 id="golden">Golden 测试格式</h2>
     <ul>
       <li>输入文件放入 <code>testdata/</code> 或后续 <code>corpus/</code>，按 <code>valid</code>、<code>invalid</code>、<code>ir</code>、<code>run</code> 分组。</li>
       <li>AST/HIR/MIR golden 使用纯文本，禁止包含内存地址、hash map 原始遍历顺序、系统路径或本地时间。</li>
@@ -273,7 +299,7 @@
       <li>CI 至少执行 parser golden、resolver/typecheck 诊断 golden、run smoke 和 docs link check；backend 不稳定时只能降级为非阻断 nightly，不得伪装为通过。</li>
     </ul>
 
-    <h2>主要风险</h2>
+    <h2 id="risks">主要风险</h2>
     <ul>
       <li>MVP 子集过大，会让自举路线被 async、宏、复杂泛型和 borrow checker 拖慢。</li>
       <li>HIR/MIR 边界不清，会导致 backend 反向依赖 AST，后期难以替换。</li>
@@ -282,6 +308,7 @@
       <li>Stage 0 没有规格约束，会变成事实标准，Zeta 实现很难追齐。</li>
       <li>过早展开多 target，会稀释 self-hosting 主线。</li>
     </ul>
+    </article>
   </main>
 </body>
 </html>

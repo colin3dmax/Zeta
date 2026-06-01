@@ -68,6 +68,140 @@ textarea {
   min-height: 100vh;
 }
 
+.home-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-height: 64px;
+  padding: 0 clamp(18px, 4vw, 44px);
+  border-bottom: 1px solid #d7d7d7;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(14px);
+}
+
+.home-brand {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  color: #111;
+  font-size: 18px;
+  font-weight: 950;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.home-brand::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border: 2px solid #111;
+  background: #fff;
+  box-shadow: 3px 3px 0 #111;
+}
+
+.home-brand small {
+  color: #555;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.home-topnav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  margin-left: auto;
+  padding: 10px 0;
+}
+
+.home-topnav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #111;
+  font-size: 14px;
+  font-weight: 850;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.home-topnav a:hover,
+.home-topnav a.current {
+  border-color: #111;
+  background: #111;
+  color: #fff;
+}
+
+.home-main {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: clamp(22px, 4vw, 44px);
+  width: min(1360px, calc(100% - 32px));
+  margin: 28px auto 64px;
+  padding: 0;
+}
+
+.home-sidebar {
+  position: sticky;
+  top: 84px;
+  align-self: start;
+  max-height: calc(100vh - 104px);
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid #d7d7d7;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.home-sidebar-title {
+  margin: 0 0 14px;
+  color: #555;
+  font-size: 12px;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.home-sidebar nav {
+  display: grid;
+  gap: 2px;
+}
+
+.home-sidebar a {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 6px;
+  color: #555;
+  font-size: 14px;
+  font-weight: 750;
+  line-height: 1.25;
+  text-decoration: none;
+}
+
+.home-sidebar a:hover,
+.home-sidebar a.current {
+  background: #111;
+  color: #fff;
+}
+
+.home-content {
+  min-width: 0;
+  padding: 34px clamp(22px, 4vw, 54px) 56px;
+  border: 1px solid #d7d7d7;
+  border-radius: 8px;
+  background: #fff;
+}
+
 .sidebar {
   position: sticky;
   top: 0;
@@ -121,6 +255,11 @@ nav a.current {
 main {
   width: min(1120px, 100%);
   padding: 56px clamp(20px, 5vw, 72px) 80px;
+}
+
+.component-embed-main {
+  width: 100%;
+  padding: 0;
 }
 
 section {

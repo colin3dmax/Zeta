@@ -4,28 +4,46 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Zeta 阶段路线图</title>
-  <link rel="stylesheet" href="../shared.css">
+  <link rel="stylesheet" href="../shared.css?v=20260601-doc-layout">
 </head>
 <body>
-  <main>
-    <nav class="doc-nav" aria-label="文档导航">
+  <header class="doc-topbar">
+    <a class="doc-brand" href="../index.html">Zeta Docs</a>
+    <nav class="doc-topnav" aria-label="模块导航">
       <a href="../../">官网首页</a>
       <a href="../index.html">文档中心</a>
-      <a href="../user/getting-started.html">快速开始</a>
+      <a href="../user/getting-started.html">用户指南</a>
+      <a href="../tutorial/index.html">在线教程</a>
+      <a href="stage-roadmap.html" aria-current="page">路线图</a>
+      <a href="../compiler/bootstrap.html">编译器</a>
+      <a href="../../#playground">Playground</a>
     </nav>
+  </header>
+  <main class="doc-shell">
+    <aside class="doc-sidebar" aria-label="文章列表">
+      <p class="doc-sidebar-title">Roadmap</p>
+      <section class="doc-sidebar-section">
+        <h2>本文目录</h2>
+        <a href="#overview" aria-current="page">路线概览</a>
+        <a href="#stages">阶段总览</a>
+        <a href="#priorities">近期优先级</a>
+        <a href="#acceptance">每阶段共同验收</a>
+      </section>
+    </aside>
+    <article class="doc-content">
     <h1>Zeta 阶段路线图</h1>
     <p><strong>状态：</strong>accepted</p>
     <p><strong>更新时间：</strong>2026-05-30</p>
     <p><strong>适用范围：</strong>Zeta 从当前 Stage 0 到 Stage 3 self-hosting 的阶段目标、交付物和验收标准。</p>
     <p><strong>验收标准：</strong>读者可以看到每一阶段要做什么、为什么做、何时进入下一阶段。</p>
 
-    <section class="hero">
+    <section id="overview" class="hero">
       <p class="eyebrow">Roadmap</p>
       <h2>每个阶段都有可运行产物，而不是只交付设计口号。</h2>
       <p>Zeta 的路线按“语言核心 -> MIR 语义 -> 数据建模 -> 模块工程 -> backend smoke -> 自举前端”推进。每一阶段都必须能用测试、dump、官网或线上 smoke 验收。</p>
     </section>
 
-    <h2>阶段总览</h2>
+    <h2 id="stages">阶段总览</h2>
     <table>
       <thead>
         <tr>
@@ -81,7 +99,7 @@
       </tbody>
     </table>
 
-    <h2>近期优先级</h2>
+    <h2 id="priorities">近期优先级</h2>
     <ol>
       <li><strong>结构体值语义：</strong>结构体字面量、字段访问、字段类型检查、HIR/MIR dump 和 interpreter。</li>
       <li><strong>枚举与 match 执行：</strong>枚举变体值、简单模式匹配、MIR lower 和 runtime 行为。</li>
@@ -92,7 +110,7 @@
       <li><strong>WASM/WASI smoke：</strong>让同一 corpus 在解释器和 WASI 执行路径上输出一致。</li>
     </ol>
 
-    <h2>每阶段共同验收</h2>
+    <h2 id="acceptance">每阶段共同验收</h2>
     <ul>
       <li><code>tools/verify.sh</code> 必须通过。</li>
       <li>新增语言能力必须同步用户文档、教程、REPL、VS Code 和官网 Playground。</li>
@@ -101,6 +119,7 @@
       <li>官网发布后必须记录 wasm hash 和线上 smoke 结果。</li>
       <li>DevGame 任务必须记录决策、测试、提交和发布证据。</li>
     </ul>
+    </article>
   </main>
 </body>
 </html>

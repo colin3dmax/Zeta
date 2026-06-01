@@ -1,6 +1,7 @@
 <script>
   import { onMount } from "svelte";
   import { runZeta } from "./wasm-playground.js";
+  import PlaygroundSection from "./PlaygroundSection.svelte";
 
   const keywords = new Set(["module", "import", "as", "export", "fn", "let", "mut", "return", "if", "else", "while", "match", "struct", "enum"]);
   const types = new Set(["Int", "String", "Bool"]);
@@ -250,6 +251,8 @@ export fn answer() -> Int {
   let replCompletionOpen = false;
   let replCompletionPrefix = "";
   let replInputEl;
+  let embedMode = false;
+  let initialPlaygroundExample = "overview";
   $: playgroundModeHint = hasVirtualFiles(source)
     ? "当前源码包含多个 // file: 文件块：检查和运行会自动使用模块图，跨文件 import/export 可以一起解析。"
     : "当前源码按单文件执行：检查只验证当前文件，运行执行当前文件里的无参数 main。";
@@ -482,6 +485,8 @@ export fn answer() -> Int {
   onMount(() => {
     const params = new URLSearchParams(location.search);
     const example = params.get("example");
+    embedMode = params.get("embed") === "playground";
+    initialPlaygroundExample = example || "overview";
     if (example) {
       loadPlaygroundExample(example);
     }
@@ -497,20 +502,36 @@ export fn answer() -> Int {
   <title>Zeta 编程语言</title>
 </svelte:head>
 
-<div class="shell">
-  <aside class="sidebar" aria-label="文档导航">
-    <a class="brand" href="#overview" on:click={() => (active = "overview")}>
-      <span>Zeta</span>
-      <small>Programming Language</small>
-    </a>
+{#if embedMode}
+  <main class="component-embed-main">
+    <PlaygroundSection initialExample={initialPlaygroundExample} embedded={true} />
+  </main>
+{:else}
+<header class="home-topbar">
+  <a class="home-brand" href="#overview" on:click={() => (active = "overview")}>
+    <span>Zeta</span>
+    <small>Programming Language</small>
+  </a>
+  <nav class="home-topnav" aria-label="站点导航">
+    <a class:current={active === "overview"} href="#overview" on:click={() => (active = "overview")}>官网首页</a>
+    <a href="/docs/index.html">文档中心</a>
+    <a href="/docs/user/getting-started.html">用户指南</a>
+    <a class:current={active === "tutorial"} href="#tutorial" on:click={() => (active = "tutorial")}>在线教程</a>
+    <a class:current={active === "roadmap"} href="#roadmap" on:click={() => (active = "roadmap")}>路线图</a>
+    <a class:current={active === "design"} href="#design" on:click={() => (active = "design")}>编译器</a>
+    <a class:current={active === "playground"} href="#playground" on:click={() => (active = "playground")}>Playground</a>
+  </nav>
+</header>
+<main class="home-main">
+  <aside class="home-sidebar" aria-label="页面目录">
+    <p class="home-sidebar-title">Zeta</p>
     <nav>
       {#each navItems as item}
         <a class:current={active === item.id} href={`#${item.id}`} on:click={() => (active = item.id)}>{item.label}</a>
       {/each}
     </nav>
   </aside>
-
-  <main>
+  <article class="home-content">
     <section id="overview" class="hero">
       <p class="kicker">Draft · 2026-05-28</p>
       <h1>低门槛，高上限，小内核，高性能。</h1>
@@ -651,107 +672,7 @@ python3 tools/check-vscode-extension.py</code></pre>
       </div>
     </section>
 
-    <section id="playground">
-      <p class="kicker">Online Playground</p>
-      <h2>在线使用</h2>
-      <div class="toolbar examples">
-        <button type="button" on:click={() => loadPlaygroundExample("overview")}>综合示例</button>
-        <button type="button" on:click={() => loadPlaygroundExample("bindings")}>绑定/赋值</button>
-        <button type="button" on:click={() => loadPlaygroundExample("control")}>控制流</button>
-        <button type="button" on:click={() => loadPlaygroundExample("functions")}>函数调用</button>
-        <button type="button" on:click={() => loadPlaygroundExample("bool")}>布尔逻辑</button>
-        <button type="button" on:click={() => loadPlaygroundExample("struct")}>Struct</button>
-        <button type="button" on:click={() => loadPlaygroundExample("enum")}>Enum</button>
-        <button type="button" on:click={() => loadPlaygroundExample("match")}>Match</button>
-        <button type="button" on:click={() => loadPlaygroundExample("data")}>数据声明</button>
-        <button type="button" on:click={() => loadPlaygroundExample("modules")}>模块图</button>
-        <button type="button" on:click={() => loadPlaygroundExample("modulesQualified")}>限定调用</button>
-        <button type="button" on:click={() => loadPlaygroundExample("modulesAlias")}>别名调用</button>
-        <button type="button" on:click={() => loadPlaygroundExample("modulesAmbiguous")}>冲突诊断</button>
-      </div>
-      <div class="tool-window playground-panel">
-        <div class="window-chrome light">
-          <div class="window-controls" aria-hidden="true">
-            <span></span><span></span><span></span>
-          </div>
-          <span class="window-title">Zeta Playground</span>
-          <small class="window-status">source · output · wasm</small>
-        </div>
-        <div class="playground">
-          <div class="pane source-pane">
-            <div class="pane-head">
-              <span>Source</span>
-              <small>main.zeta</small>
-            </div>
-            <div class="code-editor">
-              <pre
-                class="code-highlight editor-highlight"
-                aria-hidden="true"
-                style={`transform: translate(${-sourceScrollLeft}px, ${-sourceScrollTop}px);`}
-              ><code>{@html highlightCode(source)}</code></pre>
-              <textarea
-                bind:value={source}
-                on:scroll={syncSourceScroll}
-                on:input={showSourceCompletion}
-                on:keydown={onSourceKeydown}
-                spellcheck="false"
-                aria-label="Zeta source input"
-              ></textarea>
-              {#if sourceCompletionOpen && sourceSuggestions.length}
-                <div class="completion-panel editor-completion">
-                  {#each sourceSuggestions as item}
-                    <button type="button" on:click={(event) => applyTextareaCompletion(event.currentTarget.closest(".code-editor").querySelector("textarea"), sourceCompletionPrefix, item)}>{item}</button>
-                  {/each}
-                </div>
-              {/if}
-            </div>
-          </div>
-          <div class="pane playground-output">
-            <div class="pane-head">
-              <span>Output</span>
-              <div class="toolbar compact">
-                <button title="解析当前源码并输出 AST 结构" disabled={runningMode !== ""} on:click={() => runPlayground("ast")}>AST</button>
-                <button title="检查单文件；多文件源码会自动切换为模块图检查" disabled={runningMode !== ""} on:click={() => runPlayground("check")}>检查</button>
-                <button title="强制按多个 // file: 文件块建立模块图并检查 import/export" disabled={runningMode !== ""} on:click={() => runPlayground("check-module-graph")}>检查多文件</button>
-                <button title="强制按模块图执行多文件程序" disabled={runningMode !== ""} on:click={() => runPlayground("run-module-graph")}>运行多文件</button>
-                <button title="运行单文件 main；多文件源码会自动切换为模块图运行" disabled={runningMode !== ""} on:click={() => runPlayground("run")}>运行</button>
-              </div>
-            </div>
-            <div class="mode-guide">{playgroundModeHint}</div>
-            <pre class="output"><code>{output}</code></pre>
-          </div>
-        </div>
-        <div class="window-statusbar light">
-          <span>wasm frontend</span>
-          <span>{runningMode || "idle"}</span>
-          <span>AST · 检查 · 运行</span>
-        </div>
-      </div>
-      <p class="note">Playground 直接加载 Zeta 编译器前端编译出的 <code>zeta.wasm</code>，AST、检查和运行都执行当前仓库里的真实 Stage 0 编译器逻辑。</p>
-      <div class="feature-tests">
-        <div class="feature-tests-head">
-          <div>
-            <p class="kicker">Feature Tests</p>
-            <h3>语言特性在线测试</h3>
-          </div>
-          <button type="button" disabled={featureTestRunning} on:click={runFeatureTests}>{featureTestRunning ? "Running" : "Run All"}</button>
-        </div>
-        <p class="note">{featureTestOutput}</p>
-        <div class="feature-test-grid">
-          {#each featureTests as test}
-            <button type="button" class="feature-test-card" on:click={() => loadFeatureTest(test)}>
-              <span>{test.name}</span>
-              <small>{test.mode} · {test.expected ?? test.expectedIncludes}</small>
-              {#if featureTestResults.find((result) => result.name === test.name)}
-                <strong class:pass={featureTestResults.find((result) => result.name === test.name)?.passed}>
-                  {featureTestResults.find((result) => result.name === test.name)?.passed ? "pass" : "fail"}
-                </strong>
-              {/if}
-            </button>
-          {/each}
-        </div>
-      </div>
-    </section>
+    <PlaygroundSection initialExample={initialPlaygroundExample} />
 
     <section id="tutorial">
       <p class="kicker">Tutorial</p>
@@ -825,5 +746,6 @@ python3 tools/check-vscode-extension.py</code></pre>
       </div>
       <p class="note"><a href="/docs/project/stage-roadmap.html">查看完整阶段路线图</a></p>
     </section>
-  </main>
-</div>
+  </article>
+</main>
+{/if}

@@ -126,6 +126,8 @@ def check_html_links(path):
         clean = urldefrag(link)[0]
         if not clean or is_external(clean):
             continue
+        if clean.startswith("/assets/"):
+            continue
         parsed = urlparse(clean)
         target_path = parsed.path or "."
         target = (path.parent / target_path).resolve()
