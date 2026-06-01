@@ -1,0 +1,6 @@
+import demo.alpha;
+import demo.beta;
+
+fn main() -> Int {
+  return answer();
+}

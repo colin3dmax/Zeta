@@ -1,0 +1,5 @@
+module demo.beta;
+
+export fn answer() -> Int {
+  return 2;
+}

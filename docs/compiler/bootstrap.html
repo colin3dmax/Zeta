@@ -187,8 +187,8 @@
         </tr>
         <tr>
           <td>Name Resolution / Typechecker</td>
-          <td>name resolution 与 typecheck 分层；支持局部作用域、跨模块符号、函数签名、struct/enum 字段、基础类型推断。</td>
-          <td>backend 直接依赖未检查 AST，或诊断缺少 span 和错误码。</td>
+          <td>name resolution 与 typecheck 分层；支持局部作用域、跨模块符号、函数签名、struct/enum 字段、基础类型推断；关键 CLI 诊断进入 <code>testdata/diagnostics</code> golden corpus。</td>
+          <td>backend 直接依赖未检查 AST，或诊断缺少 span、错误码和稳定 CLI golden。</td>
         </tr>
         <tr>
           <td>HIR</td>

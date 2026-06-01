@@ -1,0 +1,4 @@
+TYPE_LET_MISMATCH at testdata/diagnostics/type_mismatch.zeta:2:20: expected Int, found String
+  |
+ 2 |   let value: Int = "not int";
+  |                    ^^^^^^^^^

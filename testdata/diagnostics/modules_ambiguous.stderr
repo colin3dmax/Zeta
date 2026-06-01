@@ -1,0 +1,4 @@
+RESOLVE_AMBIGUOUS_FUNCTION at testdata/diagnostics/modules_ambiguous/main.zeta:5:10: ambiguous imported function `answer` in function `main`; use a qualified call or import alias
+  |
+ 5 |   return answer();
+  |          ^^^^^^

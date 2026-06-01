@@ -1,0 +1,4 @@
+RESOLVE_UNKNOWN_NAME at testdata/diagnostics/unknown_name.zeta:2:10: unknown name `missing` in function `main`
+  |
+ 2 |   return missing;
+  |          ^^^^^^^

@@ -88,6 +88,7 @@
       <li><strong>Option / Result 最小模型：</strong>显式错误路径和自举编译器所需的基础代数数据类型。</li>
       <li><strong>MIR verifier：</strong>已接入最小检查，覆盖 local 引用、调用参数、条件类型、return 类型、enum variant 和非 Unit 函数返回路径；下一步扩展完整 CFG 和初始化路径。</li>
       <li><strong>跨模块解析：</strong>目录级最小 <code>module/import</code> 图、跨文件 <code>export fn</code> 调用、多文件 <code>run</code> corpus、<code>demo.math.answer()</code> 限定调用、<code>import demo.math as math;</code> 别名调用和短名冲突诊断已进入；下一步补 re-export 和更完整的符号 mangling。</li>
+      <li><strong>诊断 golden corpus：</strong>CLI 用户可见诊断需要进入 <code>testdata/diagnostics</code>，覆盖单文件和目录级 module graph 错误，避免后续 resolver/typecheck/verifier 扩展造成输出漂移。</li>
       <li><strong>WASM/WASI smoke：</strong>让同一 corpus 在解释器和 WASI 执行路径上输出一致。</li>
     </ol>
 
@@ -96,6 +97,7 @@
       <li><code>tools/verify.sh</code> 必须通过。</li>
       <li>新增语言能力必须同步用户文档、教程、REPL、VS Code 和官网 Playground。</li>
       <li>新增可运行语义必须有 run corpus 或 golden dump。</li>
+      <li>新增用户可见诊断必须有诊断 code/span 单元测试；关键 CLI 诊断还需要有 <code>.stderr</code> golden。</li>
       <li>官网发布后必须记录 wasm hash 和线上 smoke 结果。</li>
       <li>DevGame 任务必须记录决策、测试、提交和发布证据。</li>
     </ul>

@@ -9,6 +9,7 @@ enum Type {
     Bool,
     Named(String),
     Unit,
+    Error,
 }
 
 pub fn check(module: &Module) -> Result<(), Vec<Diagnostic>> {
@@ -341,7 +342,7 @@ fn infer_expr(
         Expr::Name { name, .. } => locals
             .get(name)
             .map(|binding| binding.ty.clone())
-            .unwrap_or(Type::Named(name.clone())),
+            .unwrap_or(Type::Error),
         Expr::Int { .. } => Type::Int,
         Expr::String { .. } => Type::String,
         Expr::Bool { .. } => Type::Bool,
@@ -436,7 +437,7 @@ fn infer_expr(
             ..
         } => {
             let Some(signature) = functions.get(callee) else {
-                return Type::Named(callee.clone());
+                return Type::Error;
             };
             if args.len() != signature.params.len() {
                 diagnostics.push(Diagnostic::new(
@@ -680,6 +681,9 @@ fn expect_type(
     if found == expected {
         return;
     }
+    if matches!(found, Type::Error) || matches!(expected, Type::Error) {
+        return;
+    }
     diagnostics.push(Diagnostic::new(
         code,
         format!("expected {}, found {}", expected.display(), found.display()),
@@ -695,6 +699,7 @@ impl Type {
             Type::Bool => "Bool".to_string(),
             Type::Named(name) => name.clone(),
             Type::Unit => "Unit".to_string(),
+            Type::Error => "<error>".to_string(),
         }
     }
 }
