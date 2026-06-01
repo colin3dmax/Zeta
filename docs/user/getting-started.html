@@ -7,15 +7,46 @@
   <link rel="stylesheet" href="../shared.css">
 </head>
 <body>
-  <main>
-    <nav class="doc-nav" aria-label="文档导航">
+  <header class="doc-topbar">
+    <a class="doc-brand" href="../index.html">Zeta Docs</a>
+    <nav class="doc-topnav" aria-label="模块导航">
       <a href="../../">官网首页</a>
       <a href="../index.html">文档中心</a>
-      <a href="getting-started.html">快速开始</a>
+      <a href="getting-started.html" aria-current="page">用户指南</a>
+      <a href="../tutorial/index.html">在线教程</a>
+      <a href="../project/stage-roadmap.html">路线图</a>
+      <a href="../compiler/bootstrap.html">编译器</a>
+      <a href="../../#playground">Playground</a>
     </nav>
+  </header>
+  <main class="doc-shell">
+    <aside class="doc-sidebar" aria-label="文章列表">
+      <p class="doc-sidebar-title">Help Articles</p>
+      <section class="doc-sidebar-section">
+        <h2>用户帮助</h2>
+        <a href="getting-started.html" aria-current="page">快速开始</a>
+        <a href="language-features.html">语言特性学习</a>
+        <a href="install.html">本地安装</a>
+        <a href="downloads.html">CLI 下载</a>
+        <a href="vscode.html">VS Code 插件</a>
+      </section>
+      <section class="doc-sidebar-section">
+        <h2>学习路径</h2>
+        <a href="../tutorial/index.html">在线教程</a>
+        <a href="../../#playground">在线 Playground</a>
+        <a href="../compiler/glossary.html">编译器术语解释</a>
+      </section>
+      <section class="doc-sidebar-section">
+        <h2>项目与设计</h2>
+        <a href="../project/stage-roadmap.html">阶段路线图</a>
+        <a href="../project/decision-record.html">构建决策记录</a>
+        <a href="../spec/core-std-api.html">Core / Std API</a>
+      </section>
+    </aside>
+    <article class="doc-content">
     <h1>Zeta 用户快速开始</h1>
     <p><strong>状态：</strong>draft</p>
-    <p><strong>更新时间：</strong>2026-05-29</p>
+    <p><strong>更新时间：</strong>2026-06-01</p>
     <p><strong>适用范围：</strong>Zeta Stage 0 CLI、AST/HIR/MIR dump、语义检查、MIR interpreter、REPL 原型和本地示例文件。</p>
     <p><strong>验收标准：</strong>用户可以运行示例、检查源码、执行无参数 <code>main</code>，并在 REPL 里直接计算表达式。</p>
 
@@ -269,6 +300,7 @@ true &amp;&amp; !false;
       <li>诊断已经输出行列和源码片段；跨文件诊断和更复杂恢复策略仍会继续补齐。</li>
       <li>当前 <code>run</code> 已使用 Stage 0 MIR interpreter；REPL 会话仍保留 AST session，以维持跨行局部变量状态。</li>
     </ul>
+    </article>
   </main>
 </body>
 </html>

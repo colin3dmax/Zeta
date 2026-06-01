@@ -28,6 +28,73 @@ body {
   font: 16px/1.72 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
+.doc-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-height: 64px;
+  padding: 0 clamp(18px, 4vw, 44px);
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(14px);
+}
+
+.doc-brand {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 950;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.doc-brand::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  margin-right: 10px;
+  border: 2px solid var(--ink);
+  background: #fff;
+  box-shadow: 3px 3px 0 var(--ink);
+}
+
+.doc-topnav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  margin-left: auto;
+  padding: 10px 0;
+}
+
+.doc-topnav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 850;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.doc-topnav a:hover,
+.doc-topnav a[aria-current="page"] {
+  border-color: var(--line-strong);
+  background: var(--ink);
+  color: #fff;
+}
+
 main {
   display: block;
   width: min(1120px, calc(100% - 32px));
@@ -44,10 +111,10 @@ main {
   z-index: 2;
   display: flex;
   flex-wrap: wrap;
-  gap: 0;
+  gap: 8px;
   align-items: center;
   margin: -24px calc(clamp(18px, 4vw, 48px) * -1) 32px;
-  padding: 0 clamp(18px, 4vw, 48px);
+  padding: 12px clamp(18px, 4vw, 48px);
   border-bottom: 1px solid var(--line-strong);
   background: rgba(255, 255, 255, 0.96);
   backdrop-filter: blur(10px);
@@ -66,11 +133,11 @@ main {
 .doc-nav a {
   display: inline-flex;
   align-items: center;
-  min-height: 48px;
-  padding: 0 14px;
-  border: 0;
-  border-left: 1px solid var(--line);
-  background: transparent;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
   color: var(--ink);
   font-size: 14px;
   font-weight: 800;
@@ -83,6 +150,107 @@ main {
   background: var(--ink);
   color: #fff;
   box-shadow: none;
+}
+
+.doc-shell {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: clamp(22px, 4vw, 44px);
+  width: min(1360px, calc(100% - 32px));
+  margin: 28px auto 64px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.doc-sidebar {
+  position: sticky;
+  top: 84px;
+  align-self: start;
+  max-height: calc(100vh - 104px);
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.doc-sidebar-title {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.doc-sidebar-section + .doc-sidebar-section {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.doc-sidebar h2 {
+  margin: 0 0 8px;
+  padding: 0;
+  border: 0;
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.doc-sidebar a {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  margin: 2px 0;
+  padding: 6px 9px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 750;
+  line-height: 1.25;
+  text-decoration: none;
+}
+
+.doc-sidebar a:hover,
+.doc-sidebar a[aria-current="page"] {
+  background: var(--ink);
+  color: #fff;
+}
+
+.doc-content {
+  min-width: 0;
+  padding: 34px clamp(22px, 4vw, 54px) 56px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.doc-content h1 {
+  font-size: clamp(36px, 5vw, 58px);
+}
+
+.doc-content > h1 + p,
+.doc-content > h1 + p + p,
+.doc-content > h1 + p + p + p,
+.doc-content > h1 + p + p + p + p {
+  display: inline-block;
+  margin: 0 8px 8px 0;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface-strong);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.doc-content > h1 + p strong,
+.doc-content > h1 + p + p strong,
+.doc-content > h1 + p + p + p strong,
+.doc-content > h1 + p + p + p + p strong {
+  color: var(--ink);
 }
 
 h1,
@@ -325,6 +493,41 @@ textarea {
 }
 
 @media (max-width: 760px) {
+  .doc-topbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0;
+    padding: 10px 14px 0;
+  }
+
+  .doc-topnav {
+    flex-wrap: wrap;
+    width: 100%;
+    overflow: visible;
+    margin-left: 0;
+  }
+
+  .doc-topnav a {
+    min-height: 32px;
+    padding: 0 10px;
+    font-size: 13px;
+  }
+
+  .doc-shell {
+    grid-template-columns: 1fr;
+    width: min(100% - 18px, 1120px);
+    margin-top: 10px;
+  }
+
+  .doc-sidebar {
+    position: static;
+    max-height: none;
+  }
+
+  .doc-content {
+    padding: 22px 14px 34px;
+  }
+
   main {
     width: min(100% - 18px, 1120px);
     margin-top: 10px;

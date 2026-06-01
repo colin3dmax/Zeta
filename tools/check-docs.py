@@ -9,7 +9,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 REQUIRED_METADATA = ("状态", "更新时间", "适用范围", "验收标准")
-REQUIRED_DOC_NAV_TEXT = ("官网首页", "文档中心", "快速开始")
+REQUIRED_DOC_NAV_TEXT = ("官网首页", "文档中心")
 METADATA_PATTERN = re.compile(
     r"<p>\s*<strong>(状态|更新时间|适用范围|验收标准)：</strong>\s*(.*?)\s*</p>",
     re.DOTALL,
@@ -107,12 +107,14 @@ def check_metadata(path):
 def check_doc_nav(path):
     text = path.read_text(encoding="utf-8")
     errors = []
-    if 'class="doc-nav"' not in text:
-        errors.append(f"{path.relative_to(ROOT)}: missing top doc-nav")
+    has_legacy_nav = 'class="doc-nav"' in text
+    has_topbar = 'class="doc-topbar"' in text and 'class="doc-topnav"' in text
+    if not has_legacy_nav and not has_topbar:
+        errors.append(f"{path.relative_to(ROOT)}: missing top doc navigation")
         return errors
     for label in REQUIRED_DOC_NAV_TEXT:
         if label not in text:
-            errors.append(f"{path.relative_to(ROOT)}: doc-nav missing link label: {label}")
+            errors.append(f"{path.relative_to(ROOT)}: doc navigation missing link label: {label}")
     return errors
 
 
