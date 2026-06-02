@@ -118,7 +118,21 @@ pub struct MirStructField {
 }
 
 pub fn lower(module: &Module) -> Program {
-    let enum_variants = enum_variants(module);
+    lower_with_external_enum_variants(module, &HashMap::new())
+}
+
+pub fn lower_with_external_enum_variants(
+    module: &Module,
+    external_enum_variants: &HashMap<String, HashMap<String, Option<String>>>,
+) -> Program {
+    let mut enum_variants = enum_variants(module);
+    for (enum_name, variants) in external_enum_variants {
+        enum_variants.entry(enum_name.clone()).or_default().extend(
+            variants
+                .iter()
+                .map(|(name, payload_type)| (name.clone(), payload_type.clone())),
+        );
+    }
     Program {
         enums: module
             .items

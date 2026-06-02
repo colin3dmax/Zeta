@@ -210,6 +210,47 @@ export fn answer() -> ResultInt {
 }
 
 #[test]
+fn module_graph_accepts_imported_enum_variant_construction() {
+    let files = vec![
+        source_file(
+            "app.zeta",
+            r#"
+module demo.app;
+import demo.model;
+
+fn main() -> Int {
+  let result: ResultInt = ResultInt.Ok(42);
+  return unwrap(result);
+}
+"#,
+        ),
+        source_file(
+            "model.zeta",
+            r#"
+module demo.model;
+
+export enum ResultInt {
+  Ok(Int),
+  Err(String),
+}
+
+export fn unwrap(result: ResultInt) -> Int {
+  match result {
+    ResultInt.Ok(value) -> { return value; },
+    ResultInt.Err(message) -> { return 0; },
+  }
+  return 0;
+}
+"#,
+        ),
+    ];
+
+    let value = zeta::module_graph::run_sources(&files)
+        .expect("imported enum variant construction should typecheck and run");
+    assert_eq!(value.to_string(), "42");
+}
+
+#[test]
 fn module_graph_rejects_ambiguous_reexports() {
     let files = vec![
         source_file(

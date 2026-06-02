@@ -33,12 +33,34 @@ pub fn resolve_with_imports_functions_and_ambiguous(
     external_functions: &HashSet<String>,
     ambiguous_external_functions: &HashSet<String>,
 ) -> Result<(), Vec<Diagnostic>> {
+    resolve_with_imports_functions_enums_and_ambiguous(
+        module,
+        local_imports,
+        external_functions,
+        &HashMap::new(),
+        ambiguous_external_functions,
+    )
+}
+
+pub fn resolve_with_imports_functions_enums_and_ambiguous(
+    module: &Module,
+    local_imports: &HashSet<String>,
+    external_functions: &HashSet<String>,
+    external_enum_variants: &HashMap<String, HashSet<String>>,
+    ambiguous_external_functions: &HashSet<String>,
+) -> Result<(), Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
     check_top_level(module, local_imports, &mut diagnostics);
     let mut functions = function_names(module);
     functions.extend(external_functions.iter().cloned());
     let top_level_names = top_level_names(module);
-    let enum_variants = enum_variants(module);
+    let mut enum_variants = enum_variants(module);
+    for (enum_name, variants) in external_enum_variants {
+        enum_variants
+            .entry(enum_name.clone())
+            .or_default()
+            .extend(variants.iter().cloned());
+    }
     for item in &module.items {
         if let Item::Function(function) = item {
             check_function(

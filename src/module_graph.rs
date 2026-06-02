@@ -105,6 +105,7 @@ fn check_parsed_sources(modules: &[ParsedSource]) -> Result<(), Vec<SourceDiagno
         let external_functions = imported_external_functions(&parsed.module, &module_infos);
         let external_structs = imported_external_structs(&parsed.module, &module_infos);
         let external_enums = imported_external_enums(&parsed.module, &module_infos);
+        let external_enum_variants = external_enum_variants(&external_enums);
         let ambiguous_functions = ambiguous_external_function_names(&parsed.module, &module_infos);
         let external_function_names = external_functions
             .iter()
@@ -113,10 +114,11 @@ fn check_parsed_sources(modules: &[ParsedSource]) -> Result<(), Vec<SourceDiagno
         collect_result(
             &parsed.path,
             &parsed.source,
-            resolver::resolve_with_imports_functions_and_ambiguous(
+            resolver::resolve_with_imports_functions_enums_and_ambiguous(
                 &parsed.module,
                 &local_imports,
                 &external_function_names,
+                &external_enum_variants,
                 &ambiguous_functions,
             ),
             &mut errors,
@@ -153,8 +155,11 @@ fn combined_program(
     for parsed in modules {
         let current_module = module_decl(&parsed.module).map(|(name, _)| name.to_string());
         let imported_targets = imported_call_targets(&parsed.module, module_infos);
+        let external_enums = imported_external_enums(&parsed.module, module_infos);
+        let external_enum_payloads = external_enum_payloads(&external_enums);
         let is_main_module = parsed.path == main_path;
-        let mut lowered = mir::lower(&parsed.module);
+        let mut lowered =
+            mir::lower_with_external_enum_variants(&parsed.module, &external_enum_payloads);
         rewrite_program_calls(
             &mut lowered,
             current_module.as_deref(),
@@ -577,6 +582,40 @@ fn imported_external_enums(
         }
     }
     enums
+}
+
+fn external_enum_variants(enums: &[ExternalEnum]) -> HashMap<String, HashSet<String>> {
+    enums
+        .iter()
+        .map(|external_enum| {
+            (
+                external_enum.name.clone(),
+                external_enum
+                    .variants
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+fn external_enum_payloads(
+    enums: &[ExternalEnum],
+) -> HashMap<String, HashMap<String, Option<String>>> {
+    enums
+        .iter()
+        .map(|external_enum| {
+            (
+                external_enum.name.clone(),
+                external_enum
+                    .variants
+                    .iter()
+                    .map(|(name, payload_type)| (name.clone(), payload_type.clone()))
+                    .collect(),
+            )
+        })
+        .collect()
 }
 
 fn imported_call_targets(
