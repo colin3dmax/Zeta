@@ -1,8 +1,8 @@
-use crate::ast::{Function, Item, Module};
+use crate::ast::{Function, Item, Module, StructDecl};
 use crate::diagnostic::{Diagnostic, Span};
 use crate::mir::{self, MirExpr, MirStmt, Program};
 use crate::runtime::{self, Value};
-use crate::typecheck::ExternalFunction;
+use crate::typecheck::{ExternalFunction, ExternalStruct};
 use crate::{parser, resolver, typecheck};
 use std::collections::{HashMap, HashSet};
 
@@ -103,6 +103,7 @@ fn check_parsed_sources(modules: &[ParsedSource]) -> Result<(), Vec<SourceDiagno
     let local_imports = module_infos.keys().cloned().collect::<HashSet<_>>();
     for parsed in modules {
         let external_functions = imported_external_functions(&parsed.module, &module_infos);
+        let external_structs = imported_external_structs(&parsed.module, &module_infos);
         let ambiguous_functions = ambiguous_external_function_names(&parsed.module, &module_infos);
         let external_function_names = external_functions
             .iter()
@@ -122,7 +123,11 @@ fn check_parsed_sources(modules: &[ParsedSource]) -> Result<(), Vec<SourceDiagno
         collect_result(
             &parsed.path,
             &parsed.source,
-            typecheck::check_with_external_functions(&parsed.module, &external_functions),
+            typecheck::check_with_external_items(
+                &parsed.module,
+                &external_functions,
+                &external_structs,
+            ),
             &mut errors,
         );
     }
@@ -376,6 +381,7 @@ fn module_infos(
                 name.to_string(),
                 ModuleInfo {
                     exported_functions: exported_functions(&parsed.module, name),
+                    exported_structs: exported_structs(&parsed.module),
                     reexport_imports: exported_imports(&parsed.module),
                 },
             );
@@ -395,13 +401,16 @@ fn expand_reexports(
         let mut changed = false;
         for info in infos.values_mut() {
             let mut exported = info.exported_functions.clone();
+            let mut structs = info.exported_structs.clone();
             for import in &info.reexport_imports {
                 if let Some(imported) = snapshot.get(&import.path) {
                     exported.extend(imported.exported_functions.clone());
+                    structs.extend(imported.exported_structs.clone());
                 }
             }
             changed |=
                 replace_exported_functions_if_changed(&mut info.exported_functions, exported);
+            changed |= replace_exported_structs_if_changed(&mut info.exported_structs, structs);
         }
         if !changed {
             break;
@@ -440,6 +449,19 @@ fn replace_exported_functions_if_changed(
             && left.return_type == right.return_type
             && left.target_name == right.target_name
     });
+    if *current == next {
+        return false;
+    }
+    *current = next;
+    true
+}
+
+fn replace_exported_structs_if_changed(
+    current: &mut Vec<ExternalStruct>,
+    mut next: Vec<ExternalStruct>,
+) -> bool {
+    next.sort_by(|left, right| left.name.cmp(&right.name));
+    next.dedup();
     if *current == next {
         return false;
     }
@@ -498,6 +520,25 @@ fn imported_external_functions(
         }
     }
     functions
+}
+
+fn imported_external_structs(
+    module: &Module,
+    module_infos: &HashMap<String, ModuleInfo>,
+) -> Vec<ExternalStruct> {
+    let mut structs = Vec::new();
+    let mut seen = HashSet::new();
+    for import in local_imports(module) {
+        let Some(info) = module_infos.get(&import.path) else {
+            continue;
+        };
+        for external_struct in &info.exported_structs {
+            if seen.insert(external_struct.name.clone()) {
+                structs.push(external_struct.clone());
+            }
+        }
+    }
+    structs
 }
 
 fn imported_call_targets(
@@ -603,6 +644,17 @@ fn exported_functions(module: &Module, module_name: &str) -> Vec<ExternalFunctio
         .collect()
 }
 
+fn exported_structs(module: &Module) -> Vec<ExternalStruct> {
+    module
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Struct(decl) if decl.exported => Some(external_struct(decl)),
+            _ => None,
+        })
+        .collect()
+}
+
 fn has_function(module: &Module, name: &str) -> bool {
     module.items.iter().any(|item| match item {
         Item::Function(function) => function.name == name,
@@ -620,6 +672,17 @@ fn external_function(function: &Function, module_name: &str) -> ExternalFunction
             .collect(),
         return_type: function.return_type.clone(),
         target_name: Some(format!("{module_name}.{}", function.name)),
+    }
+}
+
+fn external_struct(decl: &StructDecl) -> ExternalStruct {
+    ExternalStruct {
+        name: decl.name.clone(),
+        fields: decl
+            .fields
+            .iter()
+            .map(|field| (field.name.clone(), field.ty.clone()))
+            .collect(),
     }
 }
 
@@ -663,6 +726,7 @@ struct ParsedSource {
 #[derive(Clone)]
 struct ModuleInfo {
     exported_functions: Vec<ExternalFunction>,
+    exported_structs: Vec<ExternalStruct>,
     reexport_imports: Vec<LocalImport>,
 }
 

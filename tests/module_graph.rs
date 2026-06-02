@@ -132,6 +132,43 @@ export fn answer() -> Int {
 }
 
 #[test]
+fn module_graph_accepts_imported_struct_field_access() {
+    let files = vec![
+        source_file(
+            "app.zeta",
+            r#"
+module demo.app;
+import demo.model;
+
+fn main() -> Int {
+  let user: User = make_user();
+  return user.age;
+}
+"#,
+        ),
+        source_file(
+            "model.zeta",
+            r#"
+module demo.model;
+
+export struct User {
+  name: String,
+  age: Int,
+}
+
+export fn make_user() -> User {
+  return User { name: "Ada", age: 42 };
+}
+"#,
+        ),
+    ];
+
+    let value = zeta::module_graph::run_sources(&files)
+        .expect("imported exported struct fields should typecheck and run");
+    assert_eq!(value.to_string(), "42");
+}
+
+#[test]
 fn module_graph_rejects_ambiguous_reexports() {
     let files = vec![
         source_file(
