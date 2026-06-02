@@ -240,6 +240,33 @@ fn verifier_accepts_exhaustive_enum_match_when_all_arms_return() {
 }
 
 #[test]
+fn verifier_accepts_exhaustive_bool_match_when_all_arms_return() {
+    let program = Program {
+        enums: vec![],
+        functions: vec![MirFunction {
+            name: "main".to_string(),
+            params: vec![],
+            return_type: Some("Int".to_string()),
+            body: vec![MirStmt::Match {
+                value: MirExpr::Bool(true),
+                arms: vec![
+                    MirMatchArm {
+                        pattern: MirPattern::Bool(true),
+                        body: vec![MirStmt::Return(Some(MirExpr::Int("42".to_string())))],
+                    },
+                    MirMatchArm {
+                        pattern: MirPattern::Bool(false),
+                        body: vec![MirStmt::Return(Some(MirExpr::Int("0".to_string())))],
+                    },
+                ],
+            }],
+        }],
+    };
+
+    mir::verify(&program).expect("exhaustive Bool match with returns should verify");
+}
+
+#[test]
 fn verifier_rejects_non_exhaustive_enum_match_without_trailing_return() {
     let program = Program {
         enums: vec![MirEnum {

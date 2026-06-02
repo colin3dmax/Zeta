@@ -827,9 +827,13 @@ impl<'a> MirVerifier<'a> {
                 let mut all_arms_return = !arms.is_empty();
                 let mut has_wildcard = false;
                 let mut covered_enum_variants: HashMap<String, HashSet<String>> = HashMap::new();
+                let mut covered_bool_patterns = HashSet::new();
                 for arm in arms {
                     if matches!(arm.pattern, MirPattern::Wildcard) {
                         has_wildcard = true;
+                    }
+                    if let MirPattern::Bool(value) = &arm.pattern {
+                        covered_bool_patterns.insert(*value);
                     }
                     if let MirPattern::Variant {
                         enum_name, variant, ..
@@ -854,6 +858,7 @@ impl<'a> MirVerifier<'a> {
                 }
                 all_arms_return
                     && (has_wildcard
+                        || self.bool_match_is_exhaustive(&value_ty, &covered_bool_patterns)
                         || self.enum_match_is_exhaustive(&value_ty, &covered_enum_variants))
             }
             MirStmt::Return(Some(value)) => {
@@ -1140,6 +1145,12 @@ impl<'a> MirVerifier<'a> {
         variants
             .keys()
             .all(|variant| covered_variants.contains(*variant))
+    }
+
+    fn bool_match_is_exhaustive(&self, value_ty: &MirType, covered: &HashSet<bool>) -> bool {
+        matches!(value_ty, MirType::Named(name) if name == "Bool")
+            && covered.contains(&true)
+            && covered.contains(&false)
     }
 
     fn expect_bool(
