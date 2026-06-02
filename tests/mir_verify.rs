@@ -1,6 +1,8 @@
 use zeta::ast::Param;
 use zeta::diagnostic::Span;
-use zeta::mir::{self, MirExpr, MirFunction, MirMatchArm, MirPattern, MirStmt, Program};
+use zeta::mir::{
+    self, MirEnum, MirEnumVariant, MirExpr, MirFunction, MirMatchArm, MirPattern, MirStmt, Program,
+};
 
 #[test]
 fn verifier_accepts_lowered_run_corpus() {
@@ -184,4 +186,102 @@ fn verifier_accepts_match_when_all_arms_return_and_wildcard_covers_default() {
     };
 
     mir::verify(&program).expect("covered match with returns should verify");
+}
+
+#[test]
+fn verifier_accepts_exhaustive_enum_match_when_all_arms_return() {
+    let program = Program {
+        enums: vec![MirEnum {
+            name: "ResultTag".to_string(),
+            variants: vec![
+                MirEnumVariant {
+                    name: "Ok".to_string(),
+                    payload_type: None,
+                },
+                MirEnumVariant {
+                    name: "Err".to_string(),
+                    payload_type: None,
+                },
+            ],
+        }],
+        functions: vec![MirFunction {
+            name: "main".to_string(),
+            params: vec![],
+            return_type: Some("Int".to_string()),
+            body: vec![MirStmt::Match {
+                value: MirExpr::EnumVariant {
+                    enum_name: "ResultTag".to_string(),
+                    variant: "Ok".to_string(),
+                    payload: None,
+                },
+                arms: vec![
+                    MirMatchArm {
+                        pattern: MirPattern::Variant {
+                            enum_name: "ResultTag".to_string(),
+                            variant: "Ok".to_string(),
+                            binding: None,
+                        },
+                        body: vec![MirStmt::Return(Some(MirExpr::Int("42".to_string())))],
+                    },
+                    MirMatchArm {
+                        pattern: MirPattern::Variant {
+                            enum_name: "ResultTag".to_string(),
+                            variant: "Err".to_string(),
+                            binding: None,
+                        },
+                        body: vec![MirStmt::Return(Some(MirExpr::Int("0".to_string())))],
+                    },
+                ],
+            }],
+        }],
+    };
+
+    mir::verify(&program).expect("exhaustive enum match with returns should verify");
+}
+
+#[test]
+fn verifier_rejects_non_exhaustive_enum_match_without_trailing_return() {
+    let program = Program {
+        enums: vec![MirEnum {
+            name: "ResultTag".to_string(),
+            variants: vec![
+                MirEnumVariant {
+                    name: "Ok".to_string(),
+                    payload_type: None,
+                },
+                MirEnumVariant {
+                    name: "Err".to_string(),
+                    payload_type: None,
+                },
+            ],
+        }],
+        functions: vec![MirFunction {
+            name: "main".to_string(),
+            params: vec![],
+            return_type: Some("Int".to_string()),
+            body: vec![MirStmt::Match {
+                value: MirExpr::EnumVariant {
+                    enum_name: "ResultTag".to_string(),
+                    variant: "Ok".to_string(),
+                    payload: None,
+                },
+                arms: vec![MirMatchArm {
+                    pattern: MirPattern::Variant {
+                        enum_name: "ResultTag".to_string(),
+                        variant: "Ok".to_string(),
+                        binding: None,
+                    },
+                    body: vec![MirStmt::Return(Some(MirExpr::Int("42".to_string())))],
+                }],
+            }],
+        }],
+    };
+
+    let diagnostics = mir::verify(&program).expect_err("partial enum match should fail");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "MIR_MISSING_RETURN"),
+        "diagnostics: {diagnostics:?}"
+    );
 }

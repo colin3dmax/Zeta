@@ -826,9 +826,19 @@ impl<'a> MirVerifier<'a> {
                 let value_ty = self.verify_expr(value, locals);
                 let mut all_arms_return = !arms.is_empty();
                 let mut has_wildcard = false;
+                let mut covered_enum_variants: HashMap<String, HashSet<String>> = HashMap::new();
                 for arm in arms {
                     if matches!(arm.pattern, MirPattern::Wildcard) {
                         has_wildcard = true;
+                    }
+                    if let MirPattern::Variant {
+                        enum_name, variant, ..
+                    } = &arm.pattern
+                    {
+                        covered_enum_variants
+                            .entry(enum_name.clone())
+                            .or_default()
+                            .insert(variant.clone());
                     }
                     let mut arm_locals = locals.clone();
                     for (name, ty) in self.verify_pattern(&arm.pattern, &value_ty) {
@@ -842,7 +852,9 @@ impl<'a> MirVerifier<'a> {
                     all_arms_return &=
                         self.verify_stmts(&arm.body, &mut arm_locals, expected_return);
                 }
-                all_arms_return && has_wildcard
+                all_arms_return
+                    && (has_wildcard
+                        || self.enum_match_is_exhaustive(&value_ty, &covered_enum_variants))
             }
             MirStmt::Return(Some(value)) => {
                 let value_ty = self.verify_expr(value, locals);
@@ -1109,6 +1121,25 @@ impl<'a> MirVerifier<'a> {
                 None
             }
         }
+    }
+
+    fn enum_match_is_exhaustive(
+        &self,
+        value_ty: &MirType,
+        covered: &HashMap<String, HashSet<String>>,
+    ) -> bool {
+        let MirType::Named(enum_name) = value_ty else {
+            return false;
+        };
+        let Some(variants) = self.enums.get(enum_name.as_str()) else {
+            return false;
+        };
+        let Some(covered_variants) = covered.get(enum_name) else {
+            return false;
+        };
+        variants
+            .keys()
+            .all(|variant| covered_variants.contains(*variant))
     }
 
     fn expect_bool(
