@@ -251,6 +251,49 @@ export fn unwrap(result: ResultInt) -> Int {
 }
 
 #[test]
+fn module_graph_rejects_ambiguous_imported_type_names() {
+    let files = vec![
+        source_file(
+            "app.zeta",
+            r#"
+module demo.app;
+import demo.alpha;
+import demo.beta;
+
+fn main() -> Int {
+  return 42;
+}
+"#,
+        ),
+        source_file(
+            "alpha.zeta",
+            r#"
+module demo.alpha;
+
+export struct Item {
+  value: Int,
+}
+"#,
+        ),
+        source_file(
+            "beta.zeta",
+            r#"
+module demo.beta;
+
+export enum Item {
+  Found(Int),
+  Missing,
+}
+"#,
+        ),
+    ];
+
+    let errors =
+        zeta::module_graph::check_sources(&files).expect_err("ambiguous type import should fail");
+    assert_eq!(errors[0].diagnostics[0].code, "RESOLVE_AMBIGUOUS_TYPE");
+}
+
+#[test]
 fn module_graph_rejects_ambiguous_reexports() {
     let files = vec![
         source_file(

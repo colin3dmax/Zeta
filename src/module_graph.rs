@@ -105,6 +105,12 @@ fn check_parsed_sources(modules: &[ParsedSource]) -> Result<(), Vec<SourceDiagno
         let external_functions = imported_external_functions(&parsed.module, &module_infos);
         let external_structs = imported_external_structs(&parsed.module, &module_infos);
         let external_enums = imported_external_enums(&parsed.module, &module_infos);
+        collect_imported_type_ambiguity_errors(
+            parsed,
+            &external_structs,
+            &external_enums,
+            &mut errors,
+        );
         let external_enum_variants = external_enum_variants(&external_enums);
         let ambiguous_functions = ambiguous_external_function_names(&parsed.module, &module_infos);
         let external_function_names = external_functions
@@ -501,6 +507,47 @@ fn duplicate_export_name(functions: &[ExternalFunction]) -> Option<String> {
         }
     }
     None
+}
+
+fn collect_imported_type_ambiguity_errors(
+    parsed: &ParsedSource,
+    structs: &[ExternalStruct],
+    enums: &[ExternalEnum],
+    errors: &mut Vec<SourceDiagnostics>,
+) {
+    let mut seen = HashSet::new();
+    for external_struct in structs {
+        if !seen.insert(external_struct.name.as_str()) {
+            errors.push(source_error(
+                Some(parsed),
+                Diagnostic::new(
+                    "RESOLVE_AMBIGUOUS_TYPE",
+                    format!(
+                        "ambiguous imported type `{}`; use distinct exported type names",
+                        external_struct.name
+                    ),
+                    Span::new(0, 0),
+                ),
+            ));
+            return;
+        }
+    }
+    for external_enum in enums {
+        if !seen.insert(external_enum.name.as_str()) {
+            errors.push(source_error(
+                Some(parsed),
+                Diagnostic::new(
+                    "RESOLVE_AMBIGUOUS_TYPE",
+                    format!(
+                        "ambiguous imported type `{}`; use distinct exported type names",
+                        external_enum.name
+                    ),
+                    Span::new(0, 0),
+                ),
+            ));
+            return;
+        }
+    }
 }
 
 fn module_decl(module: &Module) -> Option<(&str, Span)> {
