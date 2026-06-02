@@ -16,11 +16,12 @@ pub fn check(module: &Module) -> Result<(), Vec<Diagnostic>> {
     check_with_external_functions(module, &[])
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalFunction {
     pub name: String,
     pub params: Vec<String>,
     pub return_type: Option<String>,
+    pub target_name: Option<String>,
 }
 
 pub fn check_with_external_functions(

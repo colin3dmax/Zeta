@@ -12,6 +12,7 @@ pub enum Item {
         name_span: Span,
     },
     Import {
+        exported: bool,
         path: Vec<String>,
         path_span: Span,
         alias: Option<String>,
@@ -214,14 +215,23 @@ impl Item {
             Item::ModuleDecl { name, .. } => {
                 out.push_str(&format!("{pad}ModuleDecl name={name}\n"));
             }
-            Item::Import { path, alias, .. } => {
+            Item::Import {
+                exported,
+                path,
+                alias,
+                ..
+            } => {
+                let visibility = if *exported { " exported=true" } else { "" };
                 if let Some(alias) = alias {
                     out.push_str(&format!(
-                        "{pad}Import path={} alias={alias}\n",
-                        path.join(".")
+                        "{pad}Import path={} alias={alias}{visibility}\n",
+                        path.join("."),
                     ));
                 } else {
-                    out.push_str(&format!("{pad}Import path={}\n", path.join(".")));
+                    out.push_str(&format!(
+                        "{pad}Import path={}{visibility}\n",
+                        path.join(".")
+                    ));
                 }
             }
             Item::Struct(decl) => {

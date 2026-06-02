@@ -24,3 +24,9 @@ fn cli_dumps_core_items_hir() {
         include_str!("../testdata/core_items.hir")
     );
 }
+
+#[test]
+fn dumps_export_import_hir() {
+    let dump = zeta::dump_hir("export import std.core;\n").expect("source should lower to HIR");
+    assert_eq!(dump, "HirModule\n  import exported std.core\n");
+}

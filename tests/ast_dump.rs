@@ -38,6 +38,12 @@ fn dumps_import_alias() {
 }
 
 #[test]
+fn dumps_export_import() {
+    let dump = zeta::dump_ast("export import demo.math;\n").expect("source should parse");
+    assert_eq!(dump, "Module\n  Import path=demo.math exported=true\n");
+}
+
+#[test]
 fn dumps_mutable_binding_and_assignment() {
     let dump = zeta::dump_ast(
         r#"

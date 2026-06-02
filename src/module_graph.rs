@@ -335,11 +335,18 @@ fn rewrite_expr(
                 );
             }
         }
-        MirExpr::Load(_)
-        | MirExpr::Int(_)
-        | MirExpr::String(_)
-        | MirExpr::Bool(_)
-        | MirExpr::EnumVariant { .. } => {}
+        MirExpr::EnumVariant { payload, .. } => {
+            if let Some(payload) = payload {
+                rewrite_expr(
+                    payload,
+                    current_module,
+                    imported_targets,
+                    local_functions,
+                    is_main_module,
+                );
+            }
+        }
+        MirExpr::Load(_) | MirExpr::Int(_) | MirExpr::String(_) | MirExpr::Bool(_) => {}
     }
 }
 
@@ -368,12 +375,86 @@ fn module_infos(
             infos.insert(
                 name.to_string(),
                 ModuleInfo {
-                    exported_functions: exported_functions(&parsed.module),
+                    exported_functions: exported_functions(&parsed.module, name),
+                    reexport_imports: exported_imports(&parsed.module),
                 },
             );
         }
     }
+    expand_reexports(&mut infos, modules, errors);
     infos
+}
+
+fn expand_reexports(
+    infos: &mut HashMap<String, ModuleInfo>,
+    modules: &[ParsedSource],
+    errors: &mut Vec<SourceDiagnostics>,
+) {
+    for _ in 0..infos.len() {
+        let snapshot = infos.clone();
+        let mut changed = false;
+        for info in infos.values_mut() {
+            let mut exported = info.exported_functions.clone();
+            for import in &info.reexport_imports {
+                if let Some(imported) = snapshot.get(&import.path) {
+                    exported.extend(imported.exported_functions.clone());
+                }
+            }
+            changed |=
+                replace_exported_functions_if_changed(&mut info.exported_functions, exported);
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    for parsed in modules {
+        let Some((name, span)) = module_decl(&parsed.module) else {
+            continue;
+        };
+        let Some(info) = infos.get(name) else {
+            continue;
+        };
+        if let Some(duplicate) = duplicate_export_name(&info.exported_functions) {
+            errors.push(SourceDiagnostics {
+                path: parsed.path.clone(),
+                source: parsed.source.clone(),
+                diagnostics: vec![Diagnostic::new(
+                    "RESOLVE_AMBIGUOUS_REEXPORT",
+                    format!("module `{name}` exports multiple functions named `{duplicate}`"),
+                    span,
+                )],
+            });
+        }
+    }
+}
+
+fn replace_exported_functions_if_changed(
+    current: &mut Vec<ExternalFunction>,
+    mut next: Vec<ExternalFunction>,
+) -> bool {
+    next.sort_by(|left, right| left.name.cmp(&right.name));
+    next.dedup_by(|left, right| {
+        left.name == right.name
+            && left.params == right.params
+            && left.return_type == right.return_type
+            && left.target_name == right.target_name
+    });
+    if *current == next {
+        return false;
+    }
+    *current = next;
+    true
+}
+
+fn duplicate_export_name(functions: &[ExternalFunction]) -> Option<String> {
+    let mut seen = HashSet::new();
+    for function in functions {
+        if !seen.insert(function.name.as_str()) {
+            return Some(function.name.clone());
+        }
+    }
+    None
 }
 
 fn module_decl(module: &Module) -> Option<(&str, Span)> {
@@ -408,6 +489,7 @@ fn imported_external_functions(
                     name: format!("{alias}.{}", function.name),
                     params: function.params.clone(),
                     return_type: function.return_type.clone(),
+                    target_name: function.target_name.clone(),
                 };
                 if seen.insert(alias_qualified.name.clone()) {
                     functions.push(alias_qualified);
@@ -432,12 +514,12 @@ fn imported_call_targets(
             if !ambiguous_short_names.contains(&function.name) {
                 targets
                     .entry(function.name.clone())
-                    .or_insert_with(|| format!("{}.{}", import.path, function.name));
+                    .or_insert_with(|| function_target(function, &import.path));
             }
             if let Some(alias) = &import.alias {
                 targets
                     .entry(format!("{alias}.{}", function.name))
-                    .or_insert_with(|| format!("{}.{}", import.path, function.name));
+                    .or_insert_with(|| function_target(function, &import.path));
             }
         }
     }
@@ -486,12 +568,33 @@ fn local_imports(module: &Module) -> Vec<LocalImport> {
         .collect()
 }
 
-fn exported_functions(module: &Module) -> Vec<ExternalFunction> {
+fn exported_imports(module: &Module) -> Vec<LocalImport> {
     module
         .items
         .iter()
         .filter_map(|item| match item {
-            Item::Function(function) if function.exported => Some(external_function(function)),
+            Item::Import {
+                exported: true,
+                path,
+                alias,
+                ..
+            } => Some(LocalImport {
+                path: path.join("."),
+                alias: alias.clone(),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+fn exported_functions(module: &Module, module_name: &str) -> Vec<ExternalFunction> {
+    module
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Function(function) if function.exported => {
+                Some(external_function(function, module_name))
+            }
             _ => None,
         })
         .collect()
@@ -504,7 +607,7 @@ fn has_function(module: &Module, name: &str) -> bool {
     })
 }
 
-fn external_function(function: &Function) -> ExternalFunction {
+fn external_function(function: &Function, module_name: &str) -> ExternalFunction {
     ExternalFunction {
         name: function.name.clone(),
         params: function
@@ -513,6 +616,7 @@ fn external_function(function: &Function) -> ExternalFunction {
             .map(|param| param.ty.clone())
             .collect(),
         return_type: function.return_type.clone(),
+        target_name: Some(format!("{module_name}.{}", function.name)),
     }
 }
 
@@ -521,7 +625,15 @@ fn qualified_function(function: &ExternalFunction, module_name: &str) -> Externa
         name: format!("{module_name}.{}", function.name),
         params: function.params.clone(),
         return_type: function.return_type.clone(),
+        target_name: function.target_name.clone(),
     }
+}
+
+fn function_target(function: &ExternalFunction, imported_module: &str) -> String {
+    function
+        .target_name
+        .clone()
+        .unwrap_or_else(|| format!("{imported_module}.{}", function.name))
 }
 
 fn collect_result(
@@ -545,8 +657,10 @@ struct ParsedSource {
     module: Module,
 }
 
+#[derive(Clone)]
 struct ModuleInfo {
     exported_functions: Vec<ExternalFunction>,
+    reexport_imports: Vec<LocalImport>,
 }
 
 fn source_error(parsed: Option<&ParsedSource>, diagnostic: Diagnostic) -> SourceDiagnostics {

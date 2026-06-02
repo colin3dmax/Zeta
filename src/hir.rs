@@ -14,11 +14,21 @@ fn dump_item(item: &Item, indent: usize, out: &mut String) {
         Item::ModuleDecl { name, .. } => {
             out.push_str(&format!("{pad}module {name}\n"));
         }
-        Item::Import { path, alias, .. } => {
+        Item::Import {
+            exported,
+            path,
+            alias,
+            ..
+        } => {
+            let visibility = if *exported { " exported" } else { "" };
             if let Some(alias) = alias {
-                out.push_str(&format!("{pad}import {} as {alias}\n", path.join(".")));
+                out.push_str(&format!(
+                    "{pad}import{} {} as {alias}\n",
+                    visibility,
+                    path.join(".")
+                ));
             } else {
-                out.push_str(&format!("{pad}import {}\n", path.join(".")));
+                out.push_str(&format!("{pad}import{} {}\n", visibility, path.join(".")));
             }
         }
         Item::Struct(decl) => {

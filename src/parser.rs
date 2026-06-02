@@ -49,6 +49,8 @@ impl Parser {
             return Ok(Item::ModuleDecl { name, name_span });
         }
 
+        let exported = self.consume_keyword(Keyword::Export).is_some();
+
         if self.consume_keyword(Keyword::Import).is_some() {
             let (path, path_span) = self.parse_path_span()?;
             let (alias, alias_span) = if self.consume_keyword(Keyword::As).is_some() {
@@ -59,6 +61,7 @@ impl Parser {
             };
             self.expect_symbol(Symbol::Semicolon, "expected `;` after import")?;
             return Ok(Item::Import {
+                exported,
                 path,
                 path_span,
                 alias,
@@ -66,7 +69,6 @@ impl Parser {
             });
         }
 
-        let exported = self.consume_keyword(Keyword::Export).is_some();
         if self.consume_keyword(Keyword::Struct).is_some() {
             return self.parse_struct(exported).map(Item::Struct);
         }
