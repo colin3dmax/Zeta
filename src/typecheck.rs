@@ -30,17 +30,24 @@ pub struct ExternalStruct {
     pub fields: Vec<(String, String)>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalEnum {
+    pub name: String,
+    pub variants: Vec<(String, Option<String>)>,
+}
+
 pub fn check_with_external_functions(
     module: &Module,
     external_functions: &[ExternalFunction],
 ) -> Result<(), Vec<Diagnostic>> {
-    check_with_external_items(module, external_functions, &[])
+    check_with_external_items(module, external_functions, &[], &[])
 }
 
 pub fn check_with_external_items(
     module: &Module,
     external_functions: &[ExternalFunction],
     external_structs: &[ExternalStruct],
+    external_enums: &[ExternalEnum],
 ) -> Result<(), Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
     let mut functions = function_signatures(module);
@@ -55,7 +62,12 @@ pub fn check_with_external_items(
             .entry(external_struct.name.clone())
             .or_insert_with(|| external_struct_type(external_struct));
     }
-    let enums = enum_types(module);
+    let mut enums = enum_types(module);
+    for external_enum in external_enums {
+        enums
+            .entry(external_enum.name.clone())
+            .or_insert_with(|| external_enum_type(external_enum));
+    }
     for item in &module.items {
         if let Item::Function(function) = item {
             check_function(function, &functions, &structs, &enums, &mut diagnostics);
@@ -90,6 +102,16 @@ fn external_struct_type(external_struct: &ExternalStruct) -> StructType {
             .fields
             .iter()
             .map(|(name, ty)| (name.clone(), parse_type(ty)))
+            .collect(),
+    }
+}
+
+fn external_enum_type(external_enum: &ExternalEnum) -> EnumType {
+    EnumType {
+        variants: external_enum
+            .variants
+            .iter()
+            .map(|(name, payload_type)| (name.clone(), payload_type.as_deref().map(parse_type)))
             .collect(),
     }
 }

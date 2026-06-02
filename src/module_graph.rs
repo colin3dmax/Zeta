@@ -1,8 +1,8 @@
-use crate::ast::{Function, Item, Module, StructDecl};
+use crate::ast::{EnumDecl, Function, Item, Module, StructDecl};
 use crate::diagnostic::{Diagnostic, Span};
 use crate::mir::{self, MirExpr, MirStmt, Program};
 use crate::runtime::{self, Value};
-use crate::typecheck::{ExternalFunction, ExternalStruct};
+use crate::typecheck::{ExternalEnum, ExternalFunction, ExternalStruct};
 use crate::{parser, resolver, typecheck};
 use std::collections::{HashMap, HashSet};
 
@@ -104,6 +104,7 @@ fn check_parsed_sources(modules: &[ParsedSource]) -> Result<(), Vec<SourceDiagno
     for parsed in modules {
         let external_functions = imported_external_functions(&parsed.module, &module_infos);
         let external_structs = imported_external_structs(&parsed.module, &module_infos);
+        let external_enums = imported_external_enums(&parsed.module, &module_infos);
         let ambiguous_functions = ambiguous_external_function_names(&parsed.module, &module_infos);
         let external_function_names = external_functions
             .iter()
@@ -127,6 +128,7 @@ fn check_parsed_sources(modules: &[ParsedSource]) -> Result<(), Vec<SourceDiagno
                 &parsed.module,
                 &external_functions,
                 &external_structs,
+                &external_enums,
             ),
             &mut errors,
         );
@@ -382,6 +384,7 @@ fn module_infos(
                 ModuleInfo {
                     exported_functions: exported_functions(&parsed.module, name),
                     exported_structs: exported_structs(&parsed.module),
+                    exported_enums: exported_enums(&parsed.module),
                     reexport_imports: exported_imports(&parsed.module),
                 },
             );
@@ -402,15 +405,18 @@ fn expand_reexports(
         for info in infos.values_mut() {
             let mut exported = info.exported_functions.clone();
             let mut structs = info.exported_structs.clone();
+            let mut enums = info.exported_enums.clone();
             for import in &info.reexport_imports {
                 if let Some(imported) = snapshot.get(&import.path) {
                     exported.extend(imported.exported_functions.clone());
                     structs.extend(imported.exported_structs.clone());
+                    enums.extend(imported.exported_enums.clone());
                 }
             }
             changed |=
                 replace_exported_functions_if_changed(&mut info.exported_functions, exported);
             changed |= replace_exported_structs_if_changed(&mut info.exported_structs, structs);
+            changed |= replace_exported_enums_if_changed(&mut info.exported_enums, enums);
         }
         if !changed {
             break;
@@ -459,6 +465,19 @@ fn replace_exported_functions_if_changed(
 fn replace_exported_structs_if_changed(
     current: &mut Vec<ExternalStruct>,
     mut next: Vec<ExternalStruct>,
+) -> bool {
+    next.sort_by(|left, right| left.name.cmp(&right.name));
+    next.dedup();
+    if *current == next {
+        return false;
+    }
+    *current = next;
+    true
+}
+
+fn replace_exported_enums_if_changed(
+    current: &mut Vec<ExternalEnum>,
+    mut next: Vec<ExternalEnum>,
 ) -> bool {
     next.sort_by(|left, right| left.name.cmp(&right.name));
     next.dedup();
@@ -539,6 +558,25 @@ fn imported_external_structs(
         }
     }
     structs
+}
+
+fn imported_external_enums(
+    module: &Module,
+    module_infos: &HashMap<String, ModuleInfo>,
+) -> Vec<ExternalEnum> {
+    let mut enums = Vec::new();
+    let mut seen = HashSet::new();
+    for import in local_imports(module) {
+        let Some(info) = module_infos.get(&import.path) else {
+            continue;
+        };
+        for external_enum in &info.exported_enums {
+            if seen.insert(external_enum.name.clone()) {
+                enums.push(external_enum.clone());
+            }
+        }
+    }
+    enums
 }
 
 fn imported_call_targets(
@@ -655,6 +693,17 @@ fn exported_structs(module: &Module) -> Vec<ExternalStruct> {
         .collect()
 }
 
+fn exported_enums(module: &Module) -> Vec<ExternalEnum> {
+    module
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Enum(decl) if decl.exported => Some(external_enum(decl)),
+            _ => None,
+        })
+        .collect()
+}
+
 fn has_function(module: &Module, name: &str) -> bool {
     module.items.iter().any(|item| match item {
         Item::Function(function) => function.name == name,
@@ -682,6 +731,17 @@ fn external_struct(decl: &StructDecl) -> ExternalStruct {
             .fields
             .iter()
             .map(|field| (field.name.clone(), field.ty.clone()))
+            .collect(),
+    }
+}
+
+fn external_enum(decl: &EnumDecl) -> ExternalEnum {
+    ExternalEnum {
+        name: decl.name.clone(),
+        variants: decl
+            .variants
+            .iter()
+            .map(|variant| (variant.name.clone(), variant.payload_type.clone()))
             .collect(),
     }
 }
@@ -727,6 +787,7 @@ struct ParsedSource {
 struct ModuleInfo {
     exported_functions: Vec<ExternalFunction>,
     exported_structs: Vec<ExternalStruct>,
+    exported_enums: Vec<ExternalEnum>,
     reexport_imports: Vec<LocalImport>,
 }
 
