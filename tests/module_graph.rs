@@ -94,6 +94,44 @@ export fn answer() -> Int {
 }
 
 #[test]
+fn module_graph_accepts_qualified_reexported_function_calls() {
+    let files = vec![
+        source_file(
+            "app.zeta",
+            r#"
+module demo.app;
+import demo.facade;
+
+fn main() -> Int {
+  return demo.facade.answer();
+}
+"#,
+        ),
+        source_file(
+            "facade.zeta",
+            r#"
+module demo.facade;
+export import demo.math;
+"#,
+        ),
+        source_file(
+            "math.zeta",
+            r#"
+module demo.math;
+
+export fn answer() -> Int {
+  return 42;
+}
+"#,
+        ),
+    ];
+
+    let value =
+        zeta::module_graph::run_sources(&files).expect("qualified re-exported call should run");
+    assert_eq!(value.to_string(), "42");
+}
+
+#[test]
 fn module_graph_rejects_ambiguous_reexports() {
     let files = vec![
         source_file(

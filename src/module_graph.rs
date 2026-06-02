@@ -516,6 +516,9 @@ fn imported_call_targets(
                     .entry(function.name.clone())
                     .or_insert_with(|| function_target(function, &import.path));
             }
+            targets
+                .entry(format!("{}.{}", import.path, function.name))
+                .or_insert_with(|| function_target(function, &import.path));
             if let Some(alias) = &import.alias {
                 targets
                     .entry(format!("{alias}.{}", function.name))
