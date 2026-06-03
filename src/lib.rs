@@ -36,7 +36,9 @@ pub fn dump_mir(source: &str) -> Result<String, Vec<Diagnostic>> {
     let module = parse_source(source)?;
     resolver::resolve(&module)?;
     typecheck::check(&module)?;
-    let program = mir::lower(&module);
+    let external_enum_payloads =
+        module_graph::external_enum_payloads(&typecheck::standard_external_enums(&module));
+    let program = mir::lower_with_external_enum_variants(&module, &external_enum_payloads);
     mir::verify(&program)?;
     Ok(mir::dump_program(&program))
 }
@@ -51,7 +53,11 @@ pub fn run_source(source: &str) -> Result<runtime::Value, Vec<Diagnostic>> {
     let module = parse_source(source)?;
     resolver::resolve(&module)?;
     typecheck::check(&module)?;
-    runtime::run(&module)
+    let external_enum_payloads =
+        module_graph::external_enum_payloads(&typecheck::standard_external_enums(&module));
+    let program = mir::lower_with_external_enum_variants(&module, &external_enum_payloads);
+    mir::verify(&program)?;
+    runtime::run_mir(&program)
 }
 
 pub fn run_repl_source(source: &str) -> Result<runtime::Value, Vec<Diagnostic>> {

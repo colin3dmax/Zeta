@@ -69,6 +69,99 @@ pub fn run_sources(files: &[SourceFile]) -> Result<Value, Vec<SourceDiagnostics>
     })
 }
 
+pub fn dump_symbols(files: &[SourceFile]) -> Result<String, Vec<SourceDiagnostics>> {
+    let modules = parse_sources(files)?;
+    check_parsed_sources(&modules)?;
+    let mut errors = Vec::new();
+    let module_infos = module_infos(&modules, &mut errors);
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+
+    let mut module_names = module_infos.keys().cloned().collect::<Vec<_>>();
+    module_names.sort();
+    let mut out = String::from("ModuleSymbols\n");
+    for module_name in module_names {
+        let info = &module_infos[&module_name];
+        out.push_str(&format!("  module {module_name}\n"));
+
+        let mut functions = info.exported_functions.clone();
+        functions.sort_by(|left, right| {
+            left.name
+                .cmp(&right.name)
+                .then_with(|| left.target_name.cmp(&right.target_name))
+        });
+        for function in functions {
+            let symbol = function
+                .target_name
+                .as_deref()
+                .unwrap_or(function.name.as_str());
+            let params = if function.params.is_empty() {
+                "Unit".to_string()
+            } else {
+                function.params.join(",")
+            };
+            let return_type = function.return_type.as_deref().unwrap_or("Unit");
+            out.push_str(&format!(
+                "    fn {} symbol={} params=({}) return={}\n",
+                function.name, symbol, params, return_type
+            ));
+        }
+
+        let mut structs = info.exported_structs.clone();
+        structs.sort_by(|left, right| {
+            left.name
+                .cmp(&right.name)
+                .then_with(|| left.target_name.cmp(&right.target_name))
+        });
+        for external_struct in structs {
+            let symbol = external_struct
+                .target_name
+                .as_deref()
+                .unwrap_or(external_struct.name.as_str());
+            let mut fields = external_struct.fields;
+            fields.sort_by(|left, right| left.0.cmp(&right.0));
+            let fields = fields
+                .into_iter()
+                .map(|(name, ty)| format!("{name}:{ty}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            out.push_str(&format!(
+                "    struct {} symbol={} fields={}\n",
+                external_struct.name, symbol, fields
+            ));
+        }
+
+        let mut enums = info.exported_enums.clone();
+        enums.sort_by(|left, right| {
+            left.name
+                .cmp(&right.name)
+                .then_with(|| left.target_name.cmp(&right.target_name))
+        });
+        for external_enum in enums {
+            let symbol = external_enum
+                .target_name
+                .as_deref()
+                .unwrap_or(external_enum.name.as_str());
+            let mut variants = external_enum.variants;
+            variants.sort_by(|left, right| left.0.cmp(&right.0));
+            let variants = variants
+                .into_iter()
+                .map(|(name, payload)| match payload {
+                    Some(payload) => format!("{name}({payload})"),
+                    None => name,
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            out.push_str(&format!(
+                "    enum {} symbol={} variants={}\n",
+                external_enum.name, symbol, variants
+            ));
+        }
+    }
+    Ok(out)
+}
+
 fn parse_sources(files: &[SourceFile]) -> Result<Vec<ParsedSource>, Vec<SourceDiagnostics>> {
     let mut modules = Vec::new();
     let mut errors = Vec::new();
@@ -105,12 +198,7 @@ fn check_parsed_sources(modules: &[ParsedSource]) -> Result<(), Vec<SourceDiagno
         let external_functions = imported_external_functions(&parsed.module, &module_infos);
         let external_structs = imported_external_structs(&parsed.module, &module_infos);
         let external_enums = imported_external_enums(&parsed.module, &module_infos);
-        collect_imported_type_ambiguity_errors(
-            parsed,
-            &external_structs,
-            &external_enums,
-            &mut errors,
-        );
+        collect_imported_type_ambiguity_errors(parsed, &parsed.module, &module_infos, &mut errors);
         let external_enum_variants = external_enum_variants(&external_enums);
         let ambiguous_functions = ambiguous_external_function_names(&parsed.module, &module_infos);
         let external_function_names = external_functions
@@ -394,8 +482,8 @@ fn module_infos(
                 name.to_string(),
                 ModuleInfo {
                     exported_functions: exported_functions(&parsed.module, name),
-                    exported_structs: exported_structs(&parsed.module),
-                    exported_enums: exported_enums(&parsed.module),
+                    exported_structs: exported_structs(&parsed.module, name),
+                    exported_enums: exported_enums(&parsed.module, name),
                     reexport_imports: exported_imports(&parsed.module),
                 },
             );
@@ -448,6 +536,19 @@ fn expand_reexports(
                 diagnostics: vec![Diagnostic::new(
                     "RESOLVE_AMBIGUOUS_REEXPORT",
                     format!("module `{name}` exports multiple functions named `{duplicate}`"),
+                    span,
+                )],
+            });
+        }
+        if let Some(duplicate) =
+            duplicate_export_type_name(&info.exported_structs, &info.exported_enums)
+        {
+            errors.push(SourceDiagnostics {
+                path: parsed.path.clone(),
+                source: parsed.source.clone(),
+                diagnostics: vec![Diagnostic::new(
+                    "RESOLVE_AMBIGUOUS_REEXPORT",
+                    format!("module `{name}` exports multiple types named `{duplicate}`"),
                     span,
                 )],
             });
@@ -509,45 +610,87 @@ fn duplicate_export_name(functions: &[ExternalFunction]) -> Option<String> {
     None
 }
 
-fn collect_imported_type_ambiguity_errors(
-    parsed: &ParsedSource,
+fn duplicate_export_type_name(
     structs: &[ExternalStruct],
     enums: &[ExternalEnum],
-    errors: &mut Vec<SourceDiagnostics>,
-) {
-    let mut seen = HashSet::new();
+) -> Option<String> {
+    let mut seen = HashMap::new();
     for external_struct in structs {
-        if !seen.insert(external_struct.name.as_str()) {
-            errors.push(source_error(
-                Some(parsed),
-                Diagnostic::new(
-                    "RESOLVE_AMBIGUOUS_TYPE",
-                    format!(
-                        "ambiguous imported type `{}`; use distinct exported type names",
-                        external_struct.name
-                    ),
-                    Span::new(0, 0),
-                ),
-            ));
-            return;
+        let origin = type_target_name(
+            &external_struct.name,
+            external_struct.target_name.as_deref(),
+        );
+        if seen
+            .get(external_struct.name.as_str())
+            .is_some_and(|first| first != &origin)
+        {
+            return Some(external_struct.name.clone());
         }
+        seen.insert(external_struct.name.as_str(), origin);
     }
     for external_enum in enums {
-        if !seen.insert(external_enum.name.as_str()) {
-            errors.push(source_error(
-                Some(parsed),
-                Diagnostic::new(
-                    "RESOLVE_AMBIGUOUS_TYPE",
-                    format!(
-                        "ambiguous imported type `{}`; use distinct exported type names",
-                        external_enum.name
-                    ),
-                    Span::new(0, 0),
-                ),
-            ));
-            return;
+        let origin = type_target_name(&external_enum.name, external_enum.target_name.as_deref());
+        if seen
+            .get(external_enum.name.as_str())
+            .is_some_and(|first| first != &origin)
+        {
+            return Some(external_enum.name.clone());
+        }
+        seen.insert(external_enum.name.as_str(), origin);
+    }
+    None
+}
+
+fn collect_imported_type_ambiguity_errors(
+    parsed: &ParsedSource,
+    module: &Module,
+    module_infos: &HashMap<String, ModuleInfo>,
+    errors: &mut Vec<SourceDiagnostics>,
+) {
+    if let Some(duplicate) = ambiguous_external_type_name(module, module_infos) {
+        errors.push(source_error(
+            Some(parsed),
+            Diagnostic::new(
+                "RESOLVE_AMBIGUOUS_TYPE",
+                format!("ambiguous imported type `{duplicate}`; use distinct exported type names"),
+                Span::new(0, 0),
+            ),
+        ));
+    }
+}
+
+fn ambiguous_external_type_name(
+    module: &Module,
+    module_infos: &HashMap<String, ModuleInfo>,
+) -> Option<String> {
+    let mut origins: HashMap<String, HashSet<String>> = HashMap::new();
+    for import in local_imports(module) {
+        let Some(info) = module_infos.get(&import.path) else {
+            continue;
+        };
+        for external_struct in &info.exported_structs {
+            let origin = type_target_name(
+                &external_struct.name,
+                external_struct.target_name.as_deref(),
+            );
+            origins
+                .entry(external_struct.name.clone())
+                .or_default()
+                .insert(origin);
+        }
+        for external_enum in &info.exported_enums {
+            let origin =
+                type_target_name(&external_enum.name, external_enum.target_name.as_deref());
+            origins
+                .entry(external_enum.name.clone())
+                .or_default()
+                .insert(origin);
         }
     }
+    origins
+        .into_iter()
+        .filter_map(|(name, origins)| (origins.len() > 1).then_some(name))
+        .min()
 }
 
 fn module_decl(module: &Module) -> Option<(&str, Span)> {
@@ -616,8 +759,11 @@ fn imported_external_enums(
     module: &Module,
     module_infos: &HashMap<String, ModuleInfo>,
 ) -> Vec<ExternalEnum> {
-    let mut enums = Vec::new();
-    let mut seen = HashSet::new();
+    let mut enums = typecheck::standard_external_enums(module);
+    let mut seen = enums
+        .iter()
+        .map(|external_enum| external_enum.name.clone())
+        .collect::<HashSet<_>>();
     for import in local_imports(module) {
         let Some(info) = module_infos.get(&import.path) else {
             continue;
@@ -647,7 +793,7 @@ fn external_enum_variants(enums: &[ExternalEnum]) -> HashMap<String, HashSet<Str
         .collect()
 }
 
-fn external_enum_payloads(
+pub fn external_enum_payloads(
     enums: &[ExternalEnum],
 ) -> HashMap<String, HashMap<String, Option<String>>> {
     enums
@@ -768,23 +914,23 @@ fn exported_functions(module: &Module, module_name: &str) -> Vec<ExternalFunctio
         .collect()
 }
 
-fn exported_structs(module: &Module) -> Vec<ExternalStruct> {
+fn exported_structs(module: &Module, module_name: &str) -> Vec<ExternalStruct> {
     module
         .items
         .iter()
         .filter_map(|item| match item {
-            Item::Struct(decl) if decl.exported => Some(external_struct(decl)),
+            Item::Struct(decl) if decl.exported => Some(external_struct(decl, module_name)),
             _ => None,
         })
         .collect()
 }
 
-fn exported_enums(module: &Module) -> Vec<ExternalEnum> {
+fn exported_enums(module: &Module, module_name: &str) -> Vec<ExternalEnum> {
     module
         .items
         .iter()
         .filter_map(|item| match item {
-            Item::Enum(decl) if decl.exported => Some(external_enum(decl)),
+            Item::Enum(decl) if decl.exported => Some(external_enum(decl, module_name)),
             _ => None,
         })
         .collect()
@@ -810,7 +956,7 @@ fn external_function(function: &Function, module_name: &str) -> ExternalFunction
     }
 }
 
-fn external_struct(decl: &StructDecl) -> ExternalStruct {
+fn external_struct(decl: &StructDecl, module_name: &str) -> ExternalStruct {
     ExternalStruct {
         name: decl.name.clone(),
         fields: decl
@@ -818,10 +964,11 @@ fn external_struct(decl: &StructDecl) -> ExternalStruct {
             .iter()
             .map(|field| (field.name.clone(), field.ty.clone()))
             .collect(),
+        target_name: Some(format!("{module_name}.{}", decl.name)),
     }
 }
 
-fn external_enum(decl: &EnumDecl) -> ExternalEnum {
+fn external_enum(decl: &EnumDecl, module_name: &str) -> ExternalEnum {
     ExternalEnum {
         name: decl.name.clone(),
         variants: decl
@@ -829,6 +976,7 @@ fn external_enum(decl: &EnumDecl) -> ExternalEnum {
             .iter()
             .map(|variant| (variant.name.clone(), variant.payload_type.clone()))
             .collect(),
+        target_name: Some(format!("{module_name}.{}", decl.name)),
     }
 }
 
@@ -846,6 +994,10 @@ fn function_target(function: &ExternalFunction, imported_module: &str) -> String
         .target_name
         .clone()
         .unwrap_or_else(|| format!("{imported_module}.{}", function.name))
+}
+
+fn type_target_name(name: &str, target_name: Option<&str>) -> String {
+    target_name.unwrap_or(name).to_string()
 }
 
 fn collect_result(

@@ -95,6 +95,25 @@ fn main() -> Int {
 }
 
 #[test]
+fn check_rejects_std_core_type_shadowing() {
+    let source = r#"
+import std.core;
+
+enum OptionInt {
+  Local,
+}
+
+fn main() {
+  return;
+}
+"#;
+    let diagnostics =
+        zeta::check_source(source).expect_err("local item should not shadow std.core type");
+    assert_eq!(diagnostics[0].code, "RESOLVE_DUPLICATE_ITEM");
+    assert_eq!(diagnostics[0].span, span_of(source, "OptionInt"));
+}
+
+#[test]
 fn check_rejects_unknown_imports() {
     let source = r#"
 import std.net;

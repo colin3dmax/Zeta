@@ -11,6 +11,7 @@ fn main() {
         Some("ast-dump") if args.len() == 3 => ast_dump(&args[2]),
         Some("hir-dump") if args.len() == 3 => hir_dump(&args[2]),
         Some("mir-dump") if args.len() == 3 => mir_dump(&args[2]),
+        Some("symbols-dump") if args.len() == 3 => symbols_dump(&args[2]),
         Some("check") if args.len() == 3 => check(&args[2]),
         Some("run") if args.len() == 3 => run(&args[2]),
         Some("repl") if args.len() == 2 => repl(),
@@ -18,6 +19,7 @@ fn main() {
             eprintln!("usage: zeta ast-dump <path>");
             eprintln!("       zeta hir-dump <path>");
             eprintln!("       zeta mir-dump <path>");
+            eprintln!("       zeta symbols-dump <directory>");
             eprintln!("       zeta check <path>");
             eprintln!("       zeta run <path>");
             eprintln!("       zeta repl");
@@ -80,6 +82,24 @@ fn mir_dump(path: &str) {
     }
 }
 
+fn symbols_dump(path: &str) {
+    let path_ref = Path::new(path);
+    if !path_ref.is_dir() {
+        eprintln!("symbols-dump expects a module directory");
+        process::exit(1);
+    }
+    let files = load_module_directory(path_ref);
+    match zeta::module_graph::dump_symbols(&files) {
+        Ok(dump) => print!("{dump}"),
+        Err(errors) => {
+            for error in errors {
+                print_diagnostics(&error.diagnostics, &error.source, &error.path);
+            }
+            process::exit(1);
+        }
+    }
+}
+
 fn check(path: &str) {
     let path_ref = Path::new(path);
     if path_ref.is_dir() {
@@ -105,32 +125,7 @@ fn check(path: &str) {
 }
 
 fn check_module_directory(root: &Path) {
-    let paths = match zeta_files(root) {
-        Ok(paths) => paths,
-        Err(err) => {
-            eprintln!("failed to scan {}: {err}", root.display());
-            process::exit(1);
-        }
-    };
-    if paths.is_empty() {
-        eprintln!("no .zeta files found in {}", root.display());
-        process::exit(1);
-    }
-
-    let mut files = Vec::new();
-    for path in paths {
-        let source = match fs::read_to_string(&path) {
-            Ok(source) => source,
-            Err(err) => {
-                eprintln!("failed to read {}: {err}", path.display());
-                process::exit(1);
-            }
-        };
-        files.push(zeta::module_graph::SourceFile {
-            path: path.display().to_string(),
-            source,
-        });
-    }
+    let files = load_module_directory(root);
 
     match zeta::module_graph::check_sources(&files) {
         Ok(()) => println!("ok"),
@@ -163,31 +158,7 @@ fn collect_zeta_files(path: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()
     Ok(())
 }
 
-fn run(path: &str) {
-    let path_ref = Path::new(path);
-    if path_ref.is_dir() {
-        run_module_directory(path_ref);
-        return;
-    }
-
-    let source = match fs::read_to_string(path) {
-        Ok(source) => source,
-        Err(err) => {
-            eprintln!("failed to read {path}: {err}");
-            process::exit(1);
-        }
-    };
-
-    match zeta::run_source(&source) {
-        Ok(value) => println!("{value}"),
-        Err(diagnostics) => {
-            print_diagnostics(&diagnostics, &source, path);
-            process::exit(1);
-        }
-    }
-}
-
-fn run_module_directory(root: &Path) {
+fn load_module_directory(root: &Path) -> Vec<zeta::module_graph::SourceFile> {
     let paths = match zeta_files(root) {
         Ok(paths) => paths,
         Err(err) => {
@@ -214,6 +185,35 @@ fn run_module_directory(root: &Path) {
             source,
         });
     }
+    files
+}
+
+fn run(path: &str) {
+    let path_ref = Path::new(path);
+    if path_ref.is_dir() {
+        run_module_directory(path_ref);
+        return;
+    }
+
+    let source = match fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(err) => {
+            eprintln!("failed to read {path}: {err}");
+            process::exit(1);
+        }
+    };
+
+    match zeta::run_source(&source) {
+        Ok(value) => println!("{value}"),
+        Err(diagnostics) => {
+            print_diagnostics(&diagnostics, &source, path);
+            process::exit(1);
+        }
+    }
+}
+
+fn run_module_directory(root: &Path) {
+    let files = load_module_directory(root);
 
     match zeta::module_graph::run_sources(&files) {
         Ok(value) => println!("{value}"),

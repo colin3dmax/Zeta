@@ -1,5 +1,6 @@
 use crate::ast::{BinaryOp, Expr, Function, Item, Module, Pattern, Stmt, UnaryOp};
 use crate::diagnostic::{Diagnostic, Span};
+use crate::std_api;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,7 +14,8 @@ enum Type {
 }
 
 pub fn check(module: &Module) -> Result<(), Vec<Diagnostic>> {
-    check_with_external_functions(module, &[])
+    let external_enums = standard_external_enums(module);
+    check_with_external_items(module, &[], &[], &external_enums)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,12 +30,14 @@ pub struct ExternalFunction {
 pub struct ExternalStruct {
     pub name: String,
     pub fields: Vec<(String, String)>,
+    pub target_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalEnum {
     pub name: String,
     pub variants: Vec<(String, Option<String>)>,
+    pub target_name: Option<String>,
 }
 
 pub fn check_with_external_functions(
@@ -114,6 +118,34 @@ fn external_enum_type(external_enum: &ExternalEnum) -> EnumType {
             .map(|(name, payload_type)| (name.clone(), payload_type.as_deref().map(parse_type)))
             .collect(),
     }
+}
+
+pub fn standard_external_enums(module: &Module) -> Vec<ExternalEnum> {
+    let imports_std_core = module.items.iter().any(|item| match item {
+        Item::Import { path, .. } => std_api::is_std_core_import(path),
+        _ => false,
+    });
+    if !imports_std_core {
+        return Vec::new();
+    }
+
+    std_api::core_enums()
+        .iter()
+        .map(|standard_enum| ExternalEnum {
+            name: standard_enum.name.to_string(),
+            variants: standard_enum
+                .variants
+                .iter()
+                .map(|variant| {
+                    (
+                        variant.name.to_string(),
+                        variant.payload_type.map(str::to_string),
+                    )
+                })
+                .collect(),
+            target_name: Some(format!("std.core.{}", standard_enum.name)),
+        })
+        .collect()
 }
 
 fn check_function(

@@ -132,6 +132,146 @@ export fn answer() -> Int {
 }
 
 #[test]
+fn module_graph_accepts_reexported_structs() {
+    let files = vec![
+        source_file(
+            "app.zeta",
+            r#"
+module demo.app;
+import demo.facade;
+
+fn main() -> Int {
+  let user: User = make_user();
+  return user.age;
+}
+"#,
+        ),
+        source_file(
+            "facade.zeta",
+            r#"
+module demo.facade;
+export import demo.model;
+"#,
+        ),
+        source_file(
+            "model.zeta",
+            r#"
+module demo.model;
+
+export struct User {
+  name: String,
+  age: Int,
+}
+
+export fn make_user() -> User {
+  return User { name: "Ada", age: 42 };
+}
+"#,
+        ),
+    ];
+
+    let value = zeta::module_graph::run_sources(&files).expect("re-exported struct should run");
+    assert_eq!(value.to_string(), "42");
+}
+
+#[test]
+fn module_graph_accepts_reexported_enums() {
+    let files = vec![
+        source_file(
+            "app.zeta",
+            r#"
+module demo.app;
+import demo.facade;
+
+fn main() -> Int {
+  let result: ResultInt = answer();
+  match result {
+    ResultInt.Ok(value) -> { return value; },
+    ResultInt.Err(message) -> { return 0; },
+  }
+  return 0;
+}
+"#,
+        ),
+        source_file(
+            "facade.zeta",
+            r#"
+module demo.facade;
+export import demo.model;
+"#,
+        ),
+        source_file(
+            "model.zeta",
+            r#"
+module demo.model;
+
+export enum ResultInt {
+  Ok(Int),
+  Err(String),
+}
+
+export fn answer() -> ResultInt {
+  return ResultInt.Ok(42);
+}
+"#,
+        ),
+    ];
+
+    let value = zeta::module_graph::run_sources(&files).expect("re-exported enum should run");
+    assert_eq!(value.to_string(), "42");
+}
+
+#[test]
+fn module_graph_dumps_stable_reexported_symbols() {
+    let files = vec![
+        source_file(
+            "app.zeta",
+            r#"
+module demo.app;
+import demo.facade;
+
+fn main() -> Int {
+  return answer();
+}
+"#,
+        ),
+        source_file(
+            "facade.zeta",
+            r#"
+module demo.facade;
+export import demo.model;
+"#,
+        ),
+        source_file(
+            "model.zeta",
+            r#"
+module demo.model;
+
+export struct User {
+  name: String,
+  age: Int,
+}
+
+export enum ResultInt {
+  Ok(Int),
+  Err(String),
+}
+
+export fn answer() -> Int {
+  return 42;
+}
+"#,
+        ),
+    ];
+
+    let dump = zeta::module_graph::dump_symbols(&files).expect("symbols should dump");
+    assert_eq!(
+        dump,
+        "ModuleSymbols\n  module demo.app\n  module demo.facade\n    fn answer symbol=demo.model.answer params=(Unit) return=Int\n    struct User symbol=demo.model.User fields=age:Int,name:String\n    enum ResultInt symbol=demo.model.ResultInt variants=Err(String),Ok(Int)\n  module demo.model\n    fn answer symbol=demo.model.answer params=(Unit) return=Int\n    struct User symbol=demo.model.User fields=age:Int,name:String\n    enum ResultInt symbol=demo.model.ResultInt variants=Err(String),Ok(Int)\n"
+    );
+}
+
+#[test]
 fn module_graph_accepts_imported_struct_field_access() {
     let files = vec![
         source_file(
@@ -251,6 +391,30 @@ export fn unwrap(result: ResultInt) -> Int {
 }
 
 #[test]
+fn module_graph_accepts_std_core_option_int() {
+    let files = vec![source_file(
+        "app.zeta",
+        r#"
+module demo.app;
+import std.core;
+
+fn main() -> Int {
+  let value: OptionInt = OptionInt.None;
+  match value {
+    OptionInt.Some(answer) -> { return answer; },
+    OptionInt.None -> { return 42; },
+  }
+  return 0;
+}
+"#,
+    )];
+
+    let value = zeta::module_graph::run_sources(&files)
+        .expect("std.core OptionInt should typecheck and run in module graph mode");
+    assert_eq!(value.to_string(), "42");
+}
+
+#[test]
 fn module_graph_rejects_ambiguous_imported_type_names() {
     let files = vec![
         source_file(
@@ -290,6 +454,53 @@ export enum Item {
 
     let errors =
         zeta::module_graph::check_sources(&files).expect_err("ambiguous type import should fail");
+    assert_eq!(errors[0].diagnostics[0].code, "RESOLVE_AMBIGUOUS_TYPE");
+}
+
+#[test]
+fn module_graph_rejects_ambiguous_imported_struct_names() {
+    let files = vec![
+        source_file(
+            "app.zeta",
+            r#"
+module demo.app;
+import demo.alpha;
+import demo.beta;
+
+fn main() -> Int {
+  let item: Item = make_alpha();
+  return item.value;
+}
+"#,
+        ),
+        source_file(
+            "alpha.zeta",
+            r#"
+module demo.alpha;
+
+export struct Item {
+  value: Int,
+}
+
+export fn make_alpha() -> Item {
+  return Item { value: 40 };
+}
+"#,
+        ),
+        source_file(
+            "beta.zeta",
+            r#"
+module demo.beta;
+
+export struct Item {
+  value: Int,
+}
+"#,
+        ),
+    ];
+
+    let errors =
+        zeta::module_graph::check_sources(&files).expect_err("ambiguous struct import should fail");
     assert_eq!(errors[0].diagnostics[0].code, "RESOLVE_AMBIGUOUS_TYPE");
 }
 
@@ -339,6 +550,56 @@ export fn answer() -> Int {
 
     let errors =
         zeta::module_graph::check_sources(&files).expect_err("ambiguous re-export should fail");
+    assert_eq!(errors[0].diagnostics[0].code, "RESOLVE_AMBIGUOUS_REEXPORT");
+}
+
+#[test]
+fn module_graph_rejects_ambiguous_type_reexports() {
+    let files = vec![
+        source_file(
+            "app.zeta",
+            r#"
+module demo.app;
+import demo.facade;
+
+fn main() -> Int {
+  return 42;
+}
+"#,
+        ),
+        source_file(
+            "facade.zeta",
+            r#"
+module demo.facade;
+export import demo.alpha;
+export import demo.beta;
+"#,
+        ),
+        source_file(
+            "alpha.zeta",
+            r#"
+module demo.alpha;
+
+export struct Item {
+  value: Int,
+}
+"#,
+        ),
+        source_file(
+            "beta.zeta",
+            r#"
+module demo.beta;
+
+export enum Item {
+  Found(Int),
+  Missing,
+}
+"#,
+        ),
+    ];
+
+    let errors = zeta::module_graph::check_sources(&files)
+        .expect_err("ambiguous type re-export should fail");
     assert_eq!(errors[0].diagnostics[0].code, "RESOLVE_AMBIGUOUS_REEXPORT");
 }
 

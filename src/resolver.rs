@@ -53,9 +53,17 @@ pub fn resolve_with_imports_functions_enums_and_ambiguous(
     check_top_level(module, local_imports, &mut diagnostics);
     let mut functions = function_names(module);
     functions.extend(external_functions.iter().cloned());
-    let top_level_names = top_level_names(module);
+    let mut top_level_names = top_level_names(module);
     let mut enum_variants = enum_variants(module);
+    for standard_enum in standard_enum_variants(module) {
+        top_level_names.insert(standard_enum.0.clone());
+        enum_variants
+            .entry(standard_enum.0)
+            .or_default()
+            .extend(standard_enum.1);
+    }
     for (enum_name, variants) in external_enum_variants {
+        top_level_names.insert(enum_name.clone());
         enum_variants
             .entry(enum_name.clone())
             .or_default()
@@ -87,6 +95,7 @@ fn check_top_level(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let mut names = HashSet::new();
+    let standard_top_level_names = standard_top_level_names(module);
     for item in &module.items {
         if let Item::Import {
             path, path_span, ..
@@ -101,6 +110,13 @@ fn check_top_level(
             diagnostics.push(Diagnostic::new(
                 "RESOLVE_DUPLICATE_ITEM",
                 format!("duplicate top-level item `{name}`"),
+                span,
+            ));
+        }
+        if standard_top_level_names.contains(name) {
+            diagnostics.push(Diagnostic::new(
+                "RESOLVE_DUPLICATE_ITEM",
+                format!("top-level item `{name}` conflicts with an imported std.core item"),
                 span,
             ));
         }
@@ -518,6 +534,45 @@ fn enum_variants(module: &Module) -> HashMap<String, HashSet<String>> {
             )),
             _ => None,
         })
+        .collect()
+}
+
+fn standard_enum_variants(module: &Module) -> Vec<(String, HashSet<String>)> {
+    let imports_std_core = module.items.iter().any(|item| match item {
+        Item::Import { path, .. } => std_api::is_std_core_import(path),
+        _ => false,
+    });
+    if !imports_std_core {
+        return Vec::new();
+    }
+
+    std_api::core_enums()
+        .iter()
+        .map(|standard_enum| {
+            (
+                standard_enum.name.to_string(),
+                standard_enum
+                    .variants
+                    .iter()
+                    .map(|variant| variant.name.to_string())
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+fn standard_top_level_names(module: &Module) -> HashSet<String> {
+    let imports_std_core = module.items.iter().any(|item| match item {
+        Item::Import { path, .. } => std_api::is_std_core_import(path),
+        _ => false,
+    });
+    if !imports_std_core {
+        return HashSet::new();
+    }
+
+    std_api::core_enums()
+        .iter()
+        .map(|standard_enum| standard_enum.name.to_string())
         .collect()
 }
 

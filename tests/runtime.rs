@@ -69,6 +69,13 @@ fn run_executes_enum_payload_match_binding() {
 }
 
 #[test]
+fn run_executes_std_core_option_and_result_int() {
+    let value = zeta::run_source(include_str!("../testdata/run_std_core.zeta"))
+        .expect("std.core OptionInt/ResultInt program should run");
+    assert_eq!(value.to_string(), "42");
+}
+
+#[test]
 fn mir_interpreter_executes_lowered_program() {
     let source = include_str!("../testdata/run_mut.zeta");
     let module = zeta::parse_source(source).expect("source should parse");

@@ -1,0 +1,19 @@
+import std.core;
+
+fn unwrap_or_zero(value: OptionInt) -> Int {
+  match value {
+    OptionInt.Some(answer) -> { return answer; },
+    OptionInt.None -> { return 0; },
+  }
+  return 0;
+}
+
+fn main() -> Int {
+  let first: OptionInt = OptionInt.Some(40);
+  let second: ResultInt = ResultInt.Ok(2);
+  match second {
+    ResultInt.Ok(delta) -> { return unwrap_or_zero(first) + delta; },
+    ResultInt.Err(message) -> { return 0; },
+  }
+  return 0;
+}

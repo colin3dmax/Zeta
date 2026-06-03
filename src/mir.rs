@@ -133,25 +133,49 @@ pub fn lower_with_external_enum_variants(
                 .map(|(name, payload_type)| (name.clone(), payload_type.clone())),
         );
     }
-    Program {
-        enums: module
-            .items
+    let mut enums = module
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Enum(decl) => Some(MirEnum {
+                name: decl.name.clone(),
+                variants: decl
+                    .variants
+                    .iter()
+                    .map(|variant| MirEnumVariant {
+                        name: variant.name.clone(),
+                        payload_type: variant.payload_type.clone(),
+                    })
+                    .collect(),
+            }),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let local_enum_names = enums
+        .iter()
+        .map(|enum_decl| enum_decl.name.clone())
+        .collect::<HashSet<_>>();
+    let mut external_enums = external_enum_variants
+        .iter()
+        .filter(|(enum_name, _)| !local_enum_names.contains(*enum_name))
+        .collect::<Vec<_>>();
+    external_enums.sort_by_key(|(enum_name, _)| enum_name.as_str());
+    enums.extend(external_enums.into_iter().map(|(enum_name, variants)| {
+        let mut variants = variants
             .iter()
-            .filter_map(|item| match item {
-                Item::Enum(decl) => Some(MirEnum {
-                    name: decl.name.clone(),
-                    variants: decl
-                        .variants
-                        .iter()
-                        .map(|variant| MirEnumVariant {
-                            name: variant.name.clone(),
-                            payload_type: variant.payload_type.clone(),
-                        })
-                        .collect(),
-                }),
-                _ => None,
+            .map(|(name, payload_type)| MirEnumVariant {
+                name: name.clone(),
+                payload_type: payload_type.clone(),
             })
-            .collect(),
+            .collect::<Vec<_>>();
+        variants.sort_by_key(|variant| variant.name.clone());
+        MirEnum {
+            name: enum_name.clone(),
+            variants,
+        }
+    }));
+    Program {
+        enums,
         functions: module
             .items
             .iter()
