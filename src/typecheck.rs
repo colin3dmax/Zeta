@@ -72,6 +72,7 @@ pub fn check_with_external_items(
             .entry(external_enum.name.clone())
             .or_insert_with(|| external_enum_type(external_enum));
     }
+    validate_declared_types(module, &structs, &enums, &mut diagnostics);
     for item in &module.items {
         if let Item::Function(function) = item {
             check_function(function, &functions, &structs, &enums, &mut diagnostics);
@@ -83,6 +84,105 @@ pub fn check_with_external_items(
     } else {
         Err(diagnostics)
     }
+}
+
+fn validate_declared_types(
+    module: &Module,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    for item in &module.items {
+        match item {
+            Item::Struct(decl) => {
+                for field in &decl.fields {
+                    validate_type_name(&field.ty, field.name_span, structs, enums, diagnostics);
+                }
+            }
+            Item::Enum(decl) => {
+                for variant in &decl.variants {
+                    if let Some(payload_type) = &variant.payload_type {
+                        validate_type_name(
+                            payload_type,
+                            variant.name_span,
+                            structs,
+                            enums,
+                            diagnostics,
+                        );
+                    }
+                }
+            }
+            Item::Function(function) => {
+                for param in &function.params {
+                    validate_type_name(&param.ty, param.name_span, structs, enums, diagnostics);
+                }
+                if let Some(return_type) = &function.return_type {
+                    validate_type_name(
+                        return_type,
+                        function.name_span,
+                        structs,
+                        enums,
+                        diagnostics,
+                    );
+                }
+                validate_stmt_types(&function.body, structs, enums, diagnostics);
+            }
+            Item::ModuleDecl { .. } | Item::Import { .. } => {}
+        }
+    }
+}
+
+fn validate_stmt_types(
+    stmts: &[Stmt],
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Let {
+                ty: Some(ty),
+                name_span,
+                ..
+            } => validate_type_name(ty, *name_span, structs, enums, diagnostics),
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                validate_stmt_types(then_body, structs, enums, diagnostics);
+                validate_stmt_types(else_body, structs, enums, diagnostics);
+            }
+            Stmt::While { body, .. } => validate_stmt_types(body, structs, enums, diagnostics),
+            Stmt::Match { arms, .. } => {
+                for arm in arms {
+                    validate_stmt_types(&arm.body, structs, enums, diagnostics);
+                }
+            }
+            Stmt::Let { ty: None, .. } | Stmt::Assign { .. } | Stmt::Return(_) | Stmt::Expr(_) => {}
+        }
+    }
+}
+
+fn validate_type_name(
+    name: &str,
+    span: Span,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if is_builtin_type_name(name) || structs.contains_key(name) || enums.contains_key(name) {
+        return;
+    }
+    diagnostics.push(Diagnostic::new(
+        "TYPE_UNKNOWN_TYPE",
+        format!("unknown type `{name}`"),
+        span,
+    ));
+}
+
+fn is_builtin_type_name(name: &str) -> bool {
+    matches!(name, "Int" | "String" | "Bool" | "Unit")
 }
 
 fn external_function_signature(function: &ExternalFunction) -> FunctionSignature {
@@ -936,6 +1036,7 @@ fn parse_type(name: &str) -> Type {
         "Int" => Type::Int,
         "String" => Type::String,
         "Bool" => Type::Bool,
+        "Unit" => Type::Unit,
         other => Type::Named(other.to_string()),
     }
 }

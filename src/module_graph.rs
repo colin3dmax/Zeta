@@ -424,7 +424,7 @@ fn rewrite_expr(
                 *callee = target.clone();
             } else if callee.contains('.') {
                 return;
-            } else if !is_main_module && local_functions.contains(callee) {
+            } else if local_functions.contains(callee) && !(is_main_module && callee == "main") {
                 if let Some(module_name) = current_module {
                     *callee = format!("{module_name}.{callee}");
                 }

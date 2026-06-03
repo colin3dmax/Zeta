@@ -126,6 +126,62 @@ fn main() -> Int {
 }
 
 #[test]
+fn check_rejects_unknown_struct_field_type() {
+    let source = r#"
+struct User {
+  profile: Profile,
+}
+
+fn main() {
+  return;
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("unknown field type should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_UNKNOWN_TYPE");
+    assert_eq!(diagnostics[0].span, span_of(source, "profile"));
+}
+
+#[test]
+fn check_rejects_unknown_enum_payload_type() {
+    let source = r#"
+enum Event {
+  User(Profile),
+}
+
+fn main() {
+  return;
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("unknown payload type should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_UNKNOWN_TYPE");
+    assert_eq!(diagnostics[0].span, span_of(source, "User"));
+}
+
+#[test]
+fn check_rejects_unknown_function_signature_type() {
+    let source = r#"
+fn map(value: Input) -> Output {
+  return value;
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("unknown signature types should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_UNKNOWN_TYPE");
+    assert_eq!(diagnostics[0].span, span_of(source, "value"));
+}
+
+#[test]
+fn check_rejects_unknown_local_annotation_type() {
+    let source = r#"
+fn main() {
+  let value: Missing = 1;
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("unknown local type should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_UNKNOWN_TYPE");
+    assert_eq!(diagnostics[0].span, span_of(source, "value"));
+}
+
+#[test]
 fn check_rejects_unknown_enum_variant() {
     let source = r#"
 enum ResultTag {

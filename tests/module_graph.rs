@@ -309,6 +309,47 @@ export fn make_user() -> User {
 }
 
 #[test]
+fn module_graph_accepts_imported_types_in_signatures_and_locals() {
+    let files = vec![
+        source_file(
+            "app.zeta",
+            r#"
+module demo.app;
+import demo.model;
+
+fn age(user: User) -> Int {
+  return user.age;
+}
+
+fn main() -> Int {
+  let user: User = make_user();
+  return age(user);
+}
+"#,
+        ),
+        source_file(
+            "model.zeta",
+            r#"
+module demo.model;
+
+export struct User {
+  name: String,
+  age: Int,
+}
+
+export fn make_user() -> User {
+  return User { name: "Ada", age: 42 };
+}
+"#,
+        ),
+    ];
+
+    let value = zeta::module_graph::run_sources(&files)
+        .expect("imported types should be accepted in signatures and locals");
+    assert_eq!(value.to_string(), "42");
+}
+
+#[test]
 fn module_graph_accepts_imported_enum_payload_match() {
     let files = vec![
         source_file(
