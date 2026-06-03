@@ -43,3 +43,11 @@ fn cli_golden_module_ambiguous_short_name_diagnostic() {
         include_str!("../testdata/diagnostics/modules_ambiguous.stderr"),
     );
 }
+
+#[test]
+fn cli_golden_module_ambiguous_type_diagnostic() {
+    assert_check_golden(
+        "testdata/diagnostics/modules_ambiguous_type",
+        include_str!("../testdata/diagnostics/modules_ambiguous_type.stderr"),
+    );
+}

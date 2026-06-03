@@ -1,0 +1,4 @@
+RESOLVE_AMBIGUOUS_TYPE at testdata/diagnostics/modules_ambiguous_type/main.zeta:1:1: ambiguous imported type `Item`; use distinct exported type names
+  |
+ 1 | import demo.alpha;
+  | ^

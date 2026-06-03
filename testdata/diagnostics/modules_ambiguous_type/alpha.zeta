@@ -1,0 +1,5 @@
+module demo.alpha;
+
+export struct Item {
+  value: Int,
+}

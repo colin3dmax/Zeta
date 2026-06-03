@@ -1,0 +1,6 @@
+module demo.beta;
+
+export enum Item {
+  Found(Int),
+  Missing,
+}
