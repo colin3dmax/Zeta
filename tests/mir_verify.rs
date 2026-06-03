@@ -71,6 +71,7 @@ fn verifier_rejects_call_argument_type_mismatch() {
                     name: "value".to_string(),
                     name_span: Span::new(0, 0),
                     ty: "Int".to_string(),
+                    ty_span: Span::new(0, 0),
                 }],
                 return_type: Some("Int".to_string()),
                 body: vec![MirStmt::Return(Some(MirExpr::Load("value".to_string())))],

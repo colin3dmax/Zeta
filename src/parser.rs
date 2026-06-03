@@ -92,11 +92,12 @@ impl Parser {
         while !self.check_symbol(Symbol::RBrace) && !self.at_eof() {
             let (field_name, field_name_span) = self.expect_ident_span("expected field name")?;
             self.expect_symbol(Symbol::Colon, "expected `:` after field name")?;
-            let ty = self.expect_ident("expected field type")?;
+            let (ty, ty_span) = self.expect_ident_span("expected field type")?;
             fields.push(Field {
                 name: field_name,
                 name_span: field_name_span,
                 ty,
+                ty_span,
             });
             if self.consume_symbol(Symbol::Comma).is_none() {
                 break;
@@ -118,17 +119,19 @@ impl Parser {
         while !self.check_symbol(Symbol::RBrace) && !self.at_eof() {
             let (variant_name, variant_span) =
                 self.expect_ident_span("expected enum variant name")?;
-            let payload_type = if self.consume_symbol(Symbol::LParen).is_some() {
-                let ty = self.expect_ident("expected enum variant payload type")?;
+            let (payload_type, payload_type_span) = if self.consume_symbol(Symbol::LParen).is_some()
+            {
+                let (ty, ty_span) = self.expect_ident_span("expected enum variant payload type")?;
                 self.expect_symbol(Symbol::RParen, "expected `)` after enum variant payload")?;
-                Some(ty)
+                (Some(ty), Some(ty_span))
             } else {
-                None
+                (None, None)
             };
             variants.push(EnumVariant {
                 name: variant_name,
                 name_span: variant_span,
                 payload_type,
+                payload_type_span,
             });
             if self.consume_symbol(Symbol::Comma).is_none() {
                 break;
@@ -148,10 +151,11 @@ impl Parser {
         self.expect_symbol(Symbol::LParen, "expected `(` after function name")?;
         let params = self.parse_params()?;
         self.expect_symbol(Symbol::RParen, "expected `)` after parameters")?;
-        let return_type = if self.consume_symbol(Symbol::Arrow).is_some() {
-            Some(self.expect_ident("expected return type after `->`")?)
+        let (return_type, return_type_span) = if self.consume_symbol(Symbol::Arrow).is_some() {
+            let (ty, ty_span) = self.expect_ident_span("expected return type after `->`")?;
+            (Some(ty), Some(ty_span))
         } else {
-            None
+            (None, None)
         };
         self.expect_symbol(Symbol::LBrace, "expected function body")?;
         let body = self.parse_block_body()?;
@@ -161,6 +165,7 @@ impl Parser {
             name_span,
             params,
             return_type,
+            return_type_span,
             body,
         })
     }
@@ -173,11 +178,12 @@ impl Parser {
         loop {
             let (name, name_span) = self.expect_ident_span("expected parameter name")?;
             self.expect_symbol(Symbol::Colon, "expected `:` after parameter name")?;
-            let ty = self.expect_ident("expected parameter type")?;
+            let (ty, ty_span) = self.expect_ident_span("expected parameter type")?;
             params.push(Param {
                 name,
                 name_span,
                 ty,
+                ty_span,
             });
             if self.consume_symbol(Symbol::Comma).is_none() {
                 break;
@@ -210,10 +216,11 @@ impl Parser {
         if self.consume_keyword(Keyword::Let).is_some() {
             let mutable = self.consume_keyword(Keyword::Mut).is_some();
             let (name, name_span) = self.expect_ident_span("expected local name")?;
-            let ty = if self.consume_symbol(Symbol::Colon).is_some() {
-                Some(self.expect_ident("expected local type")?)
+            let (ty, ty_span) = if self.consume_symbol(Symbol::Colon).is_some() {
+                let (ty, ty_span) = self.expect_ident_span("expected local type")?;
+                (Some(ty), Some(ty_span))
             } else {
-                None
+                (None, None)
             };
             self.expect_symbol(Symbol::Eq, "expected `=` in let statement")?;
             let value = self.parse_expr()?;
@@ -223,6 +230,7 @@ impl Parser {
                 name,
                 name_span,
                 ty,
+                ty_span,
                 value,
             });
         }

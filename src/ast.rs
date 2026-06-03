@@ -36,6 +36,7 @@ pub struct Field {
     pub name: String,
     pub name_span: Span,
     pub ty: String,
+    pub ty_span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +52,7 @@ pub struct EnumVariant {
     pub name: String,
     pub name_span: Span,
     pub payload_type: Option<String>,
+    pub payload_type_span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +62,7 @@ pub struct Function {
     pub name_span: Span,
     pub params: Vec<Param>,
     pub return_type: Option<String>,
+    pub return_type_span: Option<Span>,
     pub body: Vec<Stmt>,
 }
 
@@ -68,6 +71,7 @@ pub struct Param {
     pub name: String,
     pub name_span: Span,
     pub ty: String,
+    pub ty_span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +81,7 @@ pub enum Stmt {
         name: String,
         name_span: Span,
         ty: Option<String>,
+        ty_span: Option<Span>,
         value: Expr,
     },
     Assign {

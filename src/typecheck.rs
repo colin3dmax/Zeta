@@ -54,12 +54,6 @@ pub fn check_with_external_items(
     external_enums: &[ExternalEnum],
 ) -> Result<(), Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
-    let mut functions = function_signatures(module);
-    for function in external_functions {
-        functions
-            .entry(function.name.clone())
-            .or_insert_with(|| external_function_signature(function));
-    }
     let mut structs = struct_types(module);
     for external_struct in external_structs {
         structs
@@ -71,6 +65,12 @@ pub fn check_with_external_items(
         enums
             .entry(external_enum.name.clone())
             .or_insert_with(|| external_enum_type(external_enum));
+    }
+    let mut functions = function_signatures(module, &structs, &enums);
+    for function in external_functions {
+        functions
+            .entry(function.name.clone())
+            .or_insert_with(|| external_function_signature(function, &structs, &enums));
     }
     validate_declared_types(module, &structs, &enums, &mut diagnostics);
     for item in &module.items {
@@ -96,7 +96,7 @@ fn validate_declared_types(
         match item {
             Item::Struct(decl) => {
                 for field in &decl.fields {
-                    validate_type_name(&field.ty, field.name_span, structs, enums, diagnostics);
+                    validate_type_name(&field.ty, field.ty_span, structs, enums, diagnostics);
                 }
             }
             Item::Enum(decl) => {
@@ -104,7 +104,7 @@ fn validate_declared_types(
                     if let Some(payload_type) = &variant.payload_type {
                         validate_type_name(
                             payload_type,
-                            variant.name_span,
+                            variant.payload_type_span.unwrap_or(variant.name_span),
                             structs,
                             enums,
                             diagnostics,
@@ -114,12 +114,12 @@ fn validate_declared_types(
             }
             Item::Function(function) => {
                 for param in &function.params {
-                    validate_type_name(&param.ty, param.name_span, structs, enums, diagnostics);
+                    validate_type_name(&param.ty, param.ty_span, structs, enums, diagnostics);
                 }
                 if let Some(return_type) = &function.return_type {
                     validate_type_name(
                         return_type,
-                        function.name_span,
+                        function.return_type_span.unwrap_or(function.name_span),
                         structs,
                         enums,
                         diagnostics,
@@ -142,9 +142,15 @@ fn validate_stmt_types(
         match stmt {
             Stmt::Let {
                 ty: Some(ty),
-                name_span,
+                ty_span,
                 ..
-            } => validate_type_name(ty, *name_span, structs, enums, diagnostics),
+            } => validate_type_name(
+                ty,
+                ty_span.expect("typed let should carry a type span"),
+                structs,
+                enums,
+                diagnostics,
+            ),
             Stmt::If {
                 then_body,
                 else_body,
@@ -185,17 +191,21 @@ fn is_builtin_type_name(name: &str) -> bool {
     matches!(name, "Int" | "String" | "Bool" | "Unit")
 }
 
-fn external_function_signature(function: &ExternalFunction) -> FunctionSignature {
+fn external_function_signature(
+    function: &ExternalFunction,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+) -> FunctionSignature {
     FunctionSignature {
         params: function
             .params
             .iter()
-            .map(|param| parse_type(param))
+            .map(|param| parse_declared_type(param, structs, enums))
             .collect(),
         return_type: function
             .return_type
             .as_deref()
-            .map(parse_type)
+            .map(|ty| parse_declared_type(ty, structs, enums))
             .unwrap_or(Type::Unit),
     }
 }
@@ -260,7 +270,7 @@ fn check_function(
         locals.insert(
             param.name.clone(),
             Binding {
-                ty: parse_type(&param.ty),
+                ty: parse_declared_type(&param.ty, structs, enums),
                 mutable: false,
             },
         );
@@ -268,7 +278,7 @@ fn check_function(
     let return_type = function
         .return_type
         .as_deref()
-        .map(parse_type)
+        .map(|ty| parse_declared_type(ty, structs, enums))
         .unwrap_or(Type::Unit);
     check_stmts(
         &function.body,
@@ -302,7 +312,9 @@ fn check_stmts(
                 ..
             } => {
                 let value_type = infer_expr(value, locals, functions, structs, enums, diagnostics);
-                let declared_type = ty.as_deref().map(parse_type);
+                let declared_type = ty
+                    .as_deref()
+                    .map(|ty| parse_declared_type(ty, structs, enums));
                 if let Some(declared_type) = declared_type {
                     expect_type(
                         &value_type,
@@ -961,7 +973,11 @@ struct Binding {
     mutable: bool,
 }
 
-fn function_signatures(module: &Module) -> HashMap<String, FunctionSignature> {
+fn function_signatures(
+    module: &Module,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+) -> HashMap<String, FunctionSignature> {
     module
         .items
         .iter()
@@ -972,12 +988,12 @@ fn function_signatures(module: &Module) -> HashMap<String, FunctionSignature> {
                     params: function
                         .params
                         .iter()
-                        .map(|param| parse_type(&param.ty))
+                        .map(|param| parse_declared_type(&param.ty, structs, enums))
                         .collect(),
                     return_type: function
                         .return_type
                         .as_deref()
-                        .map(parse_type)
+                        .map(|ty| parse_declared_type(ty, structs, enums))
                         .unwrap_or(Type::Unit),
                 },
             )),
@@ -1038,6 +1054,18 @@ fn parse_type(name: &str) -> Type {
         "Bool" => Type::Bool,
         "Unit" => Type::Unit,
         other => Type::Named(other.to_string()),
+    }
+}
+
+fn parse_declared_type(
+    name: &str,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+) -> Type {
+    if is_builtin_type_name(name) || structs.contains_key(name) || enums.contains_key(name) {
+        parse_type(name)
+    } else {
+        Type::Error
     }
 }
 

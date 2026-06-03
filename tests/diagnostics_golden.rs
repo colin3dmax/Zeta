@@ -37,6 +37,14 @@ fn cli_golden_type_mismatch_diagnostic() {
 }
 
 #[test]
+fn cli_golden_unknown_type_diagnostic() {
+    assert_check_golden(
+        "testdata/diagnostics/unknown_type.zeta",
+        include_str!("../testdata/diagnostics/unknown_type.stderr"),
+    );
+}
+
+#[test]
 fn cli_golden_module_ambiguous_short_name_diagnostic() {
     assert_check_golden(
         "testdata/diagnostics/modules_ambiguous",

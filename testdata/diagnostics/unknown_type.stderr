@@ -1,0 +1,8 @@
+TYPE_UNKNOWN_TYPE at testdata/diagnostics/unknown_type.zeta:2:12: unknown type `Profile`
+  |
+ 2 |   profile: Profile,
+  |            ^^^^^^^
+TYPE_UNKNOWN_TYPE at testdata/diagnostics/unknown_type.zeta:6:14: unknown type `Missing`
+  |
+ 6 |   let value: Missing = 1;
+  |              ^^^^^^^

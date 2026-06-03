@@ -138,7 +138,7 @@ fn main() {
 "#;
     let diagnostics = zeta::check_source(source).expect_err("unknown field type should fail");
     assert_eq!(diagnostics[0].code, "TYPE_UNKNOWN_TYPE");
-    assert_eq!(diagnostics[0].span, span_of(source, "profile"));
+    assert_eq!(diagnostics[0].span, span_of(source, "Profile"));
 }
 
 #[test]
@@ -154,7 +154,7 @@ fn main() {
 "#;
     let diagnostics = zeta::check_source(source).expect_err("unknown payload type should fail");
     assert_eq!(diagnostics[0].code, "TYPE_UNKNOWN_TYPE");
-    assert_eq!(diagnostics[0].span, span_of(source, "User"));
+    assert_eq!(diagnostics[0].span, span_of(source, "Profile"));
 }
 
 #[test]
@@ -166,7 +166,7 @@ fn map(value: Input) -> Output {
 "#;
     let diagnostics = zeta::check_source(source).expect_err("unknown signature types should fail");
     assert_eq!(diagnostics[0].code, "TYPE_UNKNOWN_TYPE");
-    assert_eq!(diagnostics[0].span, span_of(source, "value"));
+    assert_eq!(diagnostics[0].span, span_of(source, "Input"));
 }
 
 #[test]
@@ -178,7 +178,7 @@ fn main() {
 "#;
     let diagnostics = zeta::check_source(source).expect_err("unknown local type should fail");
     assert_eq!(diagnostics[0].code, "TYPE_UNKNOWN_TYPE");
-    assert_eq!(diagnostics[0].span, span_of(source, "value"));
+    assert_eq!(diagnostics[0].span, span_of(source, "Missing"));
 }
 
 #[test]

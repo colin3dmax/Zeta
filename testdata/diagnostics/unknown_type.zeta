@@ -1,0 +1,7 @@
+struct User {
+  profile: Profile,
+}
+
+fn main() {
+  let value: Missing = 1;
+}
