@@ -1,0 +1,4 @@
+TYPE_MATCH_NON_EXHAUSTIVE at testdata/diagnostics/bool_match_non_exhaustive/main.zeta:2:9: Bool match must cover both true and false or include `_`
+  |
+ 2 |   match true {
+  |         ^^^^
