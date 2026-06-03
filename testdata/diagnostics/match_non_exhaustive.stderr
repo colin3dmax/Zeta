@@ -1,0 +1,4 @@
+TYPE_MATCH_NON_EXHAUSTIVE at testdata/diagnostics/match_non_exhaustive/main.zeta:8:9: match on `ResultTag` must cover every variant or include `_`
+  |
+ 8 |   match tag {
+  |         ^^^

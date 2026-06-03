@@ -51,3 +51,11 @@ fn cli_golden_module_ambiguous_type_diagnostic() {
         include_str!("../testdata/diagnostics/modules_ambiguous_type.stderr"),
     );
 }
+
+#[test]
+fn cli_golden_match_non_exhaustive_diagnostic() {
+    assert_check_golden(
+        "testdata/diagnostics/match_non_exhaustive",
+        include_str!("../testdata/diagnostics/match_non_exhaustive.stderr"),
+    );
+}
