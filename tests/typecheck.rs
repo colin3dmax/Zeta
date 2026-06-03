@@ -183,6 +183,46 @@ fn main() -> Int {
 }
 
 #[test]
+fn check_rejects_non_exhaustive_bool_match() {
+    let source = r#"
+fn main() -> Int {
+  match true {
+    true -> { return 42; },
+  }
+  return 0;
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("partial Bool match should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_MATCH_NON_EXHAUSTIVE");
+    assert_eq!(diagnostics[0].span, span_of(source, "true"));
+}
+
+#[test]
+fn check_rejects_non_exhaustive_enum_match() {
+    let source = r#"
+enum ResultTag {
+  Ok,
+  Err,
+}
+
+fn main() -> Int {
+  let tag: ResultTag = ResultTag.Ok;
+  match tag {
+    ResultTag.Ok -> { return 42; },
+  }
+  return 0;
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("partial enum match should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_MATCH_NON_EXHAUSTIVE");
+    let match_tag_start = source.find("match tag").expect("match should exist") + "match ".len();
+    assert_eq!(
+        diagnostics[0].span,
+        zeta::diagnostic::Span::new(match_tag_start, match_tag_start + "tag".len())
+    );
+}
+
+#[test]
 fn cli_check_renders_line_column_and_source_snippet() {
     let source = r#"
 fn main() {

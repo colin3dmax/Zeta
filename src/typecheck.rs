@@ -1,6 +1,6 @@
 use crate::ast::{BinaryOp, Expr, Function, Item, Module, Pattern, Stmt, UnaryOp};
 use crate::diagnostic::{Diagnostic, Span};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Type {
@@ -305,6 +305,7 @@ fn check_stmts(
                         diagnostics,
                     );
                 }
+                check_match_exhaustiveness(&value_type, value.span(), arms, enums, diagnostics);
             }
             Stmt::Return(Some(value)) => {
                 let value_type = infer_expr(value, locals, functions, structs, enums, diagnostics);
@@ -328,6 +329,68 @@ fn check_stmts(
                 let _ = infer_expr(value, locals, functions, structs, enums, diagnostics);
             }
         }
+    }
+}
+
+fn check_match_exhaustiveness(
+    value_type: &Type,
+    value_span: Span,
+    arms: &[crate::ast::MatchArm],
+    enums: &HashMap<String, EnumType>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if arms
+        .iter()
+        .any(|arm| matches!(arm.pattern, Pattern::Wildcard | Pattern::Name(_)))
+    {
+        return;
+    }
+
+    match value_type {
+        Type::Bool => {
+            let covered = arms
+                .iter()
+                .filter_map(|arm| match arm.pattern {
+                    Pattern::Bool(value) => Some(value),
+                    _ => None,
+                })
+                .collect::<HashSet<_>>();
+            if !covered.contains(&true) || !covered.contains(&false) {
+                diagnostics.push(Diagnostic::new(
+                    "TYPE_MATCH_NON_EXHAUSTIVE",
+                    "Bool match must cover both true and false or include `_`",
+                    value_span,
+                ));
+            }
+        }
+        Type::Named(enum_name) => {
+            let Some(enum_type) = enums.get(enum_name) else {
+                return;
+            };
+            let covered = arms
+                .iter()
+                .filter_map(|arm| match &arm.pattern {
+                    Pattern::Variant {
+                        enum_name: pattern_enum,
+                        variant,
+                        ..
+                    } if pattern_enum == enum_name => Some(variant.as_str()),
+                    _ => None,
+                })
+                .collect::<HashSet<_>>();
+            if !enum_type
+                .variants
+                .keys()
+                .all(|variant| covered.contains(variant.as_str()))
+            {
+                diagnostics.push(Diagnostic::new(
+                    "TYPE_MATCH_NON_EXHAUSTIVE",
+                    format!("match on `{enum_name}` must cover every variant or include `_`"),
+                    value_span,
+                ));
+            }
+        }
+        Type::Int | Type::String | Type::Unit | Type::Error => {}
     }
 }
 
