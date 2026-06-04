@@ -103,6 +103,12 @@ pub enum Stmt {
         arms: Vec<MatchArm>,
     },
     Return(Option<Expr>),
+    Break {
+        span: Span,
+    },
+    Continue {
+        span: Span,
+    },
     Expr(Expr),
 }
 
@@ -356,6 +362,12 @@ impl Stmt {
             }
             Stmt::Return(None) => {
                 out.push_str(&format!("{pad}Return\n"));
+            }
+            Stmt::Break { .. } => {
+                out.push_str(&format!("{pad}Break\n"));
+            }
+            Stmt::Continue { .. } => {
+                out.push_str(&format!("{pad}Continue\n"));
             }
             Stmt::Expr(value) => {
                 out.push_str(&format!("{pad}ExprStmt\n"));

@@ -14,6 +14,7 @@ fn verifier_accepts_lowered_run_corpus() {
         include_str!("../testdata/run_enum.zeta"),
         include_str!("../testdata/run_enum_payload.zeta"),
         include_str!("../testdata/run_match.zeta"),
+        include_str!("../testdata/run_loop_control.zeta"),
     ] {
         let module = zeta::parse_source(source).expect("source should parse");
         zeta::resolver::resolve(&module).expect("source should resolve");
@@ -42,6 +43,38 @@ fn verifier_rejects_unknown_store_target() {
 
     let diagnostics = mir::verify(&program).expect_err("unknown store should fail");
     assert_eq!(diagnostics[0].code, "MIR_UNKNOWN_LOCAL");
+}
+
+#[test]
+fn verifier_rejects_break_outside_loop() {
+    let program = Program {
+        enums: vec![],
+        functions: vec![MirFunction {
+            name: "main".to_string(),
+            params: vec![],
+            return_type: None,
+            body: vec![MirStmt::Break],
+        }],
+    };
+
+    let diagnostics = mir::verify(&program).expect_err("break outside loop should fail");
+    assert_eq!(diagnostics[0].code, "MIR_BREAK_OUTSIDE_LOOP");
+}
+
+#[test]
+fn verifier_rejects_continue_outside_loop() {
+    let program = Program {
+        enums: vec![],
+        functions: vec![MirFunction {
+            name: "main".to_string(),
+            params: vec![],
+            return_type: None,
+            body: vec![MirStmt::Continue],
+        }],
+    };
+
+    let diagnostics = mir::verify(&program).expect_err("continue outside loop should fail");
+    assert_eq!(diagnostics[0].code, "MIR_CONTINUE_OUTSIDE_LOOP");
 }
 
 #[test]

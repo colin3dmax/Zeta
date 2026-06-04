@@ -39,7 +39,7 @@
       "patterns": [
         {
           "name": "keyword.control.zeta",
-          "match": "\\b(?:if|else|while|match|return)\\b"
+          "match": "\\b(?:if|else|while|match|return|break|continue)\\b"
         },
         {
           "name": "keyword.declaration.zeta",

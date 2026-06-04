@@ -81,16 +81,16 @@ python3 tools/check-vscode-extension.py</code></pre>
     <pre><code>cargo run -- hir-dump testdata/core_items.zeta</code></pre>
 
     <h2 id="mir">查看 MIR</h2>
-    <p><code>mir-dump</code> 当前覆盖 Stage 0 可运行子集，会输出 locals、temps、store、return、call 和基础控制流的稳定 MIR 文本。MIR 更接近“程序执行步骤”，方便解释器和未来后端共用同一语义。</p>
+    <p><code>mir-dump</code> 当前覆盖 Stage 0 可运行子集，会输出 locals、temps、store、return、break、continue、call 和基础控制流的稳定 MIR 文本。MIR 更接近“程序执行步骤”，方便解释器和未来后端共用同一语义。</p>
     <pre><code>cargo run -- mir-dump testdata/run_mut.zeta</code></pre>
 
     <h2 id="check">检查源码</h2>
     <p><code>check</code> 当前执行 parser、最小 name resolution 和基础 typecheck。</p>
     <pre><code>cargo run -- check testdata/core_items.zeta</code></pre>
-    <p>当前检查范围包括重复定义、未知名字、<code>Int</code> / <code>String</code> / <code>Bool</code>、算术表达式、比较表达式、布尔逻辑表达式、函数调用、<code>let</code> 注解、<code>let mut</code> 可变绑定、赋值语句、<code>if</code> / <code>while</code> 条件和 <code>return</code> 类型。</p>
+    <p>当前检查范围包括重复定义、未知名字、<code>Int</code> / <code>String</code> / <code>Bool</code>、算术表达式、比较表达式、布尔逻辑表达式、函数调用、<code>let</code> 注解、<code>let mut</code> 可变绑定、赋值语句、<code>if</code> / <code>while</code> 条件、循环内 <code>break</code> / <code>continue</code> 和 <code>return</code> 类型。</p>
 
     <h2 id="run">执行程序</h2>
-    <p><code>run</code> 会先 lower 到结构化 MIR，通过 MIR verifier 后，再由 Stage 0 MIR interpreter 执行无参数 <code>main</code>。这里的 MIR interpreter 不是生成机器码，而是直接读取 MIR 指令并执行，用来在早期验证 Zeta 的运行语义；当前支持整数算术、比较运算、布尔逻辑、函数调用、<code>let</code>、<code>let mut</code>、赋值、<code>return</code> 和基础 <code>if</code> / <code>while</code>。声明 <code>-&gt; Int</code>、<code>-&gt; Bool</code> 等非 <code>Unit</code> 返回类型的函数，必须让 verifier 能静态确认所有路径都会 <code>return</code>；当前不会把 <code>while true</code> 当作保证返回。传入目录时，<code>run</code> 会复用 module graph，找到唯一 <code>main</code> 并执行跨文件 <code>export fn</code> 调用。</p>
+    <p><code>run</code> 会先 lower 到结构化 MIR，通过 MIR verifier 后，再由 Stage 0 MIR interpreter 执行无参数 <code>main</code>。这里的 MIR interpreter 不是生成机器码，而是直接读取 MIR 指令并执行，用来在早期验证 Zeta 的运行语义；当前支持整数算术、比较运算、布尔逻辑、函数调用、<code>let</code>、<code>let mut</code>、赋值、<code>return</code>、循环内 <code>break</code> / <code>continue</code> 和基础 <code>if</code> / <code>while</code>。声明 <code>-&gt; Int</code>、<code>-&gt; Bool</code> 等非 <code>Unit</code> 返回类型的函数，必须让 verifier 能静态确认所有路径都会 <code>return</code>；当前不会把 <code>while true</code> 当作保证返回。传入目录时，<code>run</code> 会复用 module graph，找到唯一 <code>main</code> 并执行跨文件 <code>export fn</code> 调用。</p>
     <pre><code>fn main() -&gt; Int {
   let answer: Int = 42;
 }

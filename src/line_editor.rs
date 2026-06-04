@@ -301,6 +301,8 @@ fn is_keyword(value: &str) -> bool {
             | "let"
             | "mut"
             | "return"
+            | "break"
+            | "continue"
             | "if"
             | "else"
             | "while"

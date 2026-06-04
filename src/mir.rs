@@ -54,6 +54,8 @@ pub enum MirStmt {
         arms: Vec<MirMatchArm>,
     },
     Return(Option<MirExpr>),
+    Break,
+    Continue,
     Drop(MirExpr),
 }
 
@@ -300,6 +302,8 @@ fn lower_stmt(
         Stmt::Return(value) => {
             MirStmt::Return(value.as_ref().map(|expr| lower_expr(expr, enum_variants)))
         }
+        Stmt::Break { .. } => MirStmt::Break,
+        Stmt::Continue { .. } => MirStmt::Continue,
         Stmt::Expr(value) => MirStmt::Drop(lower_expr(value, enum_variants)),
     }
 }
@@ -503,6 +507,12 @@ impl DumpCtx {
             }
             MirStmt::Return(None) => {
                 out.push_str(&format!("{pad}return Unit\n"));
+            }
+            MirStmt::Break => {
+                out.push_str(&format!("{pad}break\n"));
+            }
+            MirStmt::Continue => {
+                out.push_str(&format!("{pad}continue\n"));
             }
             MirStmt::Drop(value) => {
                 let value_temp = self.dump_expr(value, indent, out);
@@ -746,7 +756,7 @@ impl<'a> MirVerifier<'a> {
             .as_ref()
             .map(|ty| MirType::named(ty.clone()))
             .unwrap_or(MirType::Unit);
-        let guarantees_return = self.verify_stmts(&function.body, &mut locals, &expected_return);
+        let guarantees_return = self.verify_stmts(&function.body, &mut locals, &expected_return, 0);
         if expected_return != MirType::Unit && !guarantees_return {
             self.error(
                 "MIR_MISSING_RETURN",
@@ -764,9 +774,10 @@ impl<'a> MirVerifier<'a> {
         stmts: &[MirStmt],
         locals: &mut HashMap<String, MirType>,
         expected_return: &MirType,
+        loop_depth: usize,
     ) -> bool {
         for stmt in stmts {
-            if self.verify_stmt(stmt, locals, expected_return) {
+            if self.verify_stmt(stmt, locals, expected_return, loop_depth) {
                 return true;
             }
         }
@@ -778,6 +789,7 @@ impl<'a> MirVerifier<'a> {
         stmt: &MirStmt,
         locals: &mut HashMap<String, MirType>,
         expected_return: &MirType,
+        loop_depth: usize,
     ) -> bool {
         match stmt {
             MirStmt::Local {
@@ -835,15 +847,17 @@ impl<'a> MirVerifier<'a> {
             } => {
                 self.expect_bool(condition, locals, "MIR_IF_CONDITION", "if condition");
                 let mut then_locals = locals.clone();
-                let then_returns = self.verify_stmts(then_body, &mut then_locals, expected_return);
+                let then_returns =
+                    self.verify_stmts(then_body, &mut then_locals, expected_return, loop_depth);
                 let mut else_locals = locals.clone();
-                let else_returns = self.verify_stmts(else_body, &mut else_locals, expected_return);
+                let else_returns =
+                    self.verify_stmts(else_body, &mut else_locals, expected_return, loop_depth);
                 then_returns && else_returns
             }
             MirStmt::While { condition, body } => {
                 self.expect_bool(condition, locals, "MIR_WHILE_CONDITION", "while condition");
                 let mut body_locals = locals.clone();
-                self.verify_stmts(body, &mut body_locals, expected_return);
+                self.verify_stmts(body, &mut body_locals, expected_return, loop_depth + 1);
                 false
             }
             MirStmt::Match { value, arms } => {
@@ -878,7 +892,7 @@ impl<'a> MirVerifier<'a> {
                         }
                     }
                     all_arms_return &=
-                        self.verify_stmts(&arm.body, &mut arm_locals, expected_return);
+                        self.verify_stmts(&arm.body, &mut arm_locals, expected_return, loop_depth);
                 }
                 all_arms_return
                     && (has_wildcard
@@ -910,6 +924,21 @@ impl<'a> MirVerifier<'a> {
                     ),
                 );
                 true
+            }
+            MirStmt::Break => {
+                if loop_depth == 0 {
+                    self.error("MIR_BREAK_OUTSIDE_LOOP", "`break` appears outside a loop");
+                }
+                false
+            }
+            MirStmt::Continue => {
+                if loop_depth == 0 {
+                    self.error(
+                        "MIR_CONTINUE_OUTSIDE_LOOP",
+                        "`continue` appears outside a loop",
+                    );
+                }
+                false
             }
             MirStmt::Drop(value) => {
                 self.verify_expr(value, locals);

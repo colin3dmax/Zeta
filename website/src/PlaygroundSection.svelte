@@ -5,10 +5,10 @@
   export let initialExample = "overview";
   export let embedded = false;
 
-  const keywords = new Set(["module", "import", "as", "export", "fn", "let", "mut", "return", "if", "else", "while", "match", "struct", "enum"]);
+  const keywords = new Set(["module", "import", "as", "export", "fn", "let", "mut", "return", "break", "continue", "if", "else", "while", "match", "struct", "enum"]);
   const types = new Set(["Int", "String", "Bool"]);
   const commands = [":help", ":api", ":topics", ":examples", ":doc", ":complete", ":quit"];
-  const topics = ["getting-started", "tutorial", "api", "std", "playground", "module", "import", "as", "fn", "let", "mut", "if", "while", "match", "struct", "enum", "Int", "String", "Bool"];
+  const topics = ["getting-started", "tutorial", "api", "std", "playground", "module", "import", "as", "fn", "let", "mut", "if", "while", "break", "continue", "match", "struct", "enum", "Int", "String", "Bool"];
 
   const sample = `module demo.core;
 import std.core;
@@ -16,11 +16,18 @@ import std.io;
 
 export fn main() -> Int {
   let mut count: Int = 0;
-  while count < 3 {
+  let mut total: Int = 0;
+  while count < 10 {
     count = count + 1;
+    if count == 3 {
+      continue;
+    }
+    if count == 6 {
+      break;
+    }
+    total = total + count;
   }
-  let done: Bool = false;
-  if count == 3 && !done {
+  if total == 12 {
     return 42;
   }
   return 0;
@@ -35,10 +42,18 @@ export fn main() -> Int {
 }`,
     control: `fn main() -> Int {
   let mut count: Int = 0;
-  while count < 3 {
+  let mut total: Int = 0;
+  while count < 10 {
     count = count + 1;
+    if count == 3 {
+      continue;
+    }
+    if count == 6 {
+      break;
+    }
+    total = total + count;
   }
-  if count == 3 && !false {
+  if total == 12 {
     return 42;
   }
   return 0;

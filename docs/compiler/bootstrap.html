@@ -126,7 +126,7 @@
         </tr>
         <tr>
           <td>语句与表达式</td>
-          <td><code>fn</code>、块表达式、<code>let</code>、<code>if/else</code>、<code>while</code>、<code>return</code>、<code>match</code>。</td>
+          <td><code>fn</code>、块表达式、<code>let</code>、<code>if/else</code>、<code>while</code>、<code>break</code>、<code>continue</code>、<code>return</code>、<code>match</code>。</td>
           <td>生成器、协程、模式宏。</td>
         </tr>
         <tr>
@@ -253,7 +253,7 @@
       <tbody>
         <tr>
           <td>合法语法</td>
-          <td>空文件、module/import/export、fn、let/let mut、赋值、return、if/else、while、struct、enum、match、函数调用。</td>
+          <td>空文件、module/import/export、fn、let/let mut、赋值、return、if/else、while、break、continue、struct、enum、match、函数调用。</td>
           <td>AST dump 与 parser golden 文件完全一致；dump 顺序和字段名稳定。</td>
           <td>AST dump 非确定性，或新增语法没有 golden 样例。</td>
         </tr>
@@ -271,13 +271,13 @@
         </tr>
         <tr>
           <td>IR dump</td>
-          <td>函数调用、局部变量、赋值、if/while lower、match lower、早返回、基础算术、比较和布尔逻辑。</td>
+          <td>函数调用、局部变量、赋值、if/while lower、break/continue、match lower、早返回、基础算术、比较和布尔逻辑。</td>
           <td>HIR/MIR dump 可读、可排序、无内存地址；verifier 通过。</td>
           <td>dump 包含随机 id，CFG 缺少 terminator，或变量初始化状态不完整。</td>
         </tr>
         <tr>
           <td>执行 smoke</td>
-          <td>无参数 main、整数算术、比较、布尔逻辑、函数调用、let mut、赋值、if/while。</td>
+          <td>无参数 main、整数算术、比较、布尔逻辑、函数调用、let mut、赋值、if/while、break/continue。</td>
           <td>MIR interpreter、WASM/WASI smoke、LLVM native smoke 对同一 corpus 输出一致。</td>
           <td>任一 backend 行为与 MIR interpreter 不一致且没有规范化解释。</td>
         </tr>

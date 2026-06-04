@@ -165,7 +165,12 @@ fn validate_stmt_types(
                     validate_stmt_types(&arm.body, structs, enums, diagnostics);
                 }
             }
-            Stmt::Let { ty: None, .. } | Stmt::Assign { .. } | Stmt::Return(_) | Stmt::Expr(_) => {}
+            Stmt::Let { ty: None, .. }
+            | Stmt::Assign { .. }
+            | Stmt::Return(_)
+            | Stmt::Break { .. }
+            | Stmt::Continue { .. }
+            | Stmt::Expr(_) => {}
         }
     }
 }
@@ -288,6 +293,7 @@ fn check_function(
         enums,
         &return_type,
         &function.name,
+        0,
         diagnostics,
     );
 }
@@ -300,6 +306,7 @@ fn check_stmts(
     enums: &HashMap<String, EnumType>,
     return_type: &Type,
     function_name: &str,
+    loop_depth: usize,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     for stmt in stmts {
@@ -393,6 +400,7 @@ fn check_stmts(
                     enums,
                     return_type,
                     function_name,
+                    loop_depth,
                     diagnostics,
                 );
                 let mut else_locals = locals.clone();
@@ -404,6 +412,7 @@ fn check_stmts(
                     enums,
                     return_type,
                     function_name,
+                    loop_depth,
                     diagnostics,
                 );
             }
@@ -426,6 +435,7 @@ fn check_stmts(
                     enums,
                     return_type,
                     function_name,
+                    loop_depth + 1,
                     diagnostics,
                 );
             }
@@ -446,6 +456,7 @@ fn check_stmts(
                         enums,
                         return_type,
                         function_name,
+                        loop_depth,
                         diagnostics,
                     );
                 }
@@ -468,6 +479,24 @@ fn check_stmts(
                     Span::new(0, 0),
                     diagnostics,
                 );
+            }
+            Stmt::Break { span } => {
+                if loop_depth == 0 {
+                    diagnostics.push(Diagnostic::new(
+                        "TYPE_BREAK_OUTSIDE_LOOP",
+                        "`break` can only be used inside a `while` loop",
+                        *span,
+                    ));
+                }
+            }
+            Stmt::Continue { span } => {
+                if loop_depth == 0 {
+                    diagnostics.push(Diagnostic::new(
+                        "TYPE_CONTINUE_OUTSIDE_LOOP",
+                        "`continue` can only be used inside a `while` loop",
+                        *span,
+                    ));
+                }
             }
             Stmt::Expr(value) => {
                 let _ = infer_expr(value, locals, functions, structs, enums, diagnostics);

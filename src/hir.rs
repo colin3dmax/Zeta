@@ -138,6 +138,12 @@ fn dump_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
         Stmt::Return(None) => {
             out.push_str(&format!("{pad}return Unit\n"));
         }
+        Stmt::Break { .. } => {
+            out.push_str(&format!("{pad}break\n"));
+        }
+        Stmt::Continue { .. } => {
+            out.push_str(&format!("{pad}continue\n"));
+        }
         Stmt::Expr(value) => {
             out.push_str(&format!("{pad}expr\n"));
             dump_expr(value, indent + 1, out);

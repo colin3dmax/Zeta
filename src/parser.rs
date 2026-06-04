@@ -279,6 +279,16 @@ impl Parser {
             return Ok(Stmt::Return(Some(value)));
         }
 
+        if let Some(span) = self.consume_keyword(Keyword::Break) {
+            self.expect_symbol(Symbol::Semicolon, "expected `;` after break statement")?;
+            return Ok(Stmt::Break { span });
+        }
+
+        if let Some(span) = self.consume_keyword(Keyword::Continue) {
+            self.expect_symbol(Symbol::Semicolon, "expected `;` after continue statement")?;
+            return Ok(Stmt::Continue { span });
+        }
+
         if let TokenKind::Ident(name) = self.peek_kind() {
             if matches!(self.peek_kind_at(1), TokenKind::Symbol(Symbol::Eq)) {
                 let name = name.clone();

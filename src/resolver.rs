@@ -351,7 +351,7 @@ fn check_stmts(
                     diagnostics,
                 );
             }
-            Stmt::Return(None) => {}
+            Stmt::Return(None) | Stmt::Break { .. } | Stmt::Continue { .. } => {}
         }
     }
 }

@@ -37,6 +37,30 @@ fn main() {
 }
 
 #[test]
+fn check_rejects_break_outside_loop() {
+    let source = r#"
+fn main() {
+  break;
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("break outside loop should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_BREAK_OUTSIDE_LOOP");
+    assert_eq!(diagnostics[0].span, span_of(source, "break"));
+}
+
+#[test]
+fn check_rejects_continue_outside_loop() {
+    let source = r#"
+fn main() {
+  continue;
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("continue outside loop should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_CONTINUE_OUTSIDE_LOOP");
+    assert_eq!(diagnostics[0].span, span_of(source, "continue"));
+}
+
+#[test]
 fn check_rejects_assignment_type_mismatch() {
     let source = r#"
 fn main() {

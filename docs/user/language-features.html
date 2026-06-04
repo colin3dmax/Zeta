@@ -152,12 +152,15 @@ fn main() -&gt; Int {
 }</code></pre>
     <p><a class="button secondary" href="#online-testing" data-zeta-example="functions">在本页测试函数调用</a></p>
 
-    <h2 id="control-flow">if/else 和 while</h2>
-    <p><code>if</code> 和 <code>while</code> 的条件必须是 <code>Bool</code>。比较表达式和布尔逻辑可以直接作为条件。</p>
+    <h2 id="control-flow">if/else、while、break 和 continue</h2>
+    <p><code>if</code> 和 <code>while</code> 的条件必须是 <code>Bool</code>。比较表达式和布尔逻辑可以直接作为条件。<code>break</code> 和 <code>continue</code> 只能出现在 <code>while</code> 循环体内。</p>
     <pre><code>fn main() -&gt; Int {
   let mut count: Int = 0;
   while count &lt; 3 {
     count = count + 1;
+    if count == 2 {
+      continue;
+    }
   }
   if count == 3 &amp;&amp; !false {
     return 42;

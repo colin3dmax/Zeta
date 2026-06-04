@@ -1,0 +1,39 @@
+MirModule
+  fn main -> Int
+    block entry
+      local count: Int mutability=mutable
+      _t0 = const Int 0
+      store count, _t0
+      local total: Int mutability=mutable
+      _t1 = const Int 0
+      store total, _t1
+      loop
+        _t2 = load count
+        _t3 = const Int 10
+        _t4 = binary lt _t2, _t3
+        break_unless _t4
+        _t5 = load count
+        _t6 = const Int 1
+        _t7 = binary add _t5, _t6
+        store count, _t7
+        _t8 = load count
+        _t9 = const Int 3
+        _t10 = binary eq _t8, _t9
+        if _t10
+          then
+            continue
+        end_if
+        _t11 = load count
+        _t12 = const Int 6
+        _t13 = binary eq _t11, _t12
+        if _t13
+          then
+            break
+        end_if
+        _t14 = load total
+        _t15 = load count
+        _t16 = binary add _t14, _t15
+        store total, _t16
+      end_loop
+      _t17 = load total
+      return _t17

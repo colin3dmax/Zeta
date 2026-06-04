@@ -1,0 +1,15 @@
+fn main() -> Int {
+  let mut count: Int = 0;
+  let mut total: Int = 0;
+  while count < 10 {
+    count = count + 1;
+    if count == 3 {
+      continue;
+    }
+    if count == 6 {
+      break;
+    }
+    total = total + count;
+  }
+  return total;
+}

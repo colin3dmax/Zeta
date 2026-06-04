@@ -41,6 +41,13 @@ fn run_executes_boolean_logic_conditions() {
 }
 
 #[test]
+fn run_executes_loop_break_and_continue() {
+    let value = zeta::run_source(include_str!("../testdata/run_loop_control.zeta"))
+        .expect("program should run");
+    assert_eq!(value.to_string(), "12");
+}
+
+#[test]
 fn run_executes_scalar_match() {
     let value =
         zeta::run_source(include_str!("../testdata/run_match.zeta")).expect("program should run");

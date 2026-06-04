@@ -9,6 +9,8 @@ const TOPICS = [
   ["mut", "Mark a local binding as mutable so later assignment is allowed.", "let mut answer: Int = 40;\nanswer = answer + 2;"],
   ["if", "Branch on a Bool condition. Comparisons and boolean logic return Bool.", "if ready && !done { return 42; } else { return 0; }"],
   ["while", "Loop while a Bool condition is true. Comparisons and boolean logic are valid conditions.", "while count < 3 && ready { count = count + 1; }"],
+  ["break", "Exit the nearest enclosing while loop.", "while true { break; }"],
+  ["continue", "Skip the rest of the current while loop iteration.", "while count < 3 { count = count + 1; continue; }"],
   ["match", "Match a value against simple patterns.", "match value { 0 -> { return 0; }, _ -> { return value; }, }"],
   ["struct", "Declare a record type.", "struct User { name: String, age: Int, }"],
   ["enum", "Declare a tagged set of variants.", "enum ResultTag { Ok, Err, }"],

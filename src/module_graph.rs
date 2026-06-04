@@ -374,7 +374,7 @@ fn rewrite_stmts(
                     );
                 }
             }
-            MirStmt::Return(None) => {}
+            MirStmt::Return(None) | MirStmt::Break | MirStmt::Continue => {}
         }
     }
 }

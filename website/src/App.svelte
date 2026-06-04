@@ -3,7 +3,7 @@
   import { runZeta } from "./wasm-playground.js";
   import PlaygroundSection from "./PlaygroundSection.svelte";
 
-  const keywords = new Set(["module", "import", "as", "export", "fn", "let", "mut", "return", "if", "else", "while", "match", "struct", "enum"]);
+  const keywords = new Set(["module", "import", "as", "export", "fn", "let", "mut", "return", "break", "continue", "if", "else", "while", "match", "struct", "enum"]);
   const types = new Set(["Int", "String", "Bool"]);
   const commands = [":help", ":api", ":topics", ":examples", ":doc", ":complete", ":quit"];
   const topics = [
@@ -20,6 +20,8 @@
     "mut",
     "if",
     "while",
+    "break",
+    "continue",
     "match",
     "struct",
     "enum",
@@ -30,7 +32,7 @@
   const docs = {
     "getting-started": "从表达式开始：输入 40 + 2 可以直接执行；使用 let 声明局部绑定；需要重新赋值时使用 let mut；if/while 条件可以使用比较和布尔逻辑表达式。",
     tutorial: "推荐路径：表达式 -> let/let mut -> 比较/布尔逻辑/控制流 -> fn -> struct 字面量/字段访问 -> enum 变体 -> match -> check/run -> Playground/REPL。",
-    api: "Stage 0 API 覆盖 Int、String、Bool、module/import/import alias、std.core/std.io、fn、let/let mut、赋值、比较、布尔逻辑、return、if/while、struct 字面量、字段访问、enum 变体和 match。",
+    api: "Stage 0 API 覆盖 Int、String、Bool、module/import/import alias、std.core/std.io、fn、let/let mut、赋值、比较、布尔逻辑、return、if/while/break/continue、struct 字面量、字段访问、enum 变体和 match。",
     std: "std 是 Stage 0 标准 API 边界。当前 resolver 接受 import std.core; 和 import std.io;，未知标准库路径会报错；具体 IO 函数在后续权限模型确定后接入。",
     playground: "Playground 通过 zeta.wasm 运行真实编译器前端，支持 AST、检查和运行。",
     module: "module 声明当前源码模块，例如 module demo.core;",
@@ -40,7 +42,9 @@
     let: "let 声明局部绑定，例如 let answer: Int = 40 + 2; 需要重新赋值时写 let mut answer: Int = 40;",
     mut: "mut 标记可变局部绑定，之后可以执行 answer = answer + 2;",
     if: "if 使用 Bool 条件分支，例如 if ready && !done { return 42; }",
-    while: "while 使用 Bool 条件循环，例如 while count < 3 && ready { count = count + 1; }",
+    while: "while 使用 Bool 条件循环，例如 while count < 3 && ready { count = count + 1; }；循环内可用 break 和 continue。",
+    break: "break 跳出最近一层 while 循环。",
+    continue: "continue 跳过当前 while 迭代剩余语句，进入下一轮条件检查。",
     match: "match 对 Int/String/Bool 字面量、enum 变体和 _ 通配模式执行分支。",
     struct: "struct 声明记录类型，当前可用 User { name: \"Ada\", age: 42 } 构造值，并用 user.age 访问字段。",
     enum: "enum 声明标签集合，当前可用 ResultTag.Ok 构造变体值，并在 match 中分支。",
@@ -68,11 +72,18 @@ import std.io;
 
 export fn main() -> Int {
   let mut count: Int = 0;
-  while count < 3 {
+  let mut total: Int = 0;
+  while count < 10 {
     count = count + 1;
+    if count == 3 {
+      continue;
+    }
+    if count == 6 {
+      break;
+    }
+    total = total + count;
   }
-  let done: Bool = false;
-  if count == 3 && !done {
+  if total == 12 {
     return 42;
   }
   return 0;
@@ -87,10 +98,18 @@ export fn main() -> Int {
 }`,
     control: `fn main() -> Int {
   let mut count: Int = 0;
-  while count < 3 {
+  let mut total: Int = 0;
+  while count < 10 {
     count = count + 1;
+    if count == 3 {
+      continue;
+    }
+    if count == 6 {
+      break;
+    }
+    total = total + count;
   }
-  if count == 3 && !false {
+  if total == 12 {
     return 42;
   }
   return 0;
@@ -410,7 +429,7 @@ export fn answer() -> Int {
   }
 
   function replApi() {
-    return "Zeta Stage 0 API\nInt/String/Bool\nmodule/import/import alias/std.core/std.io/fn/let/let mut/assignment/comparison/boolean logic/return/if/while/struct literal/field access/enum variants/match\nstd: 当前可导入 std.core 和 std.io；未知标准库路径会被 resolver 拒绝。";
+    return "Zeta Stage 0 API\nInt/String/Bool\nmodule/import/import alias/std.core/std.io/fn/let/let mut/assignment/comparison/boolean logic/return/if/while/break/continue/struct literal/field access/enum variants/match\nstd: 当前可导入 std.core 和 std.io；未知标准库路径会被 resolver 拒绝。";
   }
 
   async function submitRepl() {

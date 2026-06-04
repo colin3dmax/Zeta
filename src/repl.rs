@@ -167,8 +167,18 @@ pub const TOPICS: &[ReplTopic] = &[
     },
     ReplTopic {
         name: "while",
-        summary: "Loop while a Bool condition is true.",
-        example: "while count < 3 && ready { count = count + 1; }",
+        summary: "Loop while a Bool condition is true. Use break or continue for loop-local control flow.",
+        example: "while count < 10 { count = count + 1; if count == 3 { continue; } }",
+    },
+    ReplTopic {
+        name: "break",
+        summary: "Exit the nearest enclosing while loop.",
+        example: "while true { break; }",
+    },
+    ReplTopic {
+        name: "continue",
+        summary: "Skip the rest of the current while loop iteration.",
+        example: "while count < 3 { count = count + 1; continue; }",
     },
     ReplTopic {
         name: "match",
@@ -498,7 +508,9 @@ fn topic_summary(topic: &ReplTopic, language: Language) -> &'static str {
         "let" => "声明局部绑定，可以带类型注解；需要重新赋值时使用 let mut。",
         "mut" => "标记局部绑定可变，允许后续赋值语句更新它。",
         "if" => "基于 Bool 条件分支；条件可以使用比较、&&、|| 和 !。",
-        "while" => "当 Bool 条件为 true 时循环；条件可以使用比较、&&、|| 和 !。",
+        "while" => "当 Bool 条件为 true 时循环；条件可以使用比较、&&、|| 和 !，循环内可用 break 或 continue。",
+        "break" => "跳出最近一层 while 循环。",
+        "continue" => "跳过当前 while 迭代剩余语句，进入下一轮条件检查。",
         "match" => "对标量、枚举变体和通配模式进行分支。",
         "struct" => "声明记录类型；完整程序中可以使用结构体字面量和字段访问。",
         "enum" => "声明标签集合；完整程序中可以使用 ResultTag.Ok 这类限定变体值。",
@@ -612,6 +624,8 @@ fn push_highlighted_token(out: &mut String, token: &str) {
             | "let"
             | "mut"
             | "return"
+            | "break"
+            | "continue"
             | "if"
             | "else"
             | "while"

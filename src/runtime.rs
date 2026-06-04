@@ -90,6 +90,14 @@ impl ReplSession {
         match runtime.eval_stmts(&main.body, &mut self.locals) {
             Ok(Control::Return(value)) => Ok(value),
             Ok(Control::Continue) => Ok(Value::Unit),
+            Ok(Control::BreakLoop) => Err(vec![runtime_error(
+                "RUNTIME_BREAK_OUTSIDE_LOOP",
+                "`break` reached function boundary",
+            )]),
+            Ok(Control::ContinueLoop) => Err(vec![runtime_error(
+                "RUNTIME_CONTINUE_OUTSIDE_LOOP",
+                "`continue` reached function boundary",
+            )]),
             Err(err) => Err(vec![err]),
         }
     }
@@ -146,6 +154,14 @@ impl MirRuntime {
         match self.eval_stmts(&function.body, &mut locals)? {
             Control::Return(value) => Ok(value),
             Control::Continue => Ok(Value::Unit),
+            Control::BreakLoop => Err(runtime_error(
+                "RUNTIME_BREAK_OUTSIDE_LOOP",
+                "`break` reached function boundary",
+            )),
+            Control::ContinueLoop => Err(runtime_error(
+                "RUNTIME_CONTINUE_OUTSIDE_LOOP",
+                "`continue` reached function boundary",
+            )),
         }
     }
 
@@ -157,7 +173,9 @@ impl MirRuntime {
         for stmt in stmts {
             match self.eval_stmt(stmt, locals)? {
                 Control::Continue => {}
-                returned @ Control::Return(_) => return Ok(returned),
+                control @ (Control::Return(_) | Control::BreakLoop | Control::ContinueLoop) => {
+                    return Ok(control);
+                }
             }
         }
         Ok(Control::Continue)
@@ -224,6 +242,8 @@ impl MirRuntime {
                     }
                     match self.eval_stmts(body, locals)? {
                         Control::Continue => {}
+                        Control::BreakLoop => break,
+                        Control::ContinueLoop => continue,
                         returned @ Control::Return(_) => return Ok(returned),
                     }
                 }
@@ -246,6 +266,8 @@ impl MirRuntime {
             }
             MirStmt::Return(Some(value)) => Ok(Control::Return(self.eval_expr(value, locals)?)),
             MirStmt::Return(None) => Ok(Control::Return(Value::Unit)),
+            MirStmt::Break => Ok(Control::BreakLoop),
+            MirStmt::Continue => Ok(Control::ContinueLoop),
             MirStmt::Drop(value) => {
                 let _ = self.eval_expr(value, locals)?;
                 Ok(Control::Continue)
@@ -299,6 +321,14 @@ impl MirRuntime {
                 match self.eval_stmts(&function.body, &mut call_locals)? {
                     Control::Return(value) => Ok(value),
                     Control::Continue => Ok(Value::Unit),
+                    Control::BreakLoop => Err(runtime_error(
+                        "RUNTIME_BREAK_OUTSIDE_LOOP",
+                        "`break` reached function boundary",
+                    )),
+                    Control::ContinueLoop => Err(runtime_error(
+                        "RUNTIME_CONTINUE_OUTSIDE_LOOP",
+                        "`continue` reached function boundary",
+                    )),
                 }
             }
             MirExpr::EnumVariant {
@@ -419,7 +449,9 @@ impl Runtime {
         for stmt in stmts {
             match self.eval_stmt(stmt, locals)? {
                 Control::Continue => {}
-                returned @ Control::Return(_) => return Ok(returned),
+                control @ (Control::Return(_) | Control::BreakLoop | Control::ContinueLoop) => {
+                    return Ok(control);
+                }
             }
         }
         Ok(Control::Continue)
@@ -486,6 +518,8 @@ impl Runtime {
                     }
                     match self.eval_stmts(body, locals)? {
                         Control::Continue => {}
+                        Control::BreakLoop => break,
+                        Control::ContinueLoop => continue,
                         returned @ Control::Return(_) => return Ok(returned),
                     }
                 }
@@ -508,6 +542,8 @@ impl Runtime {
             }
             Stmt::Return(Some(value)) => Ok(Control::Return(self.eval_expr(value, locals)?)),
             Stmt::Return(None) => Ok(Control::Return(Value::Unit)),
+            Stmt::Break { .. } => Ok(Control::BreakLoop),
+            Stmt::Continue { .. } => Ok(Control::ContinueLoop),
             Stmt::Expr(value) => {
                 let _ = self.eval_expr(value, locals)?;
                 Ok(Control::Continue)
@@ -579,6 +615,14 @@ impl Runtime {
                 match self.eval_stmts(&function.body, &mut call_locals)? {
                     Control::Return(value) => Ok(value),
                     Control::Continue => Ok(Value::Unit),
+                    Control::BreakLoop => Err(runtime_error(
+                        "RUNTIME_BREAK_OUTSIDE_LOOP",
+                        "`break` reached function boundary",
+                    )),
+                    Control::ContinueLoop => Err(runtime_error(
+                        "RUNTIME_CONTINUE_OUTSIDE_LOOP",
+                        "`continue` reached function boundary",
+                    )),
                 }
             }
             Expr::StructLiteral { ty, fields, .. } => {
@@ -666,6 +710,8 @@ impl Runtime {
 
 enum Control {
     Continue,
+    BreakLoop,
+    ContinueLoop,
     Return(Value),
 }
 
