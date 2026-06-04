@@ -111,6 +111,39 @@ fn main() {
 }
 
 #[test]
+fn check_accepts_string_scan_std_core_builtins() {
+    zeta::check_source(
+        r#"
+import std.core;
+
+fn main() -> Int {
+  let text: String = "A9";
+  if ascii_is_alpha(string_byte_at(text, 0)) && ascii_is_digit(string_byte_at(text, 1)) {
+    return string_len(text);
+  }
+  return 0;
+}
+"#,
+    )
+    .expect("std.core string scan builtins should typecheck");
+}
+
+#[test]
+fn check_rejects_string_scan_argument_type_mismatch() {
+    let source = r#"
+import std.core;
+
+fn main() -> Int {
+  return string_byte_at(1, 0);
+}
+"#;
+    let diagnostics =
+        zeta::check_source(source).expect_err("string scan argument mismatch should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_CALL_ARGUMENT");
+    assert_eq!(diagnostics[0].span, span_of(source, "1"));
+}
+
+#[test]
 fn check_rejects_non_int_ordering_operands() {
     let source = r#"
 fn main() {

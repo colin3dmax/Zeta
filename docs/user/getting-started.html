@@ -38,6 +38,7 @@
         <a href="#comparison">比较表达式</a>
         <a href="#bool">布尔逻辑</a>
         <a href="#arrays">数组</a>
+        <a href="#string-scan">字符串扫描</a>
         <a href="#match">标量 match</a>
         <a href="#struct">结构体字段访问</a>
         <a href="#enum">枚举变体</a>
@@ -148,6 +149,21 @@ cargo run -- run testdata/modules_alias</code></pre>
   return values[0] + values[1] + values.len;
 }</code></pre>
     <pre><code>cargo run -- run testdata/run_array.zeta</code></pre>
+
+    <h2 id="string-scan">字符串 byte 扫描</h2>
+    <p><code>std.core</code> 当前提供自举 lexer/parser 所需的最小字符串扫描函数：<code>string_len</code>、<code>string_byte_at</code>、<code>string_byte_slice</code>、<code>ascii_is_digit</code>、<code>ascii_is_alpha</code>、<code>ascii_is_alnum</code> 和 <code>ascii_is_whitespace</code>。这些 API 按 UTF-8 byte 工作，返回 byte 时使用 <code>Int</code>。</p>
+    <pre><code>import std.core;
+
+fn main() -&gt; Int {
+  let text: String = "A9 zeta";
+  let first: Int = string_byte_at(text, 0);
+  let digit: Int = string_byte_at(text, 1);
+  if ascii_is_alpha(first) &amp;&amp; ascii_is_digit(digit) {
+    return string_len(text) + digit;
+  }
+  return 0;
+}</code></pre>
+    <pre><code>cargo run -- run testdata/run_string_scan.zeta</code></pre>
 
     <h2 id="match">标量 match</h2>
     <p><code>match</code> 当前支持 <code>Int</code>、<code>String</code>、<code>Bool</code> 字面量模式和 <code>_</code> 通配模式，分支体可以直接 <code>return</code>。</p>
@@ -307,6 +323,7 @@ let mut count: Int = 1;
 count = count + 1;
 true &amp;&amp; !false;
 fn main() -&gt; Int { let values: IntArray = [2, 4, 6]; return values[0] + values.len; }
+import std.core; fn main() -&gt; Int { return string_len("zeta") + string_byte_at("A9", 1); }
 :doc struct
 :complete Str
 :quit</code></pre>

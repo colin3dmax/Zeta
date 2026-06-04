@@ -53,6 +53,7 @@ pub fn resolve_with_imports_functions_enums_and_ambiguous(
     check_top_level(module, local_imports, &mut diagnostics);
     let mut functions = function_names(module);
     functions.extend(external_functions.iter().cloned());
+    functions.extend(standard_function_names(module));
     let mut top_level_names = top_level_names(module);
     let mut enum_variants = enum_variants(module);
     for standard_enum in standard_enum_variants(module) {
@@ -609,6 +610,21 @@ fn standard_top_level_names(module: &Module) -> HashSet<String> {
     std_api::core_enums()
         .iter()
         .map(|standard_enum| standard_enum.name.to_string())
+        .collect()
+}
+
+fn standard_function_names(module: &Module) -> HashSet<String> {
+    let imports_std_core = module.items.iter().any(|item| match item {
+        Item::Import { path, .. } => std_api::is_std_core_import(path),
+        _ => false,
+    });
+    if !imports_std_core {
+        return HashSet::new();
+    }
+
+    std_api::core_functions()
+        .iter()
+        .map(|function| function.name.to_string())
         .collect()
 }
 

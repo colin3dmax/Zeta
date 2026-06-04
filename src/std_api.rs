@@ -12,6 +12,13 @@ pub struct StandardEnumVariant {
     pub payload_type: Option<&'static str>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandardFunction {
+    pub name: &'static str,
+    pub params: &'static [&'static str],
+    pub return_type: Option<&'static str>,
+}
+
 const STD_CORE_ENUMS: &[StandardEnum] = &[
     StandardEnum {
         name: "OptionInt",
@@ -41,6 +48,44 @@ const STD_CORE_ENUMS: &[StandardEnum] = &[
     },
 ];
 
+const STD_CORE_FUNCTIONS: &[StandardFunction] = &[
+    StandardFunction {
+        name: "string_len",
+        params: &["String"],
+        return_type: Some("Int"),
+    },
+    StandardFunction {
+        name: "string_byte_at",
+        params: &["String", "Int"],
+        return_type: Some("Int"),
+    },
+    StandardFunction {
+        name: "string_byte_slice",
+        params: &["String", "Int", "Int"],
+        return_type: Some("String"),
+    },
+    StandardFunction {
+        name: "ascii_is_digit",
+        params: &["Int"],
+        return_type: Some("Bool"),
+    },
+    StandardFunction {
+        name: "ascii_is_alpha",
+        params: &["Int"],
+        return_type: Some("Bool"),
+    },
+    StandardFunction {
+        name: "ascii_is_alnum",
+        params: &["Int"],
+        return_type: Some("Bool"),
+    },
+    StandardFunction {
+        name: "ascii_is_whitespace",
+        params: &["Int"],
+        return_type: Some("Bool"),
+    },
+];
+
 pub fn is_standard_import(path: &[String]) -> bool {
     STANDARD_IMPORTS.iter().any(|candidate| {
         candidate
@@ -62,4 +107,8 @@ pub fn is_std_core_import(path: &[String]) -> bool {
 
 pub fn core_enums() -> &'static [StandardEnum] {
     STD_CORE_ENUMS
+}
+
+pub fn core_functions() -> &'static [StandardFunction] {
+    STD_CORE_FUNCTIONS
 }

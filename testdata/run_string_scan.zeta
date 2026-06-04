@@ -1,0 +1,13 @@
+import std.core;
+
+fn main() -> Int {
+  let text: String = "A9 zeta";
+  let first: Int = string_byte_at(text, 0);
+  let digit: Int = string_byte_at(text, 1);
+  let space: Int = string_byte_at(text, 2);
+  let tail: String = string_byte_slice(text, 3, 4);
+  if string_len(text) == 7 && ascii_is_alpha(first) && ascii_is_digit(digit) && ascii_is_whitespace(space) && string_len(tail) == 4 {
+    return first + digit;
+  }
+  return 0;
+}

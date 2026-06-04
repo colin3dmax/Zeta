@@ -1163,6 +1163,9 @@ impl<'a> MirVerifier<'a> {
         args: &[MirExpr],
         locals: &HashMap<String, MirType>,
     ) -> MirType {
+        if let Some(return_type) = self.verify_std_call(callee, args, locals) {
+            return return_type;
+        }
         let Some(function) = self.functions.get(callee).copied() else {
             self.error(
                 "MIR_UNKNOWN_FUNCTION",
@@ -1203,6 +1206,49 @@ impl<'a> MirVerifier<'a> {
             .as_ref()
             .map(|ty| parse_mir_type(ty))
             .unwrap_or(MirType::Unit)
+    }
+
+    fn verify_std_call(
+        &mut self,
+        callee: &str,
+        args: &[MirExpr],
+        locals: &HashMap<String, MirType>,
+    ) -> Option<MirType> {
+        let (params, return_ty) = match callee {
+            "string_len" => (&["String"][..], MirType::named("Int")),
+            "string_byte_at" => (&["String", "Int"][..], MirType::named("Int")),
+            "string_byte_slice" => (&["String", "Int", "Int"][..], MirType::named("String")),
+            "ascii_is_digit" | "ascii_is_alpha" | "ascii_is_alnum" | "ascii_is_whitespace" => {
+                (&["Int"][..], MirType::named("Bool"))
+            }
+            _ => return None,
+        };
+        if args.len() != params.len() {
+            self.error(
+                "MIR_CALL_ARITY",
+                format!(
+                    "function `{callee}` expects {} arguments, found {}",
+                    params.len(),
+                    args.len()
+                ),
+            );
+        }
+        for (index, (arg, expected)) in args.iter().zip(params.iter()).enumerate() {
+            let arg_ty = self.verify_expr(arg, locals);
+            let param_ty = MirType::named(*expected);
+            self.expect_type(
+                &arg_ty,
+                &param_ty,
+                "MIR_CALL_TYPE",
+                format!(
+                    "argument {} for `{callee}` expects `{}`, found `{}`",
+                    index + 1,
+                    param_ty.display(),
+                    arg_ty.display()
+                ),
+            );
+        }
+        Some(return_ty)
     }
 
     fn verify_pattern(

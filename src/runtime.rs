@@ -299,6 +299,13 @@ impl MirRuntime {
                 eval_unary(*op, value)
             }
             MirExpr::Call { callee, args } => {
+                if is_std_core_builtin(callee) {
+                    let args = args
+                        .iter()
+                        .map(|arg| self.eval_expr(arg, locals))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    return eval_std_core_builtin(callee, args);
+                }
                 let Some(function) = self.functions.get(callee).cloned() else {
                     return Err(runtime_error(
                         "RUNTIME_UNKNOWN_FUNCTION",
@@ -596,6 +603,13 @@ impl Runtime {
                 eval_unary(*op, value)
             }
             Expr::Call { callee, args, .. } => {
+                if is_std_core_builtin(callee) {
+                    let args = args
+                        .iter()
+                        .map(|arg| self.eval_expr(arg, locals))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    return eval_std_core_builtin(callee, args);
+                }
                 if let Some((enum_name, variant)) = callee.rsplit_once('.') {
                     if self
                         .enum_variants
@@ -844,6 +858,157 @@ fn index_array_value(base: Value, index: Value) -> Result<Value, Diagnostic> {
             ),
         )
     })
+}
+
+fn is_std_core_builtin(callee: &str) -> bool {
+    matches!(
+        callee,
+        "string_len"
+            | "string_byte_at"
+            | "string_byte_slice"
+            | "ascii_is_digit"
+            | "ascii_is_alpha"
+            | "ascii_is_alnum"
+            | "ascii_is_whitespace"
+    )
+}
+
+fn eval_std_core_builtin(callee: &str, args: Vec<Value>) -> Result<Value, Diagnostic> {
+    match callee {
+        "string_len" => {
+            let [value]: [Value; 1] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            let Value::String(value) = value else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "string_len expects String",
+                ));
+            };
+            Ok(Value::Int(value.len() as i64))
+        }
+        "string_byte_at" => {
+            let [value, index]: [Value; 2] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            let Value::String(value) = value else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "string_byte_at expects String",
+                ));
+            };
+            let Value::Int(index) = index else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "string_byte_at index expects Int",
+                ));
+            };
+            if index < 0 {
+                return Err(runtime_error(
+                    "RUNTIME_STRING_INDEX",
+                    format!("string byte index `{index}` is out of bounds"),
+                ));
+            }
+            value
+                .as_bytes()
+                .get(index as usize)
+                .map(|byte| Value::Int(i64::from(*byte)))
+                .ok_or_else(|| {
+                    runtime_error(
+                        "RUNTIME_STRING_INDEX",
+                        format!(
+                            "string byte index `{index}` is out of bounds for length {}",
+                            value.len()
+                        ),
+                    )
+                })
+        }
+        "string_byte_slice" => {
+            let [value, start, len]: [Value; 3] =
+                expect_arity(callee, args)?.try_into().ok().unwrap();
+            let Value::String(value) = value else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "string_byte_slice expects String",
+                ));
+            };
+            let Value::Int(start) = start else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "string_byte_slice start expects Int",
+                ));
+            };
+            let Value::Int(len) = len else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "string_byte_slice len expects Int",
+                ));
+            };
+            if start < 0 || len < 0 {
+                return Err(runtime_error(
+                    "RUNTIME_STRING_SLICE",
+                    "string_byte_slice start and len must be non-negative",
+                ));
+            }
+            let start = start as usize;
+            let end = start.saturating_add(len as usize);
+            value
+                .get(start..end)
+                .map(|slice| Value::String(slice.to_string()))
+                .ok_or_else(|| {
+                    runtime_error(
+                        "RUNTIME_STRING_SLICE",
+                        format!(
+                            "string byte slice `{start}..{end}` is out of bounds or splits utf-8"
+                        ),
+                    )
+                })
+        }
+        "ascii_is_digit" => eval_ascii_predicate(callee, args, |byte| byte.is_ascii_digit()),
+        "ascii_is_alpha" => eval_ascii_predicate(callee, args, |byte| byte.is_ascii_alphabetic()),
+        "ascii_is_alnum" => eval_ascii_predicate(callee, args, |byte| byte.is_ascii_alphanumeric()),
+        "ascii_is_whitespace" => {
+            eval_ascii_predicate(callee, args, |byte| byte.is_ascii_whitespace())
+        }
+        _ => Err(runtime_error(
+            "RUNTIME_UNKNOWN_FUNCTION",
+            format!("unknown function `{callee}`"),
+        )),
+    }
+}
+
+fn eval_ascii_predicate(
+    callee: &str,
+    args: Vec<Value>,
+    predicate: impl Fn(u8) -> bool,
+) -> Result<Value, Diagnostic> {
+    let [value]: [Value; 1] = expect_arity(callee, args)?.try_into().ok().unwrap();
+    let Value::Int(value) = value else {
+        return Err(runtime_error(
+            "RUNTIME_STD_TYPE",
+            format!("{callee} expects Int"),
+        ));
+    };
+    if !(0..=255).contains(&value) {
+        return Ok(Value::Bool(false));
+    }
+    Ok(Value::Bool(predicate(value as u8)))
+}
+
+fn expect_arity(callee: &str, args: Vec<Value>) -> Result<Vec<Value>, Diagnostic> {
+    let expected = match callee {
+        "string_len" => 1,
+        "string_byte_at" => 2,
+        "string_byte_slice" => 3,
+        "ascii_is_digit" | "ascii_is_alpha" | "ascii_is_alnum" | "ascii_is_whitespace" => 1,
+        _ => args.len(),
+    };
+    if args.len() != expected {
+        return Err(runtime_error(
+            "RUNTIME_CALL_ARITY",
+            format!(
+                "function `{callee}` expects {expected} arguments, found {}",
+                args.len()
+            ),
+        ));
+    }
+    Ok(args)
 }
 
 type BindingSnapshot = Vec<(String, Option<Value>)>;

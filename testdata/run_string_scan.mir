@@ -1,0 +1,56 @@
+MirModule
+  enum OptionInt variants=None,Some(Int)
+  enum ResultInt variants=Err(String),Ok(Int)
+  fn main -> Int
+    block entry
+      local text: String mutability=immutable
+      _t0 = const String "A9 zeta"
+      store text, _t0
+      local first: Int mutability=immutable
+      _t1 = load text
+      _t2 = const Int 0
+      _t3 = call string_byte_at(_t1, _t2)
+      store first, _t3
+      local digit: Int mutability=immutable
+      _t4 = load text
+      _t5 = const Int 1
+      _t6 = call string_byte_at(_t4, _t5)
+      store digit, _t6
+      local space: Int mutability=immutable
+      _t7 = load text
+      _t8 = const Int 2
+      _t9 = call string_byte_at(_t7, _t8)
+      store space, _t9
+      local tail: String mutability=immutable
+      _t10 = load text
+      _t11 = const Int 3
+      _t12 = const Int 4
+      _t13 = call string_byte_slice(_t10, _t11, _t12)
+      store tail, _t13
+      _t14 = load text
+      _t15 = call string_len(_t14)
+      _t16 = const Int 7
+      _t17 = binary eq _t15, _t16
+      _t18 = load first
+      _t19 = call ascii_is_alpha(_t18)
+      _t20 = binary and _t17, _t19
+      _t21 = load digit
+      _t22 = call ascii_is_digit(_t21)
+      _t23 = binary and _t20, _t22
+      _t24 = load space
+      _t25 = call ascii_is_whitespace(_t24)
+      _t26 = binary and _t23, _t25
+      _t27 = load tail
+      _t28 = call string_len(_t27)
+      _t29 = const Int 4
+      _t30 = binary eq _t28, _t29
+      _t31 = binary and _t26, _t30
+      if _t31
+        then
+          _t32 = load first
+          _t33 = load digit
+          _t34 = binary add _t32, _t33
+          return _t34
+      end_if
+      _t35 = const Int 0
+      return _t35

@@ -225,6 +225,41 @@ pub const TOPICS: &[ReplTopic] = &[
         summary: "Homogeneous Bool array. Use [..] literals, integer indexing, and .len.",
         example: "let flags: BoolArray = [true, false];",
     },
+    ReplTopic {
+        name: "string_len",
+        summary: "std.core builtin returning UTF-8 byte length for a String.",
+        example: "import std.core; fn main() -> Int { return string_len(\"zeta\"); }",
+    },
+    ReplTopic {
+        name: "string_byte_at",
+        summary: "std.core builtin returning the byte at an Int index as Int.",
+        example: "import std.core; fn main() -> Int { return string_byte_at(\"A9\", 1); }",
+    },
+    ReplTopic {
+        name: "string_byte_slice",
+        summary: "std.core builtin returning a String slice by byte start and byte length.",
+        example: "import std.core; fn main() -> String { return string_byte_slice(\"zeta\", 1, 2); }",
+    },
+    ReplTopic {
+        name: "ascii_is_digit",
+        summary: "std.core builtin that checks whether an Int byte is ASCII digit.",
+        example: "import std.core; fn main() -> Bool { return ascii_is_digit(string_byte_at(\"9\", 0)); }",
+    },
+    ReplTopic {
+        name: "ascii_is_alpha",
+        summary: "std.core builtin that checks whether an Int byte is ASCII alphabetic.",
+        example: "import std.core; fn main() -> Bool { return ascii_is_alpha(string_byte_at(\"A\", 0)); }",
+    },
+    ReplTopic {
+        name: "ascii_is_alnum",
+        summary: "std.core builtin that checks whether an Int byte is ASCII alphabetic or digit.",
+        example: "import std.core; fn main() -> Bool { return ascii_is_alnum(string_byte_at(\"A9\", 1)); }",
+    },
+    ReplTopic {
+        name: "ascii_is_whitespace",
+        summary: "std.core builtin that checks whether an Int byte is ASCII whitespace.",
+        example: "import std.core; fn main() -> Bool { return ascii_is_whitespace(string_byte_at(\" \", 0)); }",
+    },
 ];
 
 pub fn complete(prefix: &str) -> Vec<&'static str> {
@@ -395,6 +430,7 @@ pub fn examples_text_colored_lang(language: Language) -> String {
             ("可变绑定", "let mut answer: Int = 40;"),
             ("布尔逻辑", "true && !false"),
             ("数组", "fn main() -> Int { let values: IntArray = [2, 4, 6]; return values[0] + values.len; }"),
+            ("字符串扫描", "import std.core; fn main() -> Int { return string_len(\"zeta\") + string_byte_at(\"A9\", 1); }"),
             ("函数", "fn main() -> Int { return 42; }"),
             ("模块", "module demo.core;"),
             ("文档", ":doc let"),
@@ -407,6 +443,7 @@ pub fn examples_text_colored_lang(language: Language) -> String {
             ("Mutable", "let mut answer: Int = 40;"),
             ("Boolean", "true && !false"),
             ("Array", "fn main() -> Int { let values: IntArray = [2, 4, 6]; return values[0] + values.len; }"),
+            ("String scan", "import std.core; fn main() -> Int { return string_len(\"zeta\") + string_byte_at(\"A9\", 1); }"),
             ("Function", "fn main() -> Int { return 42; }"),
             ("Module", "module demo.core;"),
             ("Doc", ":doc let"),
@@ -442,10 +479,10 @@ Zeta Stage 0 API
   {}  字符串标量
   {}  用于 if/while 条件的布尔标量
   {}  同质数组，支持字面量、Int 下标和 .len
-  {}  标准 API 边界：当前可导入 std.core 和 std.io
+  {}  标准 API 边界：当前可导入 std.core 和 std.io；std.core 提供字符串 byte 扫描函数
 
 语言表面
-  模块/导入、std.core/std.io、函数、绑定/可变绑定、赋值、比较、布尔逻辑、数组字面量/下标/.len、返回、if/while、struct、enum 变体、match
+  模块/导入、std.core/std.io、函数、绑定/可变绑定、赋值、比较、布尔逻辑、数组字面量/下标/.len、字符串 byte 扫描、返回、if/while、struct、enum 变体、match
 
 试试
   {}
@@ -473,10 +510,10 @@ Zeta Stage 0 API
   {}  scalar string values
   {}  scalar boolean values for control flow
   {}  homogeneous arrays with literals, Int indexing, and .len
-  {}  standard API boundary: std.core and std.io imports are accepted
+  {}  standard API boundary: std.core and std.io imports are accepted; std.core includes string byte scan builtins
 
 Language surface
-  module/import, std.core/std.io, fn, let/let mut, assignment, comparison, boolean logic, array literals/index/.len, return, if/else, while, struct, enum variants, match
+  module/import, std.core/std.io, fn, let/let mut, assignment, comparison, boolean logic, array literals/index/.len, string byte scan, return, if/else, while, struct, enum variants, match
 
 Try
   {}
@@ -545,6 +582,13 @@ fn topic_summary(topic: &ReplTopic, language: Language) -> &'static str {
         "IntArray" => "同质 Int 数组；支持 [1, 2] 字面量、Int 下标访问和 .len 长度字段。",
         "StringArray" => "同质 String 数组；支持字符串数组字面量、Int 下标访问和 .len 长度字段。",
         "BoolArray" => "同质 Bool 数组；支持布尔数组字面量、Int 下标访问和 .len 长度字段。",
+        "string_len" => "std.core 内建函数，返回 String 的 UTF-8 byte 长度。",
+        "string_byte_at" => "std.core 内建函数，用 Int 下标读取 String 的单个 byte，并以 Int 返回。",
+        "string_byte_slice" => "std.core 内建函数，用 byte 起点和 byte 长度截取 String；切分 UTF-8 字符边界会报运行时错误。",
+        "ascii_is_digit" => "std.core 内建函数，判断 Int byte 是否是 ASCII 数字。",
+        "ascii_is_alpha" => "std.core 内建函数，判断 Int byte 是否是 ASCII 字母。",
+        "ascii_is_alnum" => "std.core 内建函数，判断 Int byte 是否是 ASCII 字母或数字。",
+        "ascii_is_whitespace" => "std.core 内建函数，判断 Int byte 是否是 ASCII 空白字符。",
         _ => topic.summary,
     }
 }

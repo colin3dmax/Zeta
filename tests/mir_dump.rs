@@ -50,6 +50,14 @@ fn dumps_run_array_mir() {
 }
 
 #[test]
+fn dumps_run_string_scan_mir() {
+    let source = include_str!("../testdata/run_string_scan.zeta");
+    let expected = include_str!("../testdata/run_string_scan.mir");
+    let dump = zeta::dump_mir(source).expect("source should lower to MIR");
+    assert_eq!(dump, expected);
+}
+
+#[test]
 fn dumps_run_struct_mir() {
     let source = include_str!("../testdata/run_struct.zeta");
     let expected = include_str!("../testdata/run_struct.mir");

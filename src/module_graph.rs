@@ -731,8 +731,11 @@ fn imported_external_functions(
     module: &Module,
     module_infos: &HashMap<String, ModuleInfo>,
 ) -> Vec<ExternalFunction> {
-    let mut functions = Vec::new();
-    let mut seen = HashSet::new();
+    let mut functions = typecheck::standard_external_functions(module);
+    let mut seen = functions
+        .iter()
+        .map(|function| function.name.clone())
+        .collect::<HashSet<_>>();
     let ambiguous_short_names = ambiguous_external_function_names(module, module_infos);
     for import in local_imports(module) {
         let Some(info) = module_infos.get(&import.path) else {

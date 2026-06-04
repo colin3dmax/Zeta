@@ -55,6 +55,13 @@ fn run_executes_array_index_and_len() {
 }
 
 #[test]
+fn run_executes_string_scan_std_core_builtins() {
+    let value = zeta::run_source(include_str!("../testdata/run_string_scan.zeta"))
+        .expect("program should run");
+    assert_eq!(value.to_string(), "122");
+}
+
+#[test]
 fn run_executes_scalar_match() {
     let value =
         zeta::run_source(include_str!("../testdata/run_match.zeta")).expect("program should run");

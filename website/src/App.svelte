@@ -30,12 +30,19 @@
     "Bool",
     "IntArray",
     "StringArray",
-    "BoolArray"
+    "BoolArray",
+    "string_len",
+    "string_byte_at",
+    "string_byte_slice",
+    "ascii_is_digit",
+    "ascii_is_alpha",
+    "ascii_is_alnum",
+    "ascii_is_whitespace"
   ];
   const docs = {
     "getting-started": "从表达式开始：输入 40 + 2 可以直接执行；使用 let 声明局部绑定；需要重新赋值时使用 let mut；if/while 条件可以使用比较和布尔逻辑表达式。",
     tutorial: "推荐路径：表达式 -> let/let mut -> 比较/布尔逻辑/控制流 -> fn -> struct 字面量/字段访问 -> enum 变体 -> match -> check/run -> Playground/REPL。",
-    api: "Stage 0 API 覆盖 Int、String、Bool、IntArray/StringArray/BoolArray、module/import/import alias、std.core/std.io、fn、let/let mut、赋值、比较、布尔逻辑、数组字面量/下标/.len、return、if/while/break/continue、struct 字面量、字段访问、enum 变体和 match。",
+    api: "Stage 0 API 覆盖 Int、String、Bool、IntArray/StringArray/BoolArray、std.core 字符串 byte 扫描、module/import/import alias、std.core/std.io、fn、let/let mut、赋值、比较、布尔逻辑、数组字面量/下标/.len、return、if/while/break/continue、struct 字面量、字段访问、enum 变体和 match。",
     std: "std 是 Stage 0 标准 API 边界。当前 resolver 接受 import std.core; 和 import std.io;，未知标准库路径会报错；具体 IO 函数在后续权限模型确定后接入。",
     playground: "Playground 通过 zeta.wasm 运行真实编译器前端，支持 AST、检查和运行。",
     module: "module 声明当前源码模块，例如 module demo.core;",
@@ -56,7 +63,14 @@
     Bool: "Bool 是 if/while 条件使用的布尔类型；&&、||、! 会组合或取反 Bool。",
     IntArray: "IntArray 是同质 Int 数组；支持 [1, 2] 字面量、Int 下标访问和 .len。",
     StringArray: "StringArray 是同质 String 数组；支持字符串数组字面量、Int 下标访问和 .len。",
-    BoolArray: "BoolArray 是同质 Bool 数组；支持布尔数组字面量、Int 下标访问和 .len。"
+    BoolArray: "BoolArray 是同质 Bool 数组；支持布尔数组字面量、Int 下标访问和 .len。",
+    string_len: "std.core 内建函数，返回 String 的 UTF-8 byte 长度。",
+    string_byte_at: "std.core 内建函数，用 Int 下标读取 String 的单个 byte，并以 Int 返回。",
+    string_byte_slice: "std.core 内建函数，用 byte 起点和 byte 长度截取 String。",
+    ascii_is_digit: "std.core 内建函数，判断 Int byte 是否是 ASCII 数字。",
+    ascii_is_alpha: "std.core 内建函数，判断 Int byte 是否是 ASCII 字母。",
+    ascii_is_alnum: "std.core 内建函数，判断 Int byte 是否是 ASCII 字母或数字。",
+    ascii_is_whitespace: "std.core 内建函数，判断 Int byte 是否是 ASCII 空白字符。"
   };
 
   const navItems = [
@@ -176,6 +190,19 @@ fn main() -> Int {
   let values: IntArray = [2, 4, 6];
   return values[0] + values[1] + values.len;
 }`,
+    stringScan: `import std.core;
+
+fn main() -> Int {
+  let text: String = "A9 zeta";
+  let first: Int = string_byte_at(text, 0);
+  let digit: Int = string_byte_at(text, 1);
+  let space: Int = string_byte_at(text, 2);
+  let tail: String = string_byte_slice(text, 3, 4);
+  if string_len(text) == 7 && ascii_is_alpha(first) && ascii_is_digit(digit) && ascii_is_whitespace(space) && string_len(tail) == 4 {
+    return first + digit;
+  }
+  return 0;
+}`,
     modules: `// file: main.zeta
 module demo.app;
 import demo.math;
@@ -254,6 +281,7 @@ export fn answer() -> Int {
     { name: "Int 算术", mode: "run", source: "fn main() -> Int { return 40 + 2; }", expected: "42" },
     { name: "Bool 逻辑", mode: "run", example: "bool", expected: "true" },
     { name: "数组字面量 / 下标 / len", mode: "run", example: "arrays", expected: "9" },
+    { name: "std.core 字符串扫描", mode: "run", example: "stringScan", expected: "122" },
     { name: "let mut / 赋值", mode: "run", example: "bindings", expected: "42" },
     { name: "函数调用", mode: "run", example: "functions", expected: "42" },
     { name: "if / while", mode: "run", example: "control", expected: "42" },
@@ -436,11 +464,11 @@ export fn answer() -> Int {
   }
 
   function replExamples() {
-    return ["40 + 2", "1 + 1 == 2", "true && !false", "let mut count: Int = 0;", "count = count + 1;", "fn main() -> Int { let values: IntArray = [2, 4, 6]; return values[0] + values.len; }", "fn main() -> Int { if true && !false { return 42; } return 0; }", "module demo.core;", ":doc IntArray"].join("\n");
+    return ["40 + 2", "1 + 1 == 2", "true && !false", "let mut count: Int = 0;", "count = count + 1;", "fn main() -> Int { let values: IntArray = [2, 4, 6]; return values[0] + values.len; }", "import std.core; fn main() -> Int { return string_len(\"zeta\") + string_byte_at(\"A9\", 1); }", "fn main() -> Int { if true && !false { return 42; } return 0; }", "module demo.core;", ":doc string_len"].join("\n");
   }
 
   function replApi() {
-    return "Zeta Stage 0 API\nInt/String/Bool/IntArray/StringArray/BoolArray\nmodule/import/import alias/std.core/std.io/fn/let/let mut/assignment/comparison/boolean logic/array literals/index/.len/return/if/while/break/continue/struct literal/field access/enum variants/match\nstd: 当前可导入 std.core 和 std.io；未知标准库路径会被 resolver 拒绝。";
+    return "Zeta Stage 0 API\nInt/String/Bool/IntArray/StringArray/BoolArray\nstd.core: string_len/string_byte_at/string_byte_slice/ascii_is_digit/ascii_is_alpha/ascii_is_alnum/ascii_is_whitespace\nmodule/import/import alias/std.core/std.io/fn/let/let mut/assignment/comparison/boolean logic/array literals/index/.len/return/if/while/break/continue/struct literal/field access/enum variants/match\nstd: 当前可导入 std.core 和 std.io；未知标准库路径会被 resolver 拒绝。";
   }
 
   async function submitRepl() {

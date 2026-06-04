@@ -31,6 +31,7 @@
         <a href="#functions">函数和 return</a>
         <a href="#control-flow">控制流</a>
         <a href="#arrays">数组</a>
+        <a href="#string-scan">字符串扫描</a>
         <a href="#data-declarations">数据声明</a>
         <a href="#tooling">CLI / REPL / 编辑器</a>
         <a href="#online-testing">在线测试</a>
@@ -178,6 +179,22 @@ fn main() -&gt; Int {
 }</code></pre>
     <p>当前数组能力用于支撑自举编译器的 token/span 列表和小型表结构；还没有泛型 <code>Vec</code>、数组拼接、切片视图或用户自定义元素类型数组。</p>
     <p><a class="button secondary" href="#online-testing" data-zeta-example="arrays">在本页运行数组示例</a></p>
+
+    <h2 id="string-scan">std.core 字符串 byte 扫描</h2>
+    <p>导入 <code>std.core</code> 后，可以使用自举 lexer/parser 需要的最小字符串扫描函数：<code>string_len</code> 返回 UTF-8 byte 长度，<code>string_byte_at</code> 用 <code>Int</code> 下标读取 byte 并以 <code>Int</code> 返回，<code>string_byte_slice</code> 使用 byte 起点和 byte 长度截取字符串，ASCII 分类函数接收 byte <code>Int</code> 并返回 <code>Bool</code>。</p>
+    <pre><code>import std.core;
+
+fn main() -&gt; Int {
+  let text: String = "A9 zeta";
+  let first: Int = string_byte_at(text, 0);
+  let digit: Int = string_byte_at(text, 1);
+  if ascii_is_alpha(first) &amp;&amp; ascii_is_digit(digit) {
+    return string_len(text) + digit;
+  }
+  return 0;
+}</code></pre>
+    <p>当前刻意不引入 <code>Char</code>、<code>Byte</code> 或 Unicode iterator；完整 Unicode 文本处理会在更成熟的标准库阶段单独设计。</p>
+    <p><a class="button secondary" href="#online-testing" data-zeta-example="stringScan">在本页运行字符串扫描示例</a></p>
 
     <h2 id="data-declarations">struct、enum 和 match</h2>
     <p><code>struct</code> 当前支持结构体字面量和字段访问，适合先表达稳定记录数据。<code>enum</code> 当前支持限定变体值，例如 <code>ResultTag.Ok</code>。<code>match</code> 可以对 <code>Int</code>、<code>String</code>、<code>Bool</code>、枚举变体和 <code>_</code> 通配模式执行分支。</p>

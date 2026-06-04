@@ -19,7 +19,14 @@ const TOPICS = [
   ["Bool", "Boolean scalar type used by if and while conditions.", "let ready: Bool = 1 + 1 == 2 && !false;"],
   ["IntArray", "Homogeneous Int array. Use [..] literals, integer indexing, and .len.", "let values: IntArray = [2, 4, 6];"],
   ["StringArray", "Homogeneous String array. Use [..] literals, integer indexing, and .len.", "let names: StringArray = [\"Ada\", \"Zeta\"];"],
-  ["BoolArray", "Homogeneous Bool array. Use [..] literals, integer indexing, and .len.", "let flags: BoolArray = [true, false];"]
+  ["BoolArray", "Homogeneous Bool array. Use [..] literals, integer indexing, and .len.", "let flags: BoolArray = [true, false];"],
+  ["string_len", "std.core builtin returning UTF-8 byte length for a String.", "import std.core;\nfn main() -> Int { return string_len(\"zeta\"); }"],
+  ["string_byte_at", "std.core builtin returning the byte at an Int index as Int.", "import std.core;\nfn main() -> Int { return string_byte_at(\"A9\", 1); }"],
+  ["string_byte_slice", "std.core builtin returning a String slice by byte start and byte length.", "import std.core;\nfn main() -> String { return string_byte_slice(\"zeta\", 1, 2); }"],
+  ["ascii_is_digit", "std.core builtin that checks whether an Int byte is ASCII digit.", "import std.core;\nfn main() -> Bool { return ascii_is_digit(string_byte_at(\"9\", 0)); }"],
+  ["ascii_is_alpha", "std.core builtin that checks whether an Int byte is ASCII alphabetic.", "import std.core;\nfn main() -> Bool { return ascii_is_alpha(string_byte_at(\"A\", 0)); }"],
+  ["ascii_is_alnum", "std.core builtin that checks whether an Int byte is ASCII alphabetic or digit.", "import std.core;\nfn main() -> Bool { return ascii_is_alnum(string_byte_at(\"A9\", 1)); }"],
+  ["ascii_is_whitespace", "std.core builtin that checks whether an Int byte is ASCII whitespace.", "import std.core;\nfn main() -> Bool { return ascii_is_whitespace(string_byte_at(\" \", 0)); }"]
 ];
 
 function activate(context) {
@@ -59,7 +66,7 @@ function completionKind(name) {
   if (["Int", "String", "Bool", "IntArray", "StringArray", "BoolArray"].includes(name)) {
     return vscode.CompletionItemKind.TypeParameter;
   }
-  if (name === "fn") {
+  if (["fn", "string_len", "string_byte_at", "string_byte_slice", "ascii_is_digit", "ascii_is_alpha", "ascii_is_alnum", "ascii_is_whitespace"].includes(name)) {
     return vscode.CompletionItemKind.Function;
   }
   return vscode.CompletionItemKind.Keyword;

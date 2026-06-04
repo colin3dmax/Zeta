@@ -15,21 +15,21 @@
     </nav>
     <h1>Zeta Core / Std API 边界</h1>
     <p><strong>状态：</strong>accepted</p>
-    <p><strong>更新时间：</strong>2026-06-03</p>
+    <p><strong>更新时间：</strong>2026-06-04</p>
     <p><strong>适用范围：</strong>Zeta Stage 0 标准 API 命名空间、resolver 校验、用户文档和 Playground 示例。</p>
     <p><strong>验收标准：</strong>用户能明确知道当前哪些标准 API 路径可导入，未知路径会被编译器拒绝，并能在线验证。</p>
 
     <section class="hero">
       <p class="eyebrow">API Boundary</p>
       <h2>先冻结可验证边界，再扩展真实标准库能力。</h2>
-    <p>Zeta 不把尚未实现的标准库伪装成可用功能。Stage 0/1 先承诺最小命名空间边界：<code>std.core</code> 和 <code>std.io</code> 可以被导入；<code>std.core</code> 当前暴露整数专用的 <code>OptionInt</code> 和 <code>ResultInt</code> 枚举；目录检查时，module graph 中存在的本地模块也可以被导入；其他路径必须被 resolver 明确拒绝。</p>
+    <p>Zeta 不把尚未实现的标准库伪装成可用功能。Stage 0/1 先承诺最小命名空间边界：<code>std.core</code> 和 <code>std.io</code> 可以被导入；<code>std.core</code> 当前暴露整数专用的 <code>OptionInt</code> 和 <code>ResultInt</code> 枚举，以及自举 lexer/parser 所需的字符串 byte 扫描函数；目录检查时，module graph 中存在的本地模块也可以被导入；其他路径必须被 resolver 明确拒绝。</p>
     </section>
 
     <h2>设计决策</h2>
     <div class="grid">
       <section>
         <h3>core 保持小</h3>
-        <p><code>std.core</code> 是最小语言核心能力的稳定入口，用于承载无需平台权限的基础 API。当前 Stage 0 暴露 <code>OptionInt</code> 和 <code>ResultInt</code>，先服务 enum payload、match 和 MIR 运行闭环；泛型 <code>Option&lt;T&gt;</code> / <code>Result&lt;T, E&gt;</code> 等到类型系统支持后再开放。</p>
+        <p><code>std.core</code> 是最小语言核心能力的稳定入口，用于承载无需平台权限的基础 API。当前 Stage 0 暴露 <code>OptionInt</code>、<code>ResultInt</code> 和字符串 byte 扫描函数，先服务 enum payload、match、lexer/parser 自举和 MIR 运行闭环；泛型 <code>Option&lt;T&gt;</code> / <code>Result&lt;T, E&gt;</code> 等到类型系统支持后再开放。</p>
       </section>
       <section>
         <h3>std.io 先占位</h3>
@@ -54,7 +54,7 @@
         <tr>
           <td><code>std.core</code></td>
           <td>可导入</td>
-          <td>标准核心 API 边界，当前提供 <code>OptionInt</code> 和 <code>ResultInt</code> 枚举，不提供运行时函数。</td>
+          <td>标准核心 API 边界，当前提供 <code>OptionInt</code>、<code>ResultInt</code> 和字符串 byte 扫描函数。</td>
         </tr>
         <tr>
           <td><code>std.io</code></td>
@@ -97,6 +97,39 @@
       </tbody>
     </table>
 
+    <h2>std.core 字符串函数</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>函数</th>
+          <th>签名</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>string_len</code></td>
+          <td><code>(String) -&gt; Int</code></td>
+          <td>返回 UTF-8 byte 长度。</td>
+        </tr>
+        <tr>
+          <td><code>string_byte_at</code></td>
+          <td><code>(String, Int) -&gt; Int</code></td>
+          <td>按 byte 下标读取一个 byte，返回 0-255 的 <code>Int</code>。</td>
+        </tr>
+        <tr>
+          <td><code>string_byte_slice</code></td>
+          <td><code>(String, Int, Int) -&gt; String</code></td>
+          <td>按 byte 起点和 byte 长度截取字符串；切分 UTF-8 字符边界会报运行时错误。</td>
+        </tr>
+        <tr>
+          <td><code>ascii_is_digit</code> / <code>ascii_is_alpha</code> / <code>ascii_is_alnum</code> / <code>ascii_is_whitespace</code></td>
+          <td><code>(Int) -&gt; Bool</code></td>
+          <td>按 ASCII byte 分类，非 0-255 输入返回 <code>false</code>。</td>
+        </tr>
+      </tbody>
+    </table>
+
     <h2>示例</h2>
     <pre><code>module demo.core;
 import std.core;
@@ -112,6 +145,15 @@ fn main() -&gt; Int {
   match value {
     OptionInt.Some(answer) -&gt; { return answer; },
     OptionInt.None -&gt; { return 0; },
+  }
+  return 0;
+}</code></pre>
+    <pre><code>import std.core;
+
+fn main() -&gt; Int {
+  let text: String = "A9 zeta";
+  if ascii_is_alpha(string_byte_at(text, 0)) &amp;&amp; ascii_is_digit(string_byte_at(text, 1)) {
+    return string_len(text);
   }
   return 0;
 }</code></pre>

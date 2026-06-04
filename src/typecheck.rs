@@ -15,8 +15,9 @@ enum Type {
 }
 
 pub fn check(module: &Module) -> Result<(), Vec<Diagnostic>> {
+    let external_functions = standard_external_functions(module);
     let external_enums = standard_external_enums(module);
-    check_with_external_items(module, &[], &[], &external_enums)
+    check_with_external_items(module, &external_functions, &[], &external_enums)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -263,6 +264,30 @@ pub fn standard_external_enums(module: &Module) -> Vec<ExternalEnum> {
                 })
                 .collect(),
             target_name: Some(format!("std.core.{}", standard_enum.name)),
+        })
+        .collect()
+}
+
+pub fn standard_external_functions(module: &Module) -> Vec<ExternalFunction> {
+    let imports_std_core = module.items.iter().any(|item| match item {
+        Item::Import { path, .. } => std_api::is_std_core_import(path),
+        _ => false,
+    });
+    if !imports_std_core {
+        return Vec::new();
+    }
+
+    std_api::core_functions()
+        .iter()
+        .map(|function| ExternalFunction {
+            name: function.name.to_string(),
+            params: function
+                .params
+                .iter()
+                .map(|param| param.to_string())
+                .collect(),
+            return_type: function.return_type.map(str::to_string),
+            target_name: Some(format!("std.core.{}", function.name)),
         })
         .collect()
 }

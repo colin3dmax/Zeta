@@ -8,7 +8,7 @@
   const keywords = new Set(["module", "import", "as", "export", "fn", "let", "mut", "return", "break", "continue", "if", "else", "while", "match", "struct", "enum"]);
   const types = new Set(["Int", "String", "Bool", "IntArray", "StringArray", "BoolArray"]);
   const commands = [":help", ":api", ":topics", ":examples", ":doc", ":complete", ":quit"];
-  const topics = ["getting-started", "tutorial", "api", "std", "playground", "module", "import", "as", "fn", "let", "mut", "if", "while", "break", "continue", "match", "struct", "enum", "Int", "String", "Bool", "IntArray", "StringArray", "BoolArray"];
+  const topics = ["getting-started", "tutorial", "api", "std", "playground", "module", "import", "as", "fn", "let", "mut", "if", "while", "break", "continue", "match", "struct", "enum", "Int", "String", "Bool", "IntArray", "StringArray", "BoolArray", "string_len", "string_byte_at", "string_byte_slice", "ascii_is_digit", "ascii_is_alpha", "ascii_is_alnum", "ascii_is_whitespace"];
 
   const sample = `module demo.core;
 import std.core;
@@ -114,6 +114,19 @@ fn main() -> Int {
   let values: IntArray = [2, 4, 6];
   return values[0] + values[1] + values.len;
 }`,
+    stringScan: `import std.core;
+
+fn main() -> Int {
+  let text: String = "A9 zeta";
+  let first: Int = string_byte_at(text, 0);
+  let digit: Int = string_byte_at(text, 1);
+  let space: Int = string_byte_at(text, 2);
+  let tail: String = string_byte_slice(text, 3, 4);
+  if string_len(text) == 7 && ascii_is_alpha(first) && ascii_is_digit(digit) && ascii_is_whitespace(space) && string_len(tail) == 4 {
+    return first + digit;
+  }
+  return 0;
+}`,
     modules: `// file: main.zeta
 module demo.app;
 import demo.math;
@@ -191,6 +204,7 @@ export fn answer() -> Int {
     ["functions", "函数调用"],
     ["bool", "布尔逻辑"],
     ["arrays", "数组"],
+    ["stringScan", "字符串扫描"],
     ["struct", "Struct"],
     ["enum", "Enum"],
     ["match", "Match"],
@@ -209,6 +223,7 @@ export fn answer() -> Int {
     { name: "Int 算术", mode: "run", source: "fn main() -> Int { return 40 + 2; }", expected: "42" },
     { name: "Bool 逻辑", mode: "run", example: "bool", expected: "true" },
     { name: "数组字面量 / 下标 / len", mode: "run", example: "arrays", expected: "9" },
+    { name: "std.core 字符串扫描", mode: "run", example: "stringScan", expected: "122" },
     { name: "let mut / 赋值", mode: "run", example: "bindings", expected: "42" },
     { name: "函数调用", mode: "run", example: "functions", expected: "42" },
     { name: "if / while", mode: "run", example: "control", expected: "42" },
