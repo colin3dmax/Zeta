@@ -8,7 +8,7 @@
   const keywords = new Set(["module", "import", "as", "export", "fn", "let", "mut", "return", "break", "continue", "if", "else", "while", "match", "struct", "enum"]);
   const types = new Set(["Int", "String", "Bool", "IntArray", "StringArray", "BoolArray"]);
   const commands = [":help", ":api", ":topics", ":examples", ":doc", ":complete", ":quit"];
-  const topics = ["getting-started", "tutorial", "api", "std", "playground", "module", "import", "as", "fn", "let", "mut", "if", "while", "break", "continue", "match", "struct", "enum", "Int", "String", "Bool", "IntArray", "StringArray", "BoolArray", "string_len", "string_byte_at", "string_byte_slice", "ascii_is_digit", "ascii_is_alpha", "ascii_is_alnum", "ascii_is_whitespace"];
+  const topics = ["getting-started", "tutorial", "api", "std", "playground", "module", "import", "as", "fn", "let", "mut", "if", "while", "break", "continue", "match", "struct", "enum", "Int", "String", "Bool", "IntArray", "StringArray", "BoolArray", "string_len", "string_byte_at", "string_byte_slice", "ascii_is_digit", "ascii_is_alpha", "ascii_is_alnum", "ascii_is_whitespace", "int_array_empty", "int_array_push", "string_array_empty", "string_array_push", "bool_array_empty", "bool_array_push"];
 
   const sample = `module demo.core;
 import std.core;
@@ -127,6 +127,15 @@ fn main() -> Int {
   }
   return 0;
 }`,
+    arrayBuilder: `import std.core;
+
+fn main() -> Int {
+  let mut values: IntArray = int_array_empty();
+  values = int_array_push(values, 2);
+  values = int_array_push(values, 4);
+  values = int_array_push(values, 6);
+  return values[0] + values[1] + values.len;
+}`,
     modules: `// file: main.zeta
 module demo.app;
 import demo.math;
@@ -205,6 +214,7 @@ export fn answer() -> Int {
     ["bool", "布尔逻辑"],
     ["arrays", "数组"],
     ["stringScan", "字符串扫描"],
+    ["arrayBuilder", "数组构造"],
     ["struct", "Struct"],
     ["enum", "Enum"],
     ["match", "Match"],
@@ -224,6 +234,7 @@ export fn answer() -> Int {
     { name: "Bool 逻辑", mode: "run", example: "bool", expected: "true" },
     { name: "数组字面量 / 下标 / len", mode: "run", example: "arrays", expected: "9" },
     { name: "std.core 字符串扫描", mode: "run", example: "stringScan", expected: "122" },
+    { name: "std.core typed array builder", mode: "run", example: "arrayBuilder", expected: "9" },
     { name: "let mut / 赋值", mode: "run", example: "bindings", expected: "42" },
     { name: "函数调用", mode: "run", example: "functions", expected: "42" },
     { name: "if / while", mode: "run", example: "control", expected: "42" },

@@ -84,6 +84,36 @@ const STD_CORE_FUNCTIONS: &[StandardFunction] = &[
         params: &["Int"],
         return_type: Some("Bool"),
     },
+    StandardFunction {
+        name: "int_array_empty",
+        params: &[],
+        return_type: Some("IntArray"),
+    },
+    StandardFunction {
+        name: "int_array_push",
+        params: &["IntArray", "Int"],
+        return_type: Some("IntArray"),
+    },
+    StandardFunction {
+        name: "string_array_empty",
+        params: &[],
+        return_type: Some("StringArray"),
+    },
+    StandardFunction {
+        name: "string_array_push",
+        params: &["StringArray", "String"],
+        return_type: Some("StringArray"),
+    },
+    StandardFunction {
+        name: "bool_array_empty",
+        params: &[],
+        return_type: Some("BoolArray"),
+    },
+    StandardFunction {
+        name: "bool_array_push",
+        params: &["BoolArray", "Bool"],
+        return_type: Some("BoolArray"),
+    },
 ];
 
 pub fn is_standard_import(path: &[String]) -> bool {

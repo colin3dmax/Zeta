@@ -144,6 +144,39 @@ fn main() -> Int {
 }
 
 #[test]
+fn check_accepts_typed_array_builder_builtins() {
+    zeta::check_source(
+        r#"
+import std.core;
+
+fn main() -> Int {
+  let mut values: IntArray = int_array_empty();
+  values = int_array_push(values, 1);
+  return values[0];
+}
+"#,
+    )
+    .expect("typed array builder builtins should typecheck");
+}
+
+#[test]
+fn check_rejects_typed_array_builder_element_type_mismatch() {
+    let source = r#"
+import std.core;
+
+fn main() -> Int {
+  let mut values: IntArray = int_array_empty();
+  values = int_array_push(values, "bad");
+  return 0;
+}
+"#;
+    let diagnostics =
+        zeta::check_source(source).expect_err("array builder element mismatch should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_CALL_ARGUMENT");
+    assert_eq!(diagnostics[0].span, span_of(source, "\"bad\""));
+}
+
+#[test]
 fn check_rejects_non_int_ordering_operands() {
     let source = r#"
 fn main() {

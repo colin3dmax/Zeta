@@ -1,0 +1,16 @@
+import std.core;
+
+fn main() -> Int {
+  let mut values: IntArray = int_array_empty();
+  values = int_array_push(values, 2);
+  values = int_array_push(values, 4);
+  values = int_array_push(values, 6);
+  let mut names: StringArray = string_array_empty();
+  names = string_array_push(names, "zeta");
+  let mut flags: BoolArray = bool_array_empty();
+  flags = bool_array_push(flags, true);
+  if names.len == 1 && flags[0] {
+    return values[0] + values[1] + values.len;
+  }
+  return 0;
+}

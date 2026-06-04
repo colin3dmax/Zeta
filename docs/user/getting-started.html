@@ -38,6 +38,7 @@
         <a href="#comparison">比较表达式</a>
         <a href="#bool">布尔逻辑</a>
         <a href="#arrays">数组</a>
+        <a href="#array-builder">数组构造</a>
         <a href="#string-scan">字符串扫描</a>
         <a href="#match">标量 match</a>
         <a href="#struct">结构体字段访问</a>
@@ -149,6 +150,19 @@ cargo run -- run testdata/modules_alias</code></pre>
   return values[0] + values[1] + values.len;
 }</code></pre>
     <pre><code>cargo run -- run testdata/run_array.zeta</code></pre>
+
+    <h2 id="array-builder">typed array builder</h2>
+    <p><code>std.core</code> 提供 <code>int_array_empty</code> / <code>int_array_push</code>、<code>string_array_empty</code> / <code>string_array_push</code>、<code>bool_array_empty</code> / <code>bool_array_push</code>。这是没有完整泛型 <code>Vec</code> 前的保守容器 API，用于自举 token/span/diagnostic 列表。</p>
+    <pre><code>import std.core;
+
+fn main() -&gt; Int {
+  let mut values: IntArray = int_array_empty();
+  values = int_array_push(values, 2);
+  values = int_array_push(values, 4);
+  values = int_array_push(values, 6);
+  return values[0] + values[1] + values.len;
+}</code></pre>
+    <pre><code>cargo run -- run testdata/run_array_builder.zeta</code></pre>
 
     <h2 id="string-scan">字符串 byte 扫描</h2>
     <p><code>std.core</code> 当前提供自举 lexer/parser 所需的最小字符串扫描函数：<code>string_len</code>、<code>string_byte_at</code>、<code>string_byte_slice</code>、<code>ascii_is_digit</code>、<code>ascii_is_alpha</code>、<code>ascii_is_alnum</code> 和 <code>ascii_is_whitespace</code>。这些 API 按 UTF-8 byte 工作，返回 byte 时使用 <code>Int</code>。</p>
@@ -323,6 +337,7 @@ let mut count: Int = 1;
 count = count + 1;
 true &amp;&amp; !false;
 fn main() -&gt; Int { let values: IntArray = [2, 4, 6]; return values[0] + values.len; }
+import std.core; fn main() -&gt; Int { let values: IntArray = int_array_push(int_array_empty(), 2); return values[0]; }
 import std.core; fn main() -&gt; Int { return string_len("zeta") + string_byte_at("A9", 1); }
 :doc struct
 :complete Str

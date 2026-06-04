@@ -22,14 +22,14 @@
     <section class="hero">
       <p class="eyebrow">API Boundary</p>
       <h2>先冻结可验证边界，再扩展真实标准库能力。</h2>
-    <p>Zeta 不把尚未实现的标准库伪装成可用功能。Stage 0/1 先承诺最小命名空间边界：<code>std.core</code> 和 <code>std.io</code> 可以被导入；<code>std.core</code> 当前暴露整数专用的 <code>OptionInt</code> 和 <code>ResultInt</code> 枚举，以及自举 lexer/parser 所需的字符串 byte 扫描函数；目录检查时，module graph 中存在的本地模块也可以被导入；其他路径必须被 resolver 明确拒绝。</p>
+    <p>Zeta 不把尚未实现的标准库伪装成可用功能。Stage 0/1 先承诺最小命名空间边界：<code>std.core</code> 和 <code>std.io</code> 可以被导入；<code>std.core</code> 当前暴露整数专用的 <code>OptionInt</code> 和 <code>ResultInt</code> 枚举、自举 lexer/parser 所需的字符串 byte 扫描函数，以及 typed array builder；目录检查时，module graph 中存在的本地模块也可以被导入；其他路径必须被 resolver 明确拒绝。</p>
     </section>
 
     <h2>设计决策</h2>
     <div class="grid">
       <section>
         <h3>core 保持小</h3>
-        <p><code>std.core</code> 是最小语言核心能力的稳定入口，用于承载无需平台权限的基础 API。当前 Stage 0 暴露 <code>OptionInt</code>、<code>ResultInt</code> 和字符串 byte 扫描函数，先服务 enum payload、match、lexer/parser 自举和 MIR 运行闭环；泛型 <code>Option&lt;T&gt;</code> / <code>Result&lt;T, E&gt;</code> 等到类型系统支持后再开放。</p>
+        <p><code>std.core</code> 是最小语言核心能力的稳定入口，用于承载无需平台权限的基础 API。当前 Stage 0 暴露 <code>OptionInt</code>、<code>ResultInt</code>、字符串 byte 扫描函数和 typed array builder，先服务 enum payload、match、lexer/parser 自举、token/span 列表和 MIR 运行闭环；泛型 <code>Option&lt;T&gt;</code> / <code>Result&lt;T, E&gt;</code> / <code>Vec&lt;T&gt;</code> 等到类型系统支持后再开放。</p>
       </section>
       <section>
         <h3>std.io 先占位</h3>
@@ -54,7 +54,7 @@
         <tr>
           <td><code>std.core</code></td>
           <td>可导入</td>
-          <td>标准核心 API 边界，当前提供 <code>OptionInt</code>、<code>ResultInt</code> 和字符串 byte 扫描函数。</td>
+          <td>标准核心 API 边界，当前提供 <code>OptionInt</code>、<code>ResultInt</code>、字符串 byte 扫描函数和 typed array builder。</td>
         </tr>
         <tr>
           <td><code>std.io</code></td>
@@ -93,6 +93,29 @@
           <td><code>ResultInt</code></td>
           <td><code>Ok(Int)</code> / <code>Err(String)</code></td>
           <td>Stage 0 整数结果值，用于验证错误分支建模；真实错误体系后续由 capability、IO 和平台契约共同定义。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>std.core typed array builder</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>函数</th>
+          <th>签名</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>int_array_empty</code> / <code>string_array_empty</code> / <code>bool_array_empty</code></td>
+          <td><code>() -&gt; IntArray/StringArray/BoolArray</code></td>
+          <td>创建空 typed array。</td>
+        </tr>
+        <tr>
+          <td><code>int_array_push</code> / <code>string_array_push</code> / <code>bool_array_push</code></td>
+          <td><code>(Array, Element) -&gt; Array</code></td>
+          <td>返回追加一个元素后的新数组；配合 <code>let mut</code> 和赋值可表达 builder 风格追加。</td>
         </tr>
       </tbody>
     </table>
@@ -147,6 +170,14 @@ fn main() -&gt; Int {
     OptionInt.None -&gt; { return 0; },
   }
   return 0;
+}</code></pre>
+    <pre><code>import std.core;
+
+fn main() -&gt; Int {
+  let mut values: IntArray = int_array_empty();
+  values = int_array_push(values, 2);
+  values = int_array_push(values, 4);
+  return values[0] + values[1];
 }</code></pre>
     <pre><code>import std.core;
 

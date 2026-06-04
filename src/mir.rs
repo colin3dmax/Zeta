@@ -1221,6 +1221,15 @@ impl<'a> MirVerifier<'a> {
             "ascii_is_digit" | "ascii_is_alpha" | "ascii_is_alnum" | "ascii_is_whitespace" => {
                 (&["Int"][..], MirType::named("Bool"))
             }
+            "int_array_empty" => (&[][..], parse_mir_type("IntArray")),
+            "int_array_push" => (&["IntArray", "Int"][..], parse_mir_type("IntArray")),
+            "string_array_empty" => (&[][..], parse_mir_type("StringArray")),
+            "string_array_push" => (
+                &["StringArray", "String"][..],
+                parse_mir_type("StringArray"),
+            ),
+            "bool_array_empty" => (&[][..], parse_mir_type("BoolArray")),
+            "bool_array_push" => (&["BoolArray", "Bool"][..], parse_mir_type("BoolArray")),
             _ => return None,
         };
         if args.len() != params.len() {
@@ -1235,7 +1244,7 @@ impl<'a> MirVerifier<'a> {
         }
         for (index, (arg, expected)) in args.iter().zip(params.iter()).enumerate() {
             let arg_ty = self.verify_expr(arg, locals);
-            let param_ty = MirType::named(*expected);
+            let param_ty = parse_mir_type(expected);
             self.expect_type(
                 &arg_ty,
                 &param_ty,

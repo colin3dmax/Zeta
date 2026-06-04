@@ -870,6 +870,12 @@ fn is_std_core_builtin(callee: &str) -> bool {
             | "ascii_is_alpha"
             | "ascii_is_alnum"
             | "ascii_is_whitespace"
+            | "int_array_empty"
+            | "int_array_push"
+            | "string_array_empty"
+            | "string_array_push"
+            | "bool_array_empty"
+            | "bool_array_push"
     )
 }
 
@@ -966,11 +972,43 @@ fn eval_std_core_builtin(callee: &str, args: Vec<Value>) -> Result<Value, Diagno
         "ascii_is_whitespace" => {
             eval_ascii_predicate(callee, args, |byte| byte.is_ascii_whitespace())
         }
+        "int_array_empty" | "string_array_empty" | "bool_array_empty" => {
+            let []: [Value; 0] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            Ok(Value::Array(Vec::new()))
+        }
+        "int_array_push" => eval_array_push(callee, args, "Int"),
+        "string_array_push" => eval_array_push(callee, args, "String"),
+        "bool_array_push" => eval_array_push(callee, args, "Bool"),
         _ => Err(runtime_error(
             "RUNTIME_UNKNOWN_FUNCTION",
             format!("unknown function `{callee}`"),
         )),
     }
+}
+
+fn eval_array_push(
+    callee: &str,
+    args: Vec<Value>,
+    element_type: &'static str,
+) -> Result<Value, Diagnostic> {
+    let [array, value]: [Value; 2] = expect_arity(callee, args)?.try_into().ok().unwrap();
+    let Value::Array(mut values) = array else {
+        return Err(runtime_error(
+            "RUNTIME_STD_TYPE",
+            format!("{callee} expects array as first argument"),
+        ));
+    };
+    match (element_type, &value) {
+        ("Int", Value::Int(_)) | ("String", Value::String(_)) | ("Bool", Value::Bool(_)) => {}
+        _ => {
+            return Err(runtime_error(
+                "RUNTIME_STD_TYPE",
+                format!("{callee} expects {element_type} value"),
+            ));
+        }
+    }
+    values.push(value);
+    Ok(Value::Array(values))
 }
 
 fn eval_ascii_predicate(
@@ -997,6 +1035,8 @@ fn expect_arity(callee: &str, args: Vec<Value>) -> Result<Vec<Value>, Diagnostic
         "string_byte_at" => 2,
         "string_byte_slice" => 3,
         "ascii_is_digit" | "ascii_is_alpha" | "ascii_is_alnum" | "ascii_is_whitespace" => 1,
+        "int_array_empty" | "string_array_empty" | "bool_array_empty" => 0,
+        "int_array_push" | "string_array_push" | "bool_array_push" => 2,
         _ => args.len(),
     };
     if args.len() != expected {

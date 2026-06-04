@@ -31,6 +31,7 @@
         <a href="#functions">函数和 return</a>
         <a href="#control-flow">控制流</a>
         <a href="#arrays">数组</a>
+        <a href="#array-builder">数组构造</a>
         <a href="#string-scan">字符串扫描</a>
         <a href="#data-declarations">数据声明</a>
         <a href="#tooling">CLI / REPL / 编辑器</a>
@@ -179,6 +180,20 @@ fn main() -&gt; Int {
 }</code></pre>
     <p>当前数组能力用于支撑自举编译器的 token/span 列表和小型表结构；还没有泛型 <code>Vec</code>、数组拼接、切片视图或用户自定义元素类型数组。</p>
     <p><a class="button secondary" href="#online-testing" data-zeta-example="arrays">在本页运行数组示例</a></p>
+
+    <h2 id="array-builder">std.core typed array builder</h2>
+    <p>导入 <code>std.core</code> 后，可以用 typed builder 函数创建空数组并追加元素：<code>int_array_empty</code> / <code>int_array_push</code>、<code>string_array_empty</code> / <code>string_array_push</code>、<code>bool_array_empty</code> / <code>bool_array_push</code>。这些函数返回新数组；需要多次追加时配合 <code>let mut</code> 和赋值使用。</p>
+    <pre><code>import std.core;
+
+fn main() -&gt; Int {
+  let mut values: IntArray = int_array_empty();
+  values = int_array_push(values, 2);
+  values = int_array_push(values, 4);
+  values = int_array_push(values, 6);
+  return values[0] + values[1] + values.len;
+}</code></pre>
+    <p>这不是完整泛型 <code>Vec</code>，而是 Stage 0/1 自举所需的最小容器折中。</p>
+    <p><a class="button secondary" href="#online-testing" data-zeta-example="arrayBuilder">在本页运行数组构造示例</a></p>
 
     <h2 id="string-scan">std.core 字符串 byte 扫描</h2>
     <p>导入 <code>std.core</code> 后，可以使用自举 lexer/parser 需要的最小字符串扫描函数：<code>string_len</code> 返回 UTF-8 byte 长度，<code>string_byte_at</code> 用 <code>Int</code> 下标读取 byte 并以 <code>Int</code> 返回，<code>string_byte_slice</code> 使用 byte 起点和 byte 长度截取字符串，ASCII 分类函数接收 byte <code>Int</code> 并返回 <code>Bool</code>。</p>

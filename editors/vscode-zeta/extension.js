@@ -26,7 +26,13 @@ const TOPICS = [
   ["ascii_is_digit", "std.core builtin that checks whether an Int byte is ASCII digit.", "import std.core;\nfn main() -> Bool { return ascii_is_digit(string_byte_at(\"9\", 0)); }"],
   ["ascii_is_alpha", "std.core builtin that checks whether an Int byte is ASCII alphabetic.", "import std.core;\nfn main() -> Bool { return ascii_is_alpha(string_byte_at(\"A\", 0)); }"],
   ["ascii_is_alnum", "std.core builtin that checks whether an Int byte is ASCII alphabetic or digit.", "import std.core;\nfn main() -> Bool { return ascii_is_alnum(string_byte_at(\"A9\", 1)); }"],
-  ["ascii_is_whitespace", "std.core builtin that checks whether an Int byte is ASCII whitespace.", "import std.core;\nfn main() -> Bool { return ascii_is_whitespace(string_byte_at(\" \", 0)); }"]
+  ["ascii_is_whitespace", "std.core builtin that checks whether an Int byte is ASCII whitespace.", "import std.core;\nfn main() -> Bool { return ascii_is_whitespace(string_byte_at(\" \", 0)); }"],
+  ["int_array_empty", "std.core builtin that creates an empty IntArray.", "import std.core;\nfn main() -> Int { let values: IntArray = int_array_empty(); return values.len; }"],
+  ["int_array_push", "std.core builtin that returns an IntArray with one Int appended.", "import std.core;\nfn main() -> Int { let values: IntArray = int_array_push(int_array_empty(), 2); return values[0]; }"],
+  ["string_array_empty", "std.core builtin that creates an empty StringArray.", "import std.core;\nfn main() -> Int { let values: StringArray = string_array_empty(); return values.len; }"],
+  ["string_array_push", "std.core builtin that returns a StringArray with one String appended.", "import std.core;\nfn main() -> Int { let values: StringArray = string_array_push(string_array_empty(), \"zeta\"); return values.len; }"],
+  ["bool_array_empty", "std.core builtin that creates an empty BoolArray.", "import std.core;\nfn main() -> Int { let values: BoolArray = bool_array_empty(); return values.len; }"],
+  ["bool_array_push", "std.core builtin that returns a BoolArray with one Bool appended.", "import std.core;\nfn main() -> Bool { let values: BoolArray = bool_array_push(bool_array_empty(), true); return values[0]; }"]
 ];
 
 function activate(context) {
@@ -66,7 +72,7 @@ function completionKind(name) {
   if (["Int", "String", "Bool", "IntArray", "StringArray", "BoolArray"].includes(name)) {
     return vscode.CompletionItemKind.TypeParameter;
   }
-  if (["fn", "string_len", "string_byte_at", "string_byte_slice", "ascii_is_digit", "ascii_is_alpha", "ascii_is_alnum", "ascii_is_whitespace"].includes(name)) {
+  if (["fn", "string_len", "string_byte_at", "string_byte_slice", "ascii_is_digit", "ascii_is_alpha", "ascii_is_alnum", "ascii_is_whitespace", "int_array_empty", "int_array_push", "string_array_empty", "string_array_push", "bool_array_empty", "bool_array_push"].includes(name)) {
     return vscode.CompletionItemKind.Function;
   }
   return vscode.CompletionItemKind.Keyword;
