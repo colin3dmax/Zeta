@@ -1,0 +1,6 @@
+module stage1.app;
+import stage1.frontend;
+
+fn main() -> Int {
+  return stage1.frontend.ast_dump_score("fn main() -> Int { let answer: Int = 40; return answer; }");
+}

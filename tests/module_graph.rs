@@ -906,6 +906,25 @@ fn cli_run_executes_import_alias_module_call() {
     );
 }
 
+#[test]
+fn cli_run_executes_stage1_frontend_seed() {
+    let binary = env!("CARGO_BIN_EXE_zeta");
+    let output = std::process::Command::new(binary)
+        .args(["run", "testdata/stage1_frontend"])
+        .output()
+        .expect("zeta run should run");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout should be utf-8"),
+        "111\n"
+    );
+}
+
 fn source_file(path: &str, source: &str) -> zeta::module_graph::SourceFile {
     zeta::module_graph::SourceFile {
         path: path.to_string(),

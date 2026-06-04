@@ -167,7 +167,7 @@
         <tr>
           <td>Stage 1</td>
           <td>Stage 0 编译器和 Zeta 编写的独立前端模块。</td>
-          <td>优先替换 parser、diagnostics 或 AST dump，不优先替换 typechecker。</td>
+          <td>优先替换 lexer、parser、diagnostics 或 AST dump，不优先替换 typechecker；当前 <code>testdata/stage1_frontend</code> 已提供可运行的 Zeta 前端种子。</td>
           <td>Zeta 实现模块与宿主实现对同一 corpus 输出等价。</td>
         </tr>
         <tr>
@@ -283,9 +283,9 @@
         </tr>
         <tr>
           <td>自举模块</td>
-          <td>token、span、diagnostic、AST node、parser result、symbol table 的 Zeta 子集实现。</td>
+          <td>token、span、diagnostic、AST node、parser result、symbol table 的 Zeta 子集实现；当前种子已能用 Zeta 扫描 token kind 数组并产出稳定 <code>ast_dump_score</code>。</td>
           <td>Stage 0 可编译这些模块，并与 Rust 宿主实现的公开 dump/诊断契约一致。</td>
-          <td>Zeta 子集需要 deferred 特性才能表达编译器核心数据结构。</td>
+          <td>Zeta 子集需要 deferred 特性才能表达编译器核心数据结构，或 Stage 1 种子不能由 Stage 0 编译运行。</td>
         </tr>
       </tbody>
     </table>

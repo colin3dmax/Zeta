@@ -1,0 +1,270 @@
+module stage1.frontend;
+import std.core;
+
+export fn ast_dump_score(source: String) -> Int {
+  let kinds: IntArray = lex_kinds(source);
+  return parse_module_score(kinds);
+}
+
+fn parse_module_score(kinds: IntArray) -> Int {
+  let mut index: Int = 0;
+  let mut functions: Int = 0;
+  let mut lets: Int = 0;
+  let mut returns: Int = 0;
+  while index < kinds.len {
+    if kinds[index] == token_fn() {
+      functions = functions + 1;
+    }
+    if kinds[index] == token_let() {
+      lets = lets + 1;
+    }
+    if kinds[index] == token_return() {
+      returns = returns + 1;
+    }
+    index = index + 1;
+  }
+  return functions * 100 + lets * 10 + returns;
+}
+
+fn lex_kinds(source: String) -> IntArray {
+  let mut kinds: IntArray = int_array_empty();
+  let mut index: Int = 0;
+  let len: Int = string_len(source);
+  while index < len {
+    let byte: Int = string_byte_at(source, index);
+    let mut handled: Bool = false;
+    if !handled && ascii_is_whitespace(byte) {
+      index = index + 1;
+      handled = true;
+    }
+    if !handled && is_ident_start(byte) {
+      let start: Int = index;
+      index = index + 1;
+      while index < len && is_ident_continue(string_byte_at(source, index)) {
+        index = index + 1;
+      }
+      let text: String = string_byte_slice(source, start, index - start);
+      kinds = int_array_push(kinds, keyword_or_ident(text));
+      handled = true;
+    }
+    if !handled && ascii_is_digit(byte) {
+      index = index + 1;
+      while index < len && ascii_is_digit(string_byte_at(source, index)) {
+        index = index + 1;
+      }
+      kinds = int_array_push(kinds, token_int());
+      handled = true;
+    }
+    if !handled && byte == 34 {
+      index = index + 1;
+      while index < len && string_byte_at(source, index) != 34 {
+        index = index + 1;
+      }
+      if index < len {
+        index = index + 1;
+      }
+      kinds = int_array_push(kinds, token_string());
+      handled = true;
+    }
+    if !handled {
+      kinds = int_array_push(kinds, symbol_kind(source, index));
+      index = index + symbol_width(source, index);
+    }
+  }
+  return int_array_push(kinds, token_eof());
+}
+
+fn symbol_width(source: String, index: Int) -> Int {
+  let byte: Int = string_byte_at(source, index);
+  let len: Int = string_len(source);
+  if byte == 45 && index + 1 < len && string_byte_at(source, index + 1) == 62 {
+    return 2;
+  }
+  if byte == 61 && index + 1 < len && string_byte_at(source, index + 1) == 61 {
+    return 2;
+  }
+  if byte == 33 && index + 1 < len && string_byte_at(source, index + 1) == 61 {
+    return 2;
+  }
+  if byte == 38 && index + 1 < len && string_byte_at(source, index + 1) == 38 {
+    return 2;
+  }
+  if byte == 124 && index + 1 < len && string_byte_at(source, index + 1) == 124 {
+    return 2;
+  }
+  return 1;
+}
+
+fn is_ident_start(byte: Int) -> Bool {
+  return ascii_is_alpha(byte) || byte == 95;
+}
+
+fn is_ident_continue(byte: Int) -> Bool {
+  return is_ident_start(byte) || ascii_is_digit(byte);
+}
+
+fn keyword_or_ident(text: String) -> Int {
+  if text == "module" {
+    return token_module();
+  }
+  if text == "import" {
+    return token_import();
+  }
+  if text == "export" {
+    return token_export();
+  }
+  if text == "fn" {
+    return token_fn();
+  }
+  if text == "let" {
+    return token_let();
+  }
+  if text == "mut" {
+    return token_mut();
+  }
+  if text == "return" {
+    return token_return();
+  }
+  if text == "if" {
+    return token_if();
+  }
+  if text == "else" {
+    return token_else();
+  }
+  if text == "while" {
+    return token_while();
+  }
+  if text == "match" {
+    return token_match();
+  }
+  if text == "struct" {
+    return token_struct();
+  }
+  if text == "enum" {
+    return token_enum();
+  }
+  if text == "true" {
+    return token_bool();
+  }
+  if text == "false" {
+    return token_bool();
+  }
+  return token_ident();
+}
+
+fn symbol_kind(source: String, index: Int) -> Int {
+  let byte: Int = string_byte_at(source, index);
+  if byte == 40 {
+    return token_lparen();
+  }
+  if byte == 41 {
+    return token_rparen();
+  }
+  if byte == 123 {
+    return token_lbrace();
+  }
+  if byte == 125 {
+    return token_rbrace();
+  }
+  if byte == 91 {
+    return token_lbracket();
+  }
+  if byte == 93 {
+    return token_rbracket();
+  }
+  if byte == 58 {
+    return token_colon();
+  }
+  if byte == 59 {
+    return token_semicolon();
+  }
+  if byte == 44 {
+    return token_comma();
+  }
+  if byte == 46 {
+    return token_dot();
+  }
+  if byte == 45 {
+    if index + 1 < string_len(source) && string_byte_at(source, index + 1) == 62 {
+      return token_arrow();
+    }
+    return token_minus();
+  }
+  if byte == 61 {
+    if index + 1 < string_len(source) && string_byte_at(source, index + 1) == 61 {
+      return token_eqeq();
+    }
+    return token_eq();
+  }
+  if byte == 33 {
+    if index + 1 < string_len(source) && string_byte_at(source, index + 1) == 61 {
+      return token_bangeq();
+    }
+    return token_bang();
+  }
+  if byte == 38 {
+    return token_andand();
+  }
+  if byte == 124 {
+    return token_oror();
+  }
+  if byte == 60 {
+    return token_lt();
+  }
+  if byte == 62 {
+    return token_gt();
+  }
+  if byte == 43 {
+    return token_plus();
+  }
+  if byte == 42 {
+    return token_star();
+  }
+  if byte == 47 {
+    return token_slash();
+  }
+  return token_unknown();
+}
+
+fn token_eof() -> Int { return 0; }
+fn token_ident() -> Int { return 1; }
+fn token_int() -> Int { return 2; }
+fn token_string() -> Int { return 3; }
+fn token_bool() -> Int { return 4; }
+fn token_module() -> Int { return 10; }
+fn token_import() -> Int { return 11; }
+fn token_export() -> Int { return 12; }
+fn token_fn() -> Int { return 13; }
+fn token_let() -> Int { return 14; }
+fn token_mut() -> Int { return 15; }
+fn token_return() -> Int { return 16; }
+fn token_if() -> Int { return 17; }
+fn token_else() -> Int { return 18; }
+fn token_while() -> Int { return 19; }
+fn token_match() -> Int { return 20; }
+fn token_struct() -> Int { return 21; }
+fn token_enum() -> Int { return 22; }
+fn token_lparen() -> Int { return 30; }
+fn token_rparen() -> Int { return 31; }
+fn token_lbrace() -> Int { return 32; }
+fn token_rbrace() -> Int { return 33; }
+fn token_lbracket() -> Int { return 34; }
+fn token_rbracket() -> Int { return 35; }
+fn token_colon() -> Int { return 36; }
+fn token_semicolon() -> Int { return 37; }
+fn token_comma() -> Int { return 38; }
+fn token_dot() -> Int { return 39; }
+fn token_arrow() -> Int { return 40; }
+fn token_eq() -> Int { return 41; }
+fn token_eqeq() -> Int { return 42; }
+fn token_bang() -> Int { return 43; }
+fn token_bangeq() -> Int { return 44; }
+fn token_andand() -> Int { return 45; }
+fn token_oror() -> Int { return 46; }
+fn token_lt() -> Int { return 47; }
+fn token_gt() -> Int { return 48; }
+fn token_plus() -> Int { return 49; }
+fn token_minus() -> Int { return 50; }
+fn token_star() -> Int { return 51; }
+fn token_slash() -> Int { return 52; }
+fn token_unknown() -> Int { return 99; }
