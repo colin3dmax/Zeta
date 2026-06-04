@@ -240,7 +240,7 @@
     </table>
 
     <h2 id="corpus">最小 Compiler Corpus</h2>
-    <p>Compiler corpus 是 Stage 0 的回归边界。每个样例必须有稳定输入、预期输出或预期诊断；新增语言特性必须先补 corpus，再进入 parser、typechecker、MIR 或 backend 实现。</p>
+    <p>Compiler corpus 是 Stage 0 的回归边界。每个样例必须有稳定输入、预期输出或预期诊断；新增语言特性必须先补 corpus，再进入 parser、typechecker、MIR 或 backend 实现。Stage 0D 的 WASM smoke 当前覆盖 struct、enum、match、数组、字符串 byte 扫描、typed array builder 和 module graph 路径，并输出 artifact size。</p>
     <table>
       <thead>
         <tr>

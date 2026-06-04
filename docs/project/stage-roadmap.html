@@ -76,7 +76,7 @@
           <td>Stage 0D：backend smoke</td>
           <td>验证 Zeta 语义能离开解释器，在其他 target 上保持一致。</td>
           <td>WASM smoke、WASI target build smoke、LLVM native smoke、artifact size 记录。</td>
-          <td><code>tools/smoke-wasm.sh</code> 能构建 <code>wasm32-unknown-unknown</code>，验证 Playground exports，并让 struct/enum/match corpus 返回同一结果；WASI target 未安装时必须明确跳过。</td>
+          <td><code>tools/smoke-wasm.sh</code> 能构建 <code>wasm32-unknown-unknown</code>，验证 Playground exports，并让 struct/enum/match、数组、字符串 byte 扫描和 typed array builder corpus 返回同一结果；WASI target 未安装时必须明确跳过。</td>
         </tr>
         <tr>
           <td>Stage 1：Zeta 前端模块</td>
@@ -104,7 +104,7 @@
       <li><strong>Stage 0 最小数组：</strong><code>IntArray</code>、<code>StringArray</code>、<code>BoolArray</code>、数组字面量、下标、<code>.len</code>、MIR verifier、runtime 和用户入口；后续再扩展泛型 <code>Vec</code> 或 slice。</li>
       <li><strong>String/char/byte 扫描 API：</strong>补 lexer/parser 自举所需的字符串长度、字节访问、ASCII 分类和子串能力。</li>
       <li><strong>最小容器 API：</strong>在不引入完整泛型系统前，用保守方式提供 token/span/diagnostic 列表所需的追加和读取能力。</li>
-      <li><strong>Stage 0D backend smoke：</strong>让数组、struct、enum、match 和 module corpus 在 WASM/WASI/native smoke 上保持一致。</li>
+      <li><strong>Stage 0D backend smoke：</strong>让数组、字符串 byte 扫描、typed array builder、struct、enum、match 和 module corpus 在 WASM/WASI/native smoke 上保持一致。</li>
       <li><strong>Stage 1 前端模块：</strong>用 Zeta 子集编写 lexer/parser/AST dump，先和 Rust Stage 0 在 golden corpus 上对齐。</li>
       <li><strong>文件/路径/诊断 IO：</strong>补 Stage 1 编译器读取源码、输出诊断和稳定 dump 所需的最小系统接口。</li>
       <li><strong>Stage 1 到 Stage 2 自举：</strong>让 Stage 0 编译 Zeta 前端，再用该前端推进 Stage 2。</li>

@@ -63,10 +63,42 @@ fn main() -> Int {
   return 0;
 }`;
 
+const arrayProgram = `fn main() -> Int {
+  let values: IntArray = [2, 4, 6];
+  return values[0] + values[1] + values.len;
+}`;
+
+const stringScanProgram = `import std.core;
+
+fn main() -> Int {
+  let text: String = "A9 zeta";
+  let first: Int = string_byte_at(text, 0);
+  let digit: Int = string_byte_at(text, 1);
+  let space: Int = string_byte_at(text, 2);
+  let tail: String = string_byte_slice(text, 3, 4);
+  if string_len(text) == 7 && ascii_is_alpha(first) && ascii_is_digit(digit) && ascii_is_whitespace(space) && string_len(tail) == 4 {
+    return first + digit;
+  }
+  return 0;
+}`;
+
+const arrayBuilderProgram = `import std.core;
+
+fn main() -> Int {
+  let mut values: IntArray = int_array_empty();
+  values = int_array_push(values, 2);
+  values = int_array_push(values, 4);
+  values = int_array_push(values, 6);
+  return values[0] + values[1] + values.len;
+}`;
+
 const checks = [
   ["run", "fn main() -> Int { return 40 + 2; }", "42"],
   ["run", "struct User { name: String, age: Int, } fn main() -> Int { let user: User = User { name: \"Ada\", age: 42 }; return user.age; }", "42"],
   ["run", enumProgram, "42"],
+  ["run", arrayProgram, "9"],
+  ["run", stringScanProgram, "122"],
+  ["run", arrayBuilderProgram, "9"],
   ["check", "fn main() -> Bool { return true && !false; }", "ok"],
   ["check-module-graph", "// file: main.zeta\nmodule demo.app;\nimport demo.math;\nfn main() -> Int { return answer(); }\n// file: math.zeta\nmodule demo.math;\nexport fn answer() -> Int { return 42; }\n", "ok"],
 ];

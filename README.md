@@ -94,7 +94,7 @@ python3 tools/serve-docs.py
 
 ## 官网与 Playground
 
-官网使用 Svelte + Vite，在线 Playground 通过 `wasm32-unknown-unknown` 运行真实 Zeta 编译器前端。
+官网使用 Svelte + Vite，在线 Playground 通过 `wasm32-unknown-unknown` 运行真实 Zeta 编译器前端。`tools/smoke-wasm.sh` 会验证 Playground exports，并运行 struct、enum、match、数组、字符串 byte 扫描、typed array builder 和 module graph smoke；WASI target 未安装时会明确跳过。
 
 ```sh
 sh tools/smoke-wasm.sh
