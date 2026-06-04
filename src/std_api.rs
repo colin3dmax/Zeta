@@ -79,6 +79,16 @@ const STD_CORE_FUNCTIONS: &[StandardFunction] = &[
         return_type: Some("String"),
     },
     StandardFunction {
+        name: "string_concat",
+        params: &["String", "String"],
+        return_type: Some("String"),
+    },
+    StandardFunction {
+        name: "int_to_string",
+        params: &["Int"],
+        return_type: Some("String"),
+    },
+    StandardFunction {
         name: "ascii_is_digit",
         params: &["Int"],
         return_type: Some("Bool"),

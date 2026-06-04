@@ -62,6 +62,13 @@ fn run_executes_string_scan_std_core_builtins() {
 }
 
 #[test]
+fn run_executes_string_build_std_core_builtins() {
+    let value = zeta::run_source(include_str!("../testdata/run_string_build.zeta"))
+        .expect("program should run");
+    assert_eq!(value.to_string(), "score=42");
+}
+
+#[test]
 fn run_executes_typed_array_builder_builtins() {
     let value = zeta::run_source(include_str!("../testdata/run_array_builder.zeta"))
         .expect("program should run");

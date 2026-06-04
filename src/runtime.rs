@@ -866,6 +866,8 @@ fn is_std_builtin(callee: &str) -> bool {
         "string_len"
             | "string_byte_at"
             | "string_byte_slice"
+            | "string_concat"
+            | "int_to_string"
             | "ascii_is_digit"
             | "ascii_is_alpha"
             | "ascii_is_alnum"
@@ -969,6 +971,32 @@ fn eval_std_builtin(callee: &str, args: Vec<Value>) -> Result<Value, Diagnostic>
                         ),
                     )
                 })
+        }
+        "string_concat" => {
+            let [left, right]: [Value; 2] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            let Value::String(left) = left else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "string_concat left expects String",
+                ));
+            };
+            let Value::String(right) = right else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "string_concat right expects String",
+                ));
+            };
+            Ok(Value::String(format!("{left}{right}")))
+        }
+        "int_to_string" => {
+            let [value]: [Value; 1] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            let Value::Int(value) = value else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "int_to_string expects Int",
+                ));
+            };
+            Ok(Value::String(value.to_string()))
         }
         "ascii_is_digit" => eval_ascii_predicate(callee, args, |byte| byte.is_ascii_digit()),
         "ascii_is_alpha" => eval_ascii_predicate(callee, args, |byte| byte.is_ascii_alphabetic()),

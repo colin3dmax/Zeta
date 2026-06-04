@@ -1,0 +1,10 @@
+MirModule
+  enum OptionInt variants=None,Some(Int)
+  enum ResultInt variants=Err(String),Ok(Int)
+  fn main -> String
+    block entry
+      _t0 = const String "score="
+      _t1 = const Int 42
+      _t2 = call int_to_string(_t1)
+      _t3 = call string_concat(_t0, _t2)
+      return _t3

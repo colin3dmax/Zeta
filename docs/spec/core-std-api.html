@@ -22,14 +22,14 @@
     <section class="hero">
       <p class="eyebrow">API Boundary</p>
       <h2>先冻结可验证边界，再扩展真实标准库能力。</h2>
-    <p>Zeta 不把尚未实现的标准库伪装成可用功能。Stage 0/1 先承诺最小命名空间边界：<code>std.core</code> 和 <code>std.io</code> 可以被导入；<code>std.core</code> 当前暴露整数专用的 <code>OptionInt</code> 和 <code>ResultInt</code> 枚举、自举 lexer/parser 所需的字符串 byte 扫描函数，以及 typed array builder；<code>std.io</code> 当前暴露 <code>ResultString</code>、文件读取、路径和诊断格式化函数；目录检查时，module graph 中存在的本地模块也可以被导入；其他路径必须被 resolver 明确拒绝。</p>
+    <p>Zeta 不把尚未实现的标准库伪装成可用功能。Stage 0/1 先承诺最小命名空间边界：<code>std.core</code> 和 <code>std.io</code> 可以被导入；<code>std.core</code> 当前暴露整数专用的 <code>OptionInt</code> 和 <code>ResultInt</code> 枚举、自举 lexer/parser 所需的字符串 byte 扫描函数、字符串构造函数，以及 typed array builder；<code>std.io</code> 当前暴露 <code>ResultString</code>、文件读取、路径和诊断格式化函数；目录检查时，module graph 中存在的本地模块也可以被导入；其他路径必须被 resolver 明确拒绝。</p>
     </section>
 
     <h2>设计决策</h2>
     <div class="grid">
       <section>
         <h3>core 保持小</h3>
-        <p><code>std.core</code> 是最小语言核心能力的稳定入口，用于承载无需平台权限的基础 API。当前 Stage 0 暴露 <code>OptionInt</code>、<code>ResultInt</code>、字符串 byte 扫描函数和 typed array builder，先服务 enum payload、match、lexer/parser 自举、token/span 列表和 MIR 运行闭环；泛型 <code>Option&lt;T&gt;</code> / <code>Result&lt;T, E&gt;</code> / <code>Vec&lt;T&gt;</code> 等到类型系统支持后再开放。</p>
+        <p><code>std.core</code> 是最小语言核心能力的稳定入口，用于承载无需平台权限的基础 API。当前 Stage 0 暴露 <code>OptionInt</code>、<code>ResultInt</code>、字符串 byte 扫描函数、字符串构造函数和 typed array builder，先服务 enum payload、match、lexer/parser 自举、token/span/diagnostic 列表、文本 dump 和 MIR 运行闭环；泛型 <code>Option&lt;T&gt;</code> / <code>Result&lt;T, E&gt;</code> / <code>Vec&lt;T&gt;</code> 等到类型系统支持后再开放。</p>
       </section>
       <section>
         <h3>std.io 保持受控</h3>
@@ -195,6 +195,16 @@
           <td><code>string_byte_slice</code></td>
           <td><code>(String, Int, Int) -&gt; String</code></td>
           <td>按 byte 起点和 byte 长度截取字符串；切分 UTF-8 字符边界会报运行时错误。</td>
+        </tr>
+        <tr>
+          <td><code>string_concat</code></td>
+          <td><code>(String, String) -&gt; String</code></td>
+          <td>返回两个字符串拼接后的新字符串，用于 Stage1/Stage2 生成稳定文本 dump。</td>
+        </tr>
+        <tr>
+          <td><code>int_to_string</code></td>
+          <td><code>(Int) -&gt; String</code></td>
+          <td>把整数格式化为字符串，用于诊断、dump 和测试摘要。</td>
         </tr>
         <tr>
           <td><code>ascii_is_digit</code> / <code>ascii_is_alpha</code> / <code>ascii_is_alnum</code> / <code>ascii_is_whitespace</code></td>

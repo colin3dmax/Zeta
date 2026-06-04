@@ -953,6 +953,34 @@ fn main() -> Int {
     assert_eq!(value.to_string(), "111");
 }
 
+#[test]
+fn stage2_bootstrap_harness_reads_stage1_text_summary() {
+    let stage2_app = r#"
+module stage2.summary;
+import std.io;
+import stage1.frontend;
+
+fn main() -> String {
+  let result: ResultString = file_read_to_string("testdata/stage2_bootstrap/input.zeta");
+  match result {
+    ResultString.Ok(source) -> { return stage1.frontend.ast_dump_summary(source); },
+    ResultString.Err(message) -> { return message; },
+  }
+  return "missing";
+}
+"#;
+    let value = zeta::module_graph::run_sources(&[
+        source_file(
+            "testdata/stage1_frontend/frontend.zeta",
+            include_str!("../testdata/stage1_frontend/frontend.zeta"),
+        ),
+        source_file("testdata/stage2_bootstrap/summary.zeta", stage2_app),
+    ])
+    .expect("Stage2 bootstrap summary harness should run");
+
+    assert_eq!(value.to_string(), "fn=1;let=1;return=1");
+}
+
 fn source_file(path: &str, source: &str) -> zeta::module_graph::SourceFile {
     zeta::module_graph::SourceFile {
         path: path.to_string(),

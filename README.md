@@ -94,7 +94,7 @@ python3 tools/serve-docs.py
 
 ## 官网与 Playground
 
-官网使用 Svelte + Vite，在线 Playground 通过 `wasm32-unknown-unknown` 运行真实 Zeta 编译器前端。`tools/smoke-wasm.sh` 会验证 Playground exports，并运行 struct、enum、match、数组、字符串 byte 扫描、typed array builder、std.io 路径/诊断和 module graph smoke；WASI target 未安装时会明确跳过。
+官网使用 Svelte + Vite，在线 Playground 通过 `wasm32-unknown-unknown` 运行真实 Zeta 编译器前端。`tools/smoke-wasm.sh` 会验证 Playground exports，并运行 struct、enum、match、数组、字符串 byte 扫描、字符串构造、typed array builder、std.io 路径/诊断和 module graph smoke；WASI target 未安装时会明确跳过。
 
 ```sh
 sh tools/smoke-wasm.sh
@@ -126,6 +126,7 @@ cargo run -- run testdata/run_basic.zeta
 cargo run -- run testdata/run_array.zeta
 cargo run -- run testdata/run_array_builder.zeta
 cargo run -- run testdata/run_string_scan.zeta
+cargo run -- run testdata/run_string_build.zeta
 cargo run -- run testdata/run_io_path_diagnostic.zeta
 cargo run -- run testdata/modules_ok
 cargo run -- run testdata/modules_qualified
@@ -134,9 +135,9 @@ cargo run -- run testdata/stage1_frontend
 cargo run -- repl
 ```
 
-当前 `check` 会执行 parse、最小 name resolution 和基础 typecheck；传入目录时会递归读取 `.zeta` 文件，建立最小 module graph，允许导入同批检查中的本地模块，并让被导入模块里的 `export fn` / `export struct` / `export enum` 在当前文件中可用；`export import` 可 re-export 函数、结构体和枚举；缺失模块、重复 module 声明、未导出的跨文件函数、冲突导出短名和冲突导入/重导出类型都会被拒绝。检查范围覆盖重复定义、未知名字、未知类型名、Stage 0 标准 import 边界（`std.core` / `std.io`）、`std.core` 的 `OptionInt` / `ResultInt` 标准枚举、字符串 byte 扫描函数和 typed array builder、`std.io` 的 `ResultString`、文件读取、路径和诊断格式化函数、本地 module import、import alias（如 `import demo.math as math;`）、跨文件导出函数调用、限定函数调用（如 `demo.math.answer()` / `math.answer()`）、`Int`/`String`/`Bool`/`IntArray`/`StringArray`/`BoolArray` 字面量和注解、数组字面量、数组下标、数组 `.len`、算术表达式、比较表达式、布尔逻辑表达式、let 注解、`let mut` 可变绑定、赋值语句、结构体字面量、字段访问、枚举变体值、`match` 分支、if/while 条件、循环内 `break`/`continue`、函数调用和 return 类型。未知类型名会在 struct 字段、enum payload、函数参数/返回类型和局部类型注解中报告 `TYPE_UNKNOWN_TYPE`。`hir-dump` 会在 check 通过后输出稳定 HIR 文本，作为后续 MIR/golden tests 的输入基线。`mir-dump` 当前覆盖 Stage 0 可运行子集，输出 locals、temps、store、return、call、break、continue、数组字面量、数组下标、std.core 字符串函数调用、typed array builder 调用、std.io 路径/诊断调用、结构体字面量、字段访问、枚举变体、`match` 和基础控制流的稳定 MIR 文本，并在输出前运行最小 MIR verifier。`symbols-dump` 会输出目录 module graph 的稳定导出符号表，记录函数、结构体和枚举的 re-export 后原始 symbol。`run` 会先 lower 到结构化 MIR，通过 verifier 后再由 Stage 0 MIR interpreter 执行无参数 `main`；verifier 会拒绝未知 local、错误调用参数、错误 return 类型、错误 enum variant、错误数组元素类型、非 Int 数组下标、错误 std.core 字符串函数参数、错误 typed array builder 参数、错误 std.io 参数、循环外 `break`/`continue`，以及声明非 `Unit` 返回类型但没有静态保证所有路径 `return` 的函数。传入目录时会复用 module graph，找到唯一 `main` 并执行同批模块里的跨文件 `export fn` 调用，内部 MIR 使用稳定 qualified function name 做跨模块消歧；当前支持整数算术、比较运算、布尔逻辑、数组字面量、数组下标、数组 `.len`、std.core 字符串 byte 扫描、typed array builder、std.io 文件读取、路径和诊断格式化、函数调用、结构体字面量、字段访问、枚举变体值、`let`、`let mut`、赋值、`return`、`break`、`continue`、`match` 和基础 `if/while`。`repl` 当前可以直接计算表达式，例如输入 `40 + 2` 返回 `42`；真实 TTY 下提供无依赖 line editor，支持输入时语法高亮、Tab 补全、hint、历史上下切换和左右光标移动。
+当前 `check` 会执行 parse、最小 name resolution 和基础 typecheck；传入目录时会递归读取 `.zeta` 文件，建立最小 module graph，允许导入同批检查中的本地模块，并让被导入模块里的 `export fn` / `export struct` / `export enum` 在当前文件中可用；`export import` 可 re-export 函数、结构体和枚举；缺失模块、重复 module 声明、未导出的跨文件函数、冲突导出短名和冲突导入/重导出类型都会被拒绝。检查范围覆盖重复定义、未知名字、未知类型名、Stage 0 标准 import 边界（`std.core` / `std.io`）、`std.core` 的 `OptionInt` / `ResultInt` 标准枚举、字符串 byte 扫描函数、字符串构造函数和 typed array builder、`std.io` 的 `ResultString`、文件读取、路径和诊断格式化函数、本地 module import、import alias（如 `import demo.math as math;`）、跨文件导出函数调用、限定函数调用（如 `demo.math.answer()` / `math.answer()`）、`Int`/`String`/`Bool`/`IntArray`/`StringArray`/`BoolArray` 字面量和注解、数组字面量、数组下标、数组 `.len`、算术表达式、比较表达式、布尔逻辑表达式、let 注解、`let mut` 可变绑定、赋值语句、结构体字面量、字段访问、枚举变体值、`match` 分支、if/while 条件、循环内 `break`/`continue`、函数调用和 return 类型。未知类型名会在 struct 字段、enum payload、函数参数/返回类型和局部类型注解中报告 `TYPE_UNKNOWN_TYPE`。`hir-dump` 会在 check 通过后输出稳定 HIR 文本，作为后续 MIR/golden tests 的输入基线。`mir-dump` 当前覆盖 Stage 0 可运行子集，输出 locals、temps、store、return、call、break、continue、数组字面量、数组下标、std.core 字符串函数调用、typed array builder 调用、std.io 路径/诊断调用、结构体字面量、字段访问、枚举变体、`match` 和基础控制流的稳定 MIR 文本，并在输出前运行最小 MIR verifier。`symbols-dump` 会输出目录 module graph 的稳定导出符号表，记录函数、结构体和枚举的 re-export 后原始 symbol。`run` 会先 lower 到结构化 MIR，通过 verifier 后再由 Stage 0 MIR interpreter 执行无参数 `main`；verifier 会拒绝未知 local、错误调用参数、错误 return 类型、错误 enum variant、错误数组元素类型、非 Int 数组下标、错误 std.core 字符串函数参数、错误 typed array builder 参数、错误 std.io 参数、循环外 `break`/`continue`，以及声明非 `Unit` 返回类型但没有静态保证所有路径 `return` 的函数。传入目录时会复用 module graph，找到唯一 `main` 并执行同批模块里的跨文件 `export fn` 调用，内部 MIR 使用稳定 qualified function name 做跨模块消歧；当前支持整数算术、比较运算、布尔逻辑、数组字面量、数组下标、数组 `.len`、std.core 字符串 byte 扫描、字符串构造、typed array builder、std.io 文件读取、路径和诊断格式化、函数调用、结构体字面量、字段访问、枚举变体值、`let`、`let mut`、赋值、`return`、`break`、`continue`、`match` 和基础 `if/while`。`repl` 当前可以直接计算表达式，例如输入 `40 + 2` 返回 `42`；真实 TTY 下提供无依赖 line editor，支持输入时语法高亮、Tab 补全、hint、历史上下切换和左右光标移动。
 
-`testdata/stage1_frontend` 是第一段由 Zeta 编写的 Stage 1 前端种子：它使用 `std.core` 字符串 byte 扫描和 typed array builder，把源码扫描为 token kind 数组，并用极小 parser 产出稳定 `ast_dump_score`。当前样例输出 `111`，代表 1 个 `fn`、1 个 `let` 和 1 个 `return`，用于后续逐步替换 Rust lexer/parser/AST dump 的回归基线。
+`testdata/stage1_frontend` 是第一段由 Zeta 编写的 Stage 1 前端种子：它使用 `std.core` 字符串 byte 扫描、字符串构造和 typed array builder，把源码扫描为 token kind 数组，并用极小 parser 产出稳定 `ast_dump_score` 和文本摘要 `fn=1;let=1;return=1`。当前样例输出 `111`，代表 1 个 `fn`、1 个 `let` 和 1 个 `return`，用于后续逐步替换 Rust lexer/parser/AST dump 的回归基线。
 
 `testdata/stage2_bootstrap/input.zeta` 是 Stage2 bootstrap harness 的固定源码样本。`stage2_bootstrap_harness_reuses_stage1_frontend_contract` 会让一个 Stage2 Zeta app 通过 `std.io.file_read_to_string` 读取该样本，并调用 Stage1 Zeta 前端的 `ast_dump_score`，期望输出仍为 `111`。这一步固化 Stage1/Stage2 契约，不等同于完整自编译。
 

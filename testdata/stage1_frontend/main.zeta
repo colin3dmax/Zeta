@@ -2,5 +2,9 @@ module stage1.app;
 import stage1.frontend;
 
 fn main() -> Int {
-  return stage1.frontend.ast_dump_score("fn main() -> Int { let answer: Int = 40; return answer; }");
+  let summary: String = stage1.frontend.ast_dump_summary("fn main() -> Int { let answer: Int = 40; return answer; }");
+  if summary == "fn=1;let=1;return=1" {
+    return stage1.frontend.ast_dump_score("fn main() -> Int { let answer: Int = 40; return answer; }");
+  }
+  return 0;
 }

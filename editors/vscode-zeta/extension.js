@@ -24,6 +24,8 @@ const TOPICS = [
   ["string_len", "std.core builtin returning UTF-8 byte length for a String.", "import std.core;\nfn main() -> Int { return string_len(\"zeta\"); }"],
   ["string_byte_at", "std.core builtin returning the byte at an Int index as Int.", "import std.core;\nfn main() -> Int { return string_byte_at(\"A9\", 1); }"],
   ["string_byte_slice", "std.core builtin returning a String slice by byte start and byte length.", "import std.core;\nfn main() -> String { return string_byte_slice(\"zeta\", 1, 2); }"],
+  ["string_concat", "std.core builtin that returns two Strings joined together.", "import std.core;\nfn main() -> String { return string_concat(\"score=\", int_to_string(42)); }"],
+  ["int_to_string", "std.core builtin that formats an Int as a String.", "import std.core;\nfn main() -> String { return int_to_string(42); }"],
   ["ascii_is_digit", "std.core builtin that checks whether an Int byte is ASCII digit.", "import std.core;\nfn main() -> Bool { return ascii_is_digit(string_byte_at(\"9\", 0)); }"],
   ["ascii_is_alpha", "std.core builtin that checks whether an Int byte is ASCII alphabetic.", "import std.core;\nfn main() -> Bool { return ascii_is_alpha(string_byte_at(\"A\", 0)); }"],
   ["ascii_is_alnum", "std.core builtin that checks whether an Int byte is ASCII alphabetic or digit.", "import std.core;\nfn main() -> Bool { return ascii_is_alnum(string_byte_at(\"A9\", 1)); }"],
@@ -77,7 +79,7 @@ function completionKind(name) {
   if (["Int", "String", "Bool", "IntArray", "StringArray", "BoolArray", "ResultString"].includes(name)) {
     return vscode.CompletionItemKind.TypeParameter;
   }
-  if (["fn", "string_len", "string_byte_at", "string_byte_slice", "ascii_is_digit", "ascii_is_alpha", "ascii_is_alnum", "ascii_is_whitespace", "int_array_empty", "int_array_push", "string_array_empty", "string_array_push", "bool_array_empty", "bool_array_push", "file_read_to_string", "path_join", "path_basename", "diagnostic_format"].includes(name)) {
+  if (["fn", "string_len", "string_byte_at", "string_byte_slice", "string_concat", "int_to_string", "ascii_is_digit", "ascii_is_alpha", "ascii_is_alnum", "ascii_is_whitespace", "int_array_empty", "int_array_push", "string_array_empty", "string_array_push", "bool_array_empty", "bool_array_push", "file_read_to_string", "path_join", "path_basename", "diagnostic_format"].includes(name)) {
     return vscode.CompletionItemKind.Function;
   }
   return vscode.CompletionItemKind.Keyword;

@@ -240,7 +240,7 @@
     </table>
 
     <h2 id="corpus">最小 Compiler Corpus</h2>
-    <p>Compiler corpus 是 Stage 0 的回归边界。每个样例必须有稳定输入、预期输出或预期诊断；新增语言特性必须先补 corpus，再进入 parser、typechecker、MIR 或 backend 实现。Stage 0D 的 WASM smoke 当前覆盖 struct、enum、match、数组、字符串 byte 扫描、typed array builder、std.io 路径/诊断和 module graph 路径，并输出 artifact size。Stage 2 bootstrap harness 当前读取 <code>testdata/stage2_bootstrap/input.zeta</code>，并通过 Stage1 Zeta 前端种子输出稳定分数 <code>111</code>。</p>
+    <p>Compiler corpus 是 Stage 0 的回归边界。每个样例必须有稳定输入、预期输出或预期诊断；新增语言特性必须先补 corpus，再进入 parser、typechecker、MIR 或 backend 实现。Stage 0D 的 WASM smoke 当前覆盖 struct、enum、match、数组、字符串 byte 扫描、字符串构造、typed array builder、std.io 路径/诊断和 module graph 路径，并输出 artifact size。Stage 2 bootstrap harness 当前读取 <code>testdata/stage2_bootstrap/input.zeta</code>，并通过 Stage1 Zeta 前端种子输出稳定分数 <code>111</code> 和文本摘要 <code>fn=1;let=1;return=1</code>。</p>
     <table>
       <thead>
         <tr>
@@ -283,7 +283,7 @@
         </tr>
         <tr>
           <td>自举模块</td>
-          <td>token、span、diagnostic、AST node、parser result、symbol table 的 Zeta 子集实现；当前种子已能用 Zeta 扫描 token kind 数组并产出稳定 <code>ast_dump_score</code>。</td>
+          <td>token、span、diagnostic、AST node、parser result、symbol table 的 Zeta 子集实现；当前种子已能用 Zeta 扫描 token kind 数组并产出稳定 <code>ast_dump_score</code> 和文本摘要。</td>
           <td>Stage 0 可编译这些模块，并与 Rust 宿主实现的公开 dump/诊断契约一致。</td>
           <td>Zeta 子集需要 deferred 特性才能表达编译器核心数据结构，或 Stage 1 种子不能由 Stage 0 编译运行。</td>
         </tr>

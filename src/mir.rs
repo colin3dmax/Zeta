@@ -1218,6 +1218,8 @@ impl<'a> MirVerifier<'a> {
             "string_len" => (&["String"][..], MirType::named("Int")),
             "string_byte_at" => (&["String", "Int"][..], MirType::named("Int")),
             "string_byte_slice" => (&["String", "Int", "Int"][..], MirType::named("String")),
+            "string_concat" => (&["String", "String"][..], MirType::named("String")),
+            "int_to_string" => (&["Int"][..], MirType::named("String")),
             "ascii_is_digit" | "ascii_is_alpha" | "ascii_is_alnum" | "ascii_is_whitespace" => {
                 (&["Int"][..], MirType::named("Bool"))
             }

@@ -211,6 +211,15 @@ fn main() -&gt; Int {
     <p>当前刻意不引入 <code>Char</code>、<code>Byte</code> 或 Unicode iterator；完整 Unicode 文本处理会在更成熟的标准库阶段单独设计。</p>
     <p><a class="button secondary" href="#online-testing" data-zeta-example="stringScan">在本页运行字符串扫描示例</a></p>
 
+    <h2 id="string-build">std.core 字符串构造</h2>
+    <p>导入 <code>std.core</code> 后，可以使用 <code>string_concat</code> 拼接两个字符串，并用 <code>int_to_string</code> 把整数格式化为字符串。这是完整格式化库之前的最小能力，用于 Stage1/Stage2 前端生成稳定文本摘要和 dump。</p>
+    <pre><code>import std.core;
+
+fn main() -&gt; String {
+  return string_concat("score=", int_to_string(42));
+}</code></pre>
+    <p><a class="button secondary" href="#online-testing" data-zeta-example="stringBuild">在本页运行字符串构造示例</a></p>
+
     <h2 id="io-path-diagnostic">std.io 文件、路径和诊断</h2>
     <p>导入 <code>std.io</code> 后，可以使用自举编译器需要的最小 IO 基础：<code>file_read_to_string</code> 读取源码文件并返回 <code>ResultString.Ok(text)</code> 或 <code>ResultString.Err(message)</code>；<code>path_join</code> 和 <code>path_basename</code> 处理简单路径片段；<code>diagnostic_format</code> 生成稳定诊断字符串。wasm 目标不会访问宿主文件系统，文件读取会返回 <code>Err</code>。</p>
     <pre><code>import std.io;

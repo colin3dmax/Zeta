@@ -6,6 +6,17 @@ export fn ast_dump_score(source: String) -> Int {
   return parse_module_score(kinds);
 }
 
+export fn ast_dump_summary(source: String) -> String {
+  let kinds: IntArray = lex_kinds(source);
+  let mut out: String = "fn=";
+  out = string_concat(out, int_to_string(count_token(kinds, token_fn())));
+  out = string_concat(out, ";let=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_let())));
+  out = string_concat(out, ";return=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_return())));
+  return out;
+}
+
 fn parse_module_score(kinds: IntArray) -> Int {
   let mut index: Int = 0;
   let mut functions: Int = 0;
@@ -24,6 +35,18 @@ fn parse_module_score(kinds: IntArray) -> Int {
     index = index + 1;
   }
   return functions * 100 + lets * 10 + returns;
+}
+
+fn count_token(kinds: IntArray, token: Int) -> Int {
+  let mut index: Int = 0;
+  let mut count: Int = 0;
+  while index < kinds.len {
+    if kinds[index] == token {
+      count = count + 1;
+    }
+    index = index + 1;
+  }
+  return count;
 }
 
 fn lex_kinds(source: String) -> IntArray {

@@ -82,6 +82,12 @@ fn main() -> Int {
   return 0;
 }`;
 
+const stringBuildProgram = `import std.core;
+
+fn main() -> String {
+  return string_concat("score=", int_to_string(42));
+}`;
+
 const arrayBuilderProgram = `import std.core;
 
 fn main() -> Int {
@@ -105,6 +111,7 @@ const checks = [
   ["run", enumProgram, "42"],
   ["run", arrayProgram, "9"],
   ["run", stringScanProgram, "122"],
+  ["run", stringBuildProgram, "score=42"],
   ["run", arrayBuilderProgram, "9"],
   ["run", ioPathDiagnosticProgram, "LEX_BAD_CHAR at 3:5: main.zeta"],
   ["check", "fn main() -> Bool { return true && !false; }", "ok"],

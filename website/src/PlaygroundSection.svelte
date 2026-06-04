@@ -8,7 +8,7 @@
   const keywords = new Set(["module", "import", "as", "export", "fn", "let", "mut", "return", "break", "continue", "if", "else", "while", "match", "struct", "enum"]);
   const types = new Set(["Int", "String", "Bool", "IntArray", "StringArray", "BoolArray", "ResultString"]);
   const commands = [":help", ":api", ":topics", ":examples", ":doc", ":complete", ":quit"];
-  const topics = ["getting-started", "tutorial", "api", "std", "playground", "module", "import", "as", "fn", "let", "mut", "if", "while", "break", "continue", "match", "struct", "enum", "Int", "String", "Bool", "IntArray", "StringArray", "BoolArray", "ResultString", "string_len", "string_byte_at", "string_byte_slice", "ascii_is_digit", "ascii_is_alpha", "ascii_is_alnum", "ascii_is_whitespace", "int_array_empty", "int_array_push", "string_array_empty", "string_array_push", "bool_array_empty", "bool_array_push", "file_read_to_string", "path_join", "path_basename", "diagnostic_format"];
+  const topics = ["getting-started", "tutorial", "api", "std", "playground", "module", "import", "as", "fn", "let", "mut", "if", "while", "break", "continue", "match", "struct", "enum", "Int", "String", "Bool", "IntArray", "StringArray", "BoolArray", "ResultString", "string_len", "string_byte_at", "string_byte_slice", "string_concat", "int_to_string", "ascii_is_digit", "ascii_is_alpha", "ascii_is_alnum", "ascii_is_whitespace", "int_array_empty", "int_array_push", "string_array_empty", "string_array_push", "bool_array_empty", "bool_array_push", "file_read_to_string", "path_join", "path_basename", "diagnostic_format"];
 
   const sample = `module demo.core;
 import std.core;
@@ -127,6 +127,11 @@ fn main() -> Int {
   }
   return 0;
 }`,
+    stringBuild: `import std.core;
+
+fn main() -> String {
+  return string_concat("score=", int_to_string(42));
+}`,
     arrayBuilder: `import std.core;
 
 fn main() -> Int {
@@ -220,6 +225,7 @@ export fn answer() -> Int {
     ["bool", "布尔逻辑"],
     ["arrays", "数组"],
     ["stringScan", "字符串扫描"],
+    ["stringBuild", "字符串构造"],
     ["arrayBuilder", "数组构造"],
     ["ioPathDiagnostic", "路径诊断"],
     ["struct", "Struct"],
@@ -241,6 +247,7 @@ export fn answer() -> Int {
     { name: "Bool 逻辑", mode: "run", example: "bool", expected: "true" },
     { name: "数组字面量 / 下标 / len", mode: "run", example: "arrays", expected: "9" },
     { name: "std.core 字符串扫描", mode: "run", example: "stringScan", expected: "122" },
+    { name: "std.core 字符串构造", mode: "run", example: "stringBuild", expected: "score=42" },
     { name: "std.core typed array builder", mode: "run", example: "arrayBuilder", expected: "9" },
     { name: "std.io 路径/诊断", mode: "run", example: "ioPathDiagnostic", expected: "LEX_BAD_CHAR at 3:5: main.zeta" },
     { name: "let mut / 赋值", mode: "run", example: "bindings", expected: "42" },

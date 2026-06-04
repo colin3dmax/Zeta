@@ -179,6 +179,15 @@ fn main() -&gt; Int {
 }</code></pre>
     <pre><code>cargo run -- run testdata/run_string_scan.zeta</code></pre>
 
+    <h2 id="string-build">字符串构造</h2>
+    <p><code>std.core</code> 还提供 <code>string_concat</code> 和 <code>int_to_string</code>，用于在没有完整格式化库前生成自举前端需要的稳定文本 dump、诊断片段和测试摘要。</p>
+    <pre><code>import std.core;
+
+fn main() -&gt; String {
+  return string_concat("score=", int_to_string(42));
+}</code></pre>
+    <pre><code>cargo run -- run testdata/run_string_build.zeta</code></pre>
+
     <h2 id="io-path-diagnostic">文件、路径和诊断</h2>
     <p><code>std.io</code> 提供自举编译器读取源码、处理路径和格式化诊断所需的最小能力：<code>file_read_to_string</code> 返回 <code>ResultString</code>，<code>path_join</code> / <code>path_basename</code> 处理简单路径，<code>diagnostic_format</code> 生成稳定诊断文本。wasm 目标中的文件读取会返回 <code>ResultString.Err</code>。</p>
     <pre><code>import std.io;

@@ -1,5 +1,6 @@
 .codex-session.json
 .vscode/
+.devgame/
 codex-resume-current.sh
 target/
 dist/

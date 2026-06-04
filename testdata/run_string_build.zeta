@@ -1,0 +1,5 @@
+import std.core;
+
+fn main() -> String {
+  return string_concat("score=", int_to_string(42));
+}

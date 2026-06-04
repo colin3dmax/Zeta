@@ -144,6 +144,35 @@ fn main() -> Int {
 }
 
 #[test]
+fn check_accepts_string_build_std_core_builtins() {
+    zeta::check_source(
+        r#"
+import std.core;
+
+fn main() -> String {
+  return string_concat("score=", int_to_string(42));
+}
+"#,
+    )
+    .expect("std.core string build builtins should typecheck");
+}
+
+#[test]
+fn check_rejects_string_concat_argument_type_mismatch() {
+    let source = r#"
+import std.core;
+
+fn main() -> String {
+  return string_concat("score=", 42);
+}
+"#;
+    let diagnostics =
+        zeta::check_source(source).expect_err("string concat argument mismatch should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_CALL_ARGUMENT");
+    assert_eq!(diagnostics[0].span, span_of(source, "42"));
+}
+
+#[test]
 fn check_accepts_typed_array_builder_builtins() {
     zeta::check_source(
         r#"
