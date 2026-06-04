@@ -107,7 +107,7 @@
       <li><strong>Stage 0D backend smoke：</strong>让数组、字符串 byte 扫描、typed array builder、struct、enum、match 和 module corpus 在 WASM/WASI/native smoke 上保持一致。</li>
       <li><strong>Stage 1 前端模块：</strong>用 Zeta 子集编写 lexer/parser/AST dump；当前 <code>testdata/stage1_frontend</code> 已建立可运行种子，先输出稳定 <code>ast_dump_score</code>，后续再和 Rust Stage 0 的 golden AST dump 对齐。</li>
       <li><strong>文件/路径/诊断 IO：</strong>当前 <code>std.io</code> 已提供 <code>ResultString</code>、<code>file_read_to_string</code>、<code>path_join</code>、<code>path_basename</code> 和 <code>diagnostic_format</code>，用于 Stage 1 编译器读取源码、输出诊断和稳定 dump。</li>
-      <li><strong>Stage 1 到 Stage 2 自举：</strong>让 Stage 0 编译 Zeta 前端，再用该前端推进 Stage 2。</li>
+      <li><strong>Stage 1 到 Stage 2 自举：</strong>当前先建立 Stage2 bootstrap harness：Stage2 Zeta app 通过 <code>std.io</code> 读取固定源码样本，并复用 Stage1 Zeta 前端的 <code>ast_dump_score</code> 契约输出 <code>111</code>；完整自编译要等 Zeta-to-code backend 和更完整 AST dump 对齐后声明。</li>
       <li><strong>多轮 bootstrap 稳定性：</strong>至少两轮产物和 golden 输出一致后，才能声明进入可自编译核心。</li>
     </ol>
 

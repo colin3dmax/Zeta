@@ -925,6 +925,34 @@ fn cli_run_executes_stage1_frontend_seed() {
     );
 }
 
+#[test]
+fn stage2_bootstrap_harness_reuses_stage1_frontend_contract() {
+    let stage2_app = r#"
+module stage2.app;
+import std.io;
+import stage1.frontend;
+
+fn main() -> Int {
+  let result: ResultString = file_read_to_string("testdata/stage2_bootstrap/input.zeta");
+  match result {
+    ResultString.Ok(source) -> { return stage1.frontend.ast_dump_score(source); },
+    ResultString.Err(message) -> { return 0; },
+  }
+  return 0;
+}
+"#;
+    let value = zeta::module_graph::run_sources(&[
+        source_file(
+            "testdata/stage1_frontend/frontend.zeta",
+            include_str!("../testdata/stage1_frontend/frontend.zeta"),
+        ),
+        source_file("testdata/stage2_bootstrap/main.zeta", stage2_app),
+    ])
+    .expect("Stage2 bootstrap harness should run");
+
+    assert_eq!(value.to_string(), "111");
+}
+
 fn source_file(path: &str, source: &str) -> zeta::module_graph::SourceFile {
     zeta::module_graph::SourceFile {
         path: path.to_string(),

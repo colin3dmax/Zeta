@@ -138,6 +138,8 @@ cargo run -- repl
 
 `testdata/stage1_frontend` 是第一段由 Zeta 编写的 Stage 1 前端种子：它使用 `std.core` 字符串 byte 扫描和 typed array builder，把源码扫描为 token kind 数组，并用极小 parser 产出稳定 `ast_dump_score`。当前样例输出 `111`，代表 1 个 `fn`、1 个 `let` 和 1 个 `return`，用于后续逐步替换 Rust lexer/parser/AST dump 的回归基线。
 
+`testdata/stage2_bootstrap/input.zeta` 是 Stage2 bootstrap harness 的固定源码样本。`stage2_bootstrap_harness_reuses_stage1_frontend_contract` 会让一个 Stage2 Zeta app 通过 `std.io.file_read_to_string` 读取该样本，并调用 Stage1 Zeta 前端的 `ast_dump_score`，期望输出仍为 `111`。这一步固化 Stage1/Stage2 契约，不等同于完整自编译。
+
 REPL 默认会按语言偏好显示中文或英文：`ZETA_LANG` 环境变量优先，其次读取 `~/.zeta/config.toml` 的 `language` 或 `lang`，最后根据系统 `LANG` / `LC_ALL` 判断。简体中文环境默认中文；会话内可用 `:lang zh` / `:lang en` 临时切换。终端内置学习入口包括 `:help`、`:api`、`:topics`、`:examples` 和 `:doc <topic>`。
 
 高级 REPL 使用可选依赖 `reedline`，默认不启用，避免影响离线和跨平台基础构建：

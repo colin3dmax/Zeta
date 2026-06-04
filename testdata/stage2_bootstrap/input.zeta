@@ -1,0 +1,4 @@
+fn stage2_sample() -> Int {
+  let answer: Int = 40;
+  return answer;
+}

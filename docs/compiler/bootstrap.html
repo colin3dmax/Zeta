@@ -173,8 +173,8 @@
         <tr>
           <td>Stage 2</td>
           <td>Zeta 编写的 lexer/parser/AST/HIR/typechecker 核心。</td>
-          <td>Zeta 编译器可以编译自身核心前端，Stage 0 仍负责 backend 和 runtime seed。</td>
-          <td>Stage 1 与 Stage 2 编译器在 golden corpus 上输出一致。</td>
+          <td>Zeta 编译器可以编译自身核心前端，Stage 0 仍负责 backend 和 runtime seed；当前先用 <code>stage2_bootstrap_harness_reuses_stage1_frontend_contract</code> 固化 Stage2 调用 Stage1 前端契约。</td>
+          <td>Stage 1 与 Stage 2 编译器在 golden corpus 上输出一致；在完整 Zeta-to-code backend 前，只能声明 bootstrap harness 通过，不能声明完整自编译。</td>
         </tr>
         <tr>
           <td>Stage 3</td>
@@ -240,7 +240,7 @@
     </table>
 
     <h2 id="corpus">最小 Compiler Corpus</h2>
-    <p>Compiler corpus 是 Stage 0 的回归边界。每个样例必须有稳定输入、预期输出或预期诊断；新增语言特性必须先补 corpus，再进入 parser、typechecker、MIR 或 backend 实现。Stage 0D 的 WASM smoke 当前覆盖 struct、enum、match、数组、字符串 byte 扫描、typed array builder、std.io 路径/诊断和 module graph 路径，并输出 artifact size。</p>
+    <p>Compiler corpus 是 Stage 0 的回归边界。每个样例必须有稳定输入、预期输出或预期诊断；新增语言特性必须先补 corpus，再进入 parser、typechecker、MIR 或 backend 实现。Stage 0D 的 WASM smoke 当前覆盖 struct、enum、match、数组、字符串 byte 扫描、typed array builder、std.io 路径/诊断和 module graph 路径，并输出 artifact size。Stage 2 bootstrap harness 当前读取 <code>testdata/stage2_bootstrap/input.zeta</code>，并通过 Stage1 Zeta 前端种子输出稳定分数 <code>111</code>。</p>
     <table>
       <thead>
         <tr>
