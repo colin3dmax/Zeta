@@ -6,9 +6,9 @@
   export let embedded = false;
 
   const keywords = new Set(["module", "import", "as", "export", "fn", "let", "mut", "return", "break", "continue", "if", "else", "while", "match", "struct", "enum"]);
-  const types = new Set(["Int", "String", "Bool"]);
+  const types = new Set(["Int", "String", "Bool", "IntArray", "StringArray", "BoolArray"]);
   const commands = [":help", ":api", ":topics", ":examples", ":doc", ":complete", ":quit"];
-  const topics = ["getting-started", "tutorial", "api", "std", "playground", "module", "import", "as", "fn", "let", "mut", "if", "while", "break", "continue", "match", "struct", "enum", "Int", "String", "Bool"];
+  const topics = ["getting-started", "tutorial", "api", "std", "playground", "module", "import", "as", "fn", "let", "mut", "if", "while", "break", "continue", "match", "struct", "enum", "Int", "String", "Bool", "IntArray", "StringArray", "BoolArray"];
 
   const sample = `module demo.core;
 import std.core;
@@ -110,6 +110,10 @@ fn main() -> Int {
     bool: `fn main() -> Bool {
   return true && !false;
 }`,
+    arrays: `fn main() -> Int {
+  let values: IntArray = [2, 4, 6];
+  return values[0] + values[1] + values.len;
+}`,
     modules: `// file: main.zeta
 module demo.app;
 import demo.math;
@@ -186,6 +190,7 @@ export fn answer() -> Int {
     ["control", "控制流"],
     ["functions", "函数调用"],
     ["bool", "布尔逻辑"],
+    ["arrays", "数组"],
     ["struct", "Struct"],
     ["enum", "Enum"],
     ["match", "Match"],
@@ -203,6 +208,7 @@ export fn answer() -> Int {
     { name: "短名冲突诊断", mode: "check-module-graph", example: "modulesAmbiguous", expectedOk: false, expectedIncludes: "RESOLVE_AMBIGUOUS_FUNCTION" },
     { name: "Int 算术", mode: "run", source: "fn main() -> Int { return 40 + 2; }", expected: "42" },
     { name: "Bool 逻辑", mode: "run", example: "bool", expected: "true" },
+    { name: "数组字面量 / 下标 / len", mode: "run", example: "arrays", expected: "9" },
     { name: "let mut / 赋值", mode: "run", example: "bindings", expected: "42" },
     { name: "函数调用", mode: "run", example: "functions", expected: "42" },
     { name: "if / while", mode: "run", example: "control", expected: "42" },

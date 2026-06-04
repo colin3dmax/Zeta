@@ -186,6 +186,15 @@ pub enum Expr {
         field_span: Span,
         span: Span,
     },
+    ArrayLiteral {
+        elements: Vec<Expr>,
+        span: Span,
+    },
+    Index {
+        base: Box<Expr>,
+        index: Box<Expr>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -411,7 +420,9 @@ impl Expr {
             | Expr::Unary { span, .. }
             | Expr::Call { span, .. }
             | Expr::StructLiteral { span, .. }
-            | Expr::FieldAccess { span, .. } => *span,
+            | Expr::FieldAccess { span, .. }
+            | Expr::ArrayLiteral { span, .. }
+            | Expr::Index { span, .. } => *span,
         }
     }
 
@@ -449,6 +460,19 @@ impl Expr {
             Expr::FieldAccess { base, field, .. } => {
                 out.push_str(&format!("{pad}FieldAccess field={field}\n"));
                 base.dump(indent + 1, out);
+            }
+            Expr::ArrayLiteral { elements, .. } => {
+                out.push_str(&format!("{pad}ArrayLiteral\n"));
+                for element in elements {
+                    element.dump(indent + 1, out);
+                }
+            }
+            Expr::Index { base, index, .. } => {
+                out.push_str(&format!("{pad}Index\n"));
+                out.push_str(&format!("{pad}  Base\n"));
+                base.dump(indent + 2, out);
+                out.push_str(&format!("{pad}  Index\n"));
+                index.dump(indent + 2, out);
             }
         }
     }

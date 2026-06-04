@@ -8,6 +8,7 @@ enum Type {
     Int,
     String,
     Bool,
+    Array(Box<Type>),
     Named(String),
     Unit,
     Error,
@@ -193,7 +194,10 @@ fn validate_type_name(
 }
 
 fn is_builtin_type_name(name: &str) -> bool {
-    matches!(name, "Int" | "String" | "Bool" | "Unit")
+    matches!(
+        name,
+        "Int" | "String" | "Bool" | "Unit" | "IntArray" | "StringArray" | "BoolArray"
+    )
 }
 
 fn external_function_signature(
@@ -563,7 +567,7 @@ fn check_match_exhaustiveness(
                 ));
             }
         }
-        Type::Int | Type::String | Type::Unit | Type::Error => {}
+        Type::Int | Type::String | Type::Array(_) | Type::Unit | Type::Error => {}
     }
 }
 
@@ -854,6 +858,55 @@ fn infer_expr(
             }
             Type::Named(ty.clone())
         }
+        Expr::ArrayLiteral { elements, span } => {
+            let Some((first, rest)) = elements.split_first() else {
+                diagnostics.push(Diagnostic::new(
+                    "TYPE_ARRAY_EMPTY",
+                    "empty array literals need an explicit element type in Stage 0",
+                    *span,
+                ));
+                return Type::Error;
+            };
+            let element_type = infer_expr(first, locals, functions, structs, enums, diagnostics);
+            for element in rest {
+                let found = infer_expr(element, locals, functions, structs, enums, diagnostics);
+                expect_type(
+                    &found,
+                    &element_type,
+                    "TYPE_ARRAY_ELEMENT",
+                    element.span(),
+                    diagnostics,
+                );
+            }
+            if matches!(element_type, Type::Error) {
+                Type::Error
+            } else {
+                Type::Array(Box::new(element_type))
+            }
+        }
+        Expr::Index { base, index, .. } => {
+            let base_type = infer_expr(base, locals, functions, structs, enums, diagnostics);
+            let index_type = infer_expr(index, locals, functions, structs, enums, diagnostics);
+            expect_type(
+                &index_type,
+                &Type::Int,
+                "TYPE_INDEX",
+                index.span(),
+                diagnostics,
+            );
+            match base_type {
+                Type::Array(element_type) => *element_type,
+                Type::Error => Type::Error,
+                _ => {
+                    diagnostics.push(Diagnostic::new(
+                        "TYPE_INDEX_BASE",
+                        "index expression requires an array value",
+                        base.span(),
+                    ));
+                    Type::Error
+                }
+            }
+        }
         Expr::FieldAccess {
             base,
             field,
@@ -892,6 +945,17 @@ fn infer_expr(
                 }
             }
             let base_type = infer_expr(base, locals, functions, structs, enums, diagnostics);
+            if let Type::Array(_) = &base_type {
+                if field == "len" {
+                    return Type::Int;
+                }
+                diagnostics.push(Diagnostic::new(
+                    "TYPE_ARRAY_FIELD",
+                    format!("unknown field `{field}` on array; only `len` is supported"),
+                    *field_span,
+                ));
+                return Type::Error;
+            }
             let Type::Named(struct_name) = base_type else {
                 diagnostics.push(Diagnostic::new(
                     "TYPE_FIELD_BASE",
@@ -1081,6 +1145,9 @@ fn parse_type(name: &str) -> Type {
         "Int" => Type::Int,
         "String" => Type::String,
         "Bool" => Type::Bool,
+        "IntArray" => Type::Array(Box::new(Type::Int)),
+        "StringArray" => Type::Array(Box::new(Type::String)),
+        "BoolArray" => Type::Array(Box::new(Type::Bool)),
         "Unit" => Type::Unit,
         other => Type::Named(other.to_string()),
     }
@@ -1124,6 +1191,12 @@ impl Type {
             Type::Int => "Int".to_string(),
             Type::String => "String".to_string(),
             Type::Bool => "Bool".to_string(),
+            Type::Array(element) => match element.as_ref() {
+                Type::Int => "IntArray".to_string(),
+                Type::String => "StringArray".to_string(),
+                Type::Bool => "BoolArray".to_string(),
+                other => format!("{}Array", other.display()),
+            },
             Type::Named(name) => name.clone(),
             Type::Unit => "Unit".to_string(),
             Type::Error => "<error>".to_string(),

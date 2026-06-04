@@ -1,0 +1,4 @@
+fn main() -> Int {
+  let values: IntArray = [2, 4, 6];
+  return values[0] + values[1] + values.len;
+}

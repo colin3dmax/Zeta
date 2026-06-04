@@ -33,7 +33,7 @@
     <article class="doc-content">
     <h1>Zeta 阶段路线图</h1>
     <p><strong>状态：</strong>accepted</p>
-    <p><strong>更新时间：</strong>2026-05-30</p>
+    <p><strong>更新时间：</strong>2026-06-04</p>
     <p><strong>适用范围：</strong>Zeta 从当前 Stage 0 到 Stage 3 self-hosting 的阶段目标、交付物和验收标准。</p>
     <p><strong>验收标准：</strong>读者可以看到每一阶段要做什么、为什么做、何时进入下一阶段。</p>
 
@@ -57,7 +57,7 @@
         <tr>
           <td>Stage 0A：可运行前端</td>
           <td>建立 lexer/parser/resolver/typecheck/HIR/MIR/interpreter 的最小闭环。</td>
-          <td>表达式、绑定、函数、控制流、MIR interpreter、REPL、Playground。</td>
+          <td>表达式、绑定、函数、控制流、最小数组、MIR interpreter、REPL、Playground。</td>
           <td>run corpus 稳定，官网和 CLI 对同一程序行为一致。</td>
         </tr>
         <tr>
@@ -101,13 +101,14 @@
 
     <h2 id="priorities">近期优先级</h2>
     <ol>
-      <li><strong>结构体值语义：</strong>结构体字面量、字段访问、字段类型检查、HIR/MIR dump 和 interpreter。</li>
-      <li><strong>枚举与 match 执行：</strong>枚举变体值、简单模式匹配、MIR lower 和 runtime 行为。</li>
-      <li><strong>Option / Result 最小模型：</strong>显式错误路径和自举编译器所需的基础代数数据类型。</li>
-      <li><strong>MIR verifier：</strong>已接入最小检查，覆盖 local 引用、调用参数、条件类型、return 类型、enum variant、循环内 break/continue 和非 Unit 函数返回路径；下一步扩展完整 CFG 和初始化路径。</li>
-      <li><strong>跨模块解析：</strong>目录级最小 <code>module/import</code> 图、跨文件 <code>export fn</code> 调用、多文件 <code>run</code> corpus、<code>demo.math.answer()</code> 限定调用、<code>import demo.math as math;</code> 别名调用、<code>export import</code> 函数/结构体/枚举重导出、短名冲突和类型重导出冲突诊断已进入；当前 <code>symbols-dump</code> 可输出稳定导出符号表，下一步继续补完整 backend mangling。</li>
-      <li><strong>诊断 golden corpus：</strong>CLI 用户可见诊断需要进入 <code>testdata/diagnostics</code>，覆盖单文件和目录级 module graph 错误；当前已覆盖未知名字、类型不匹配、导入冲突和 match 穷尽性，typecheck 也会拒绝未知声明类型名，后续继续把关键 CLI 输出固化为 golden。</li>
-      <li><strong>WASM/WASI smoke：</strong>让同一 corpus 在解释器和 WASI 执行路径上输出一致。</li>
+      <li><strong>Stage 0 最小数组：</strong><code>IntArray</code>、<code>StringArray</code>、<code>BoolArray</code>、数组字面量、下标、<code>.len</code>、MIR verifier、runtime 和用户入口；后续再扩展泛型 <code>Vec</code> 或 slice。</li>
+      <li><strong>String/char/byte 扫描 API：</strong>补 lexer/parser 自举所需的字符串长度、字节访问、ASCII 分类和子串能力。</li>
+      <li><strong>最小容器 API：</strong>在不引入完整泛型系统前，用保守方式提供 token/span/diagnostic 列表所需的追加和读取能力。</li>
+      <li><strong>Stage 0D backend smoke：</strong>让数组、struct、enum、match 和 module corpus 在 WASM/WASI/native smoke 上保持一致。</li>
+      <li><strong>Stage 1 前端模块：</strong>用 Zeta 子集编写 lexer/parser/AST dump，先和 Rust Stage 0 在 golden corpus 上对齐。</li>
+      <li><strong>文件/路径/诊断 IO：</strong>补 Stage 1 编译器读取源码、输出诊断和稳定 dump 所需的最小系统接口。</li>
+      <li><strong>Stage 1 到 Stage 2 自举：</strong>让 Stage 0 编译 Zeta 前端，再用该前端推进 Stage 2。</li>
+      <li><strong>多轮 bootstrap 稳定性：</strong>至少两轮产物和 golden 输出一致后，才能声明进入可自编译核心。</li>
     </ol>
 
     <h2 id="acceptance">每阶段共同验收</h2>

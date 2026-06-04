@@ -551,6 +551,19 @@ impl Parser {
                 continue;
             }
 
+            if self.consume_symbol(Symbol::LBracket).is_some() {
+                let start = expr.span().start;
+                let index = self.parse_expr()?;
+                self.expect_symbol(Symbol::RBracket, "expected `]` after index expression")?;
+                let end = self.previous_span().end;
+                expr = Expr::Index {
+                    base: Box::new(expr),
+                    index: Box::new(index),
+                    span: Span::new(start, end),
+                };
+                continue;
+            }
+
             return Ok(expr);
         }
     }
@@ -631,8 +644,41 @@ impl Parser {
                 self.expect_symbol(Symbol::RParen, "expected `)` after expression")?;
                 Ok(expr)
             }
+            TokenKind::Symbol(Symbol::LBracket) => self.parse_array_literal(),
             _ => Err(self.error_here("PARSE_EXPECTED_EXPR", "expected expression")),
         }
+    }
+
+    fn parse_array_literal(&mut self) -> Result<Expr, Diagnostic> {
+        let start = self.peek().span;
+        self.expect_symbol(Symbol::LBracket, "expected `[` before array literal")?;
+        let mut elements = Vec::new();
+        if self.consume_symbol(Symbol::RBracket).is_some() {
+            let end = self.previous_span().end;
+            return Ok(Expr::ArrayLiteral {
+                elements,
+                span: Span::new(start.start, end),
+            });
+        }
+        loop {
+            elements.push(self.parse_expr()?);
+            if self.consume_symbol(Symbol::Comma).is_none() {
+                break;
+            }
+            if self.consume_symbol(Symbol::RBracket).is_some() {
+                let end = self.previous_span().end;
+                return Ok(Expr::ArrayLiteral {
+                    elements,
+                    span: Span::new(start.start, end),
+                });
+            }
+        }
+        self.expect_symbol(Symbol::RBracket, "expected `]` after array literal")?;
+        let end = self.previous_span().end;
+        Ok(Expr::ArrayLiteral {
+            elements,
+            span: Span::new(start.start, end),
+        })
     }
 
     fn recover_to_item_boundary(&mut self) {

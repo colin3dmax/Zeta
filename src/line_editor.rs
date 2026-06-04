@@ -314,7 +314,10 @@ fn is_keyword(value: &str) -> bool {
 
 #[cfg(feature = "repl-rich")]
 fn is_type(value: &str) -> bool {
-    matches!(value, "Int" | "String" | "Bool")
+    matches!(
+        value,
+        "Int" | "String" | "Bool" | "IntArray" | "StringArray" | "BoolArray"
+    )
 }
 
 #[cfg(feature = "repl-rich")]

@@ -37,6 +37,7 @@
         <a href="#bindings">可变绑定和赋值</a>
         <a href="#comparison">比较表达式</a>
         <a href="#bool">布尔逻辑</a>
+        <a href="#arrays">数组</a>
         <a href="#match">标量 match</a>
         <a href="#struct">结构体字段访问</a>
         <a href="#enum">枚举变体</a>
@@ -87,10 +88,10 @@ python3 tools/check-vscode-extension.py</code></pre>
     <h2 id="check">检查源码</h2>
     <p><code>check</code> 当前执行 parser、最小 name resolution 和基础 typecheck。</p>
     <pre><code>cargo run -- check testdata/core_items.zeta</code></pre>
-    <p>当前检查范围包括重复定义、未知名字、<code>Int</code> / <code>String</code> / <code>Bool</code>、算术表达式、比较表达式、布尔逻辑表达式、函数调用、<code>let</code> 注解、<code>let mut</code> 可变绑定、赋值语句、<code>if</code> / <code>while</code> 条件、循环内 <code>break</code> / <code>continue</code> 和 <code>return</code> 类型。</p>
+    <p>当前检查范围包括重复定义、未知名字、<code>Int</code> / <code>String</code> / <code>Bool</code> / <code>IntArray</code> / <code>StringArray</code> / <code>BoolArray</code>、算术表达式、比较表达式、布尔逻辑表达式、数组字面量、下标、<code>.len</code>、函数调用、<code>let</code> 注解、<code>let mut</code> 可变绑定、赋值语句、<code>if</code> / <code>while</code> 条件、循环内 <code>break</code> / <code>continue</code> 和 <code>return</code> 类型。</p>
 
     <h2 id="run">执行程序</h2>
-    <p><code>run</code> 会先 lower 到结构化 MIR，通过 MIR verifier 后，再由 Stage 0 MIR interpreter 执行无参数 <code>main</code>。这里的 MIR interpreter 不是生成机器码，而是直接读取 MIR 指令并执行，用来在早期验证 Zeta 的运行语义；当前支持整数算术、比较运算、布尔逻辑、函数调用、<code>let</code>、<code>let mut</code>、赋值、<code>return</code>、循环内 <code>break</code> / <code>continue</code> 和基础 <code>if</code> / <code>while</code>。声明 <code>-&gt; Int</code>、<code>-&gt; Bool</code> 等非 <code>Unit</code> 返回类型的函数，必须让 verifier 能静态确认所有路径都会 <code>return</code>；当前不会把 <code>while true</code> 当作保证返回。传入目录时，<code>run</code> 会复用 module graph，找到唯一 <code>main</code> 并执行跨文件 <code>export fn</code> 调用。</p>
+    <p><code>run</code> 会先 lower 到结构化 MIR，通过 MIR verifier 后，再由 Stage 0 MIR interpreter 执行无参数 <code>main</code>。这里的 MIR interpreter 不是生成机器码，而是直接读取 MIR 指令并执行，用来在早期验证 Zeta 的运行语义；当前支持整数算术、比较运算、布尔逻辑、数组字面量、数组下标、数组 <code>.len</code>、函数调用、<code>let</code>、<code>let mut</code>、赋值、<code>return</code>、循环内 <code>break</code> / <code>continue</code> 和基础 <code>if</code> / <code>while</code>。声明 <code>-&gt; Int</code>、<code>-&gt; Bool</code> 等非 <code>Unit</code> 返回类型的函数，必须让 verifier 能静态确认所有路径都会 <code>return</code>；当前不会把 <code>while true</code> 当作保证返回。传入目录时，<code>run</code> 会复用 module graph，找到唯一 <code>main</code> 并执行跨文件 <code>export fn</code> 调用。</p>
     <pre><code>fn main() -&gt; Int {
   let answer: Int = 42;
 }
@@ -100,6 +101,7 @@ python3 tools/check-vscode-extension.py</code></pre>
 cargo run -- run testdata/run_call.zeta
 cargo run -- run testdata/run_compare.zeta
 cargo run -- run testdata/run_bool_logic.zeta
+cargo run -- run testdata/run_array.zeta
 cargo run -- run testdata/run_struct.zeta
 cargo run -- run testdata/run_enum.zeta
 cargo run -- run testdata/modules_ok
@@ -138,6 +140,14 @@ cargo run -- run testdata/modules_alias</code></pre>
   }
   return 0;
 }</code></pre>
+
+    <h2 id="arrays">数组</h2>
+    <p>数组当前提供自举所需的最小能力：<code>IntArray</code>、<code>StringArray</code> 和 <code>BoolArray</code> 三种同质数组类型，非空数组字面量，<code>Int</code> 下标访问，以及返回长度的 <code>.len</code>。</p>
+    <pre><code>fn main() -&gt; Int {
+  let values: IntArray = [2, 4, 6];
+  return values[0] + values[1] + values.len;
+}</code></pre>
+    <pre><code>cargo run -- run testdata/run_array.zeta</code></pre>
 
     <h2 id="match">标量 match</h2>
     <p><code>match</code> 当前支持 <code>Int</code>、<code>String</code>、<code>Bool</code> 字面量模式和 <code>_</code> 通配模式，分支体可以直接 <code>return</code>。</p>
@@ -296,6 +306,7 @@ let answer: Int = 40 + 2;
 let mut count: Int = 1;
 count = count + 1;
 true &amp;&amp; !false;
+fn main() -&gt; Int { let values: IntArray = [2, 4, 6]; return values[0] + values.len; }
 :doc struct
 :complete Str
 :quit</code></pre>

@@ -186,6 +186,17 @@ fn dump_expr(expr: &Expr, indent: usize, out: &mut String) {
             out.push_str(&format!("{pad}field_access {field}\n"));
             dump_expr(base, indent + 1, out);
         }
+        Expr::ArrayLiteral { elements, .. } => {
+            out.push_str(&format!("{pad}array_literal\n"));
+            for element in elements {
+                dump_expr(element, indent + 1, out);
+            }
+        }
+        Expr::Index { base, index, .. } => {
+            out.push_str(&format!("{pad}index\n"));
+            dump_expr(base, indent + 1, out);
+            dump_expr(index, indent + 1, out);
+        }
     }
 }
 

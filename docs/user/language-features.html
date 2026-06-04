@@ -30,6 +30,7 @@
         <a href="#bindings">绑定和赋值</a>
         <a href="#functions">函数和 return</a>
         <a href="#control-flow">控制流</a>
+        <a href="#arrays">数组</a>
         <a href="#data-declarations">数据声明</a>
         <a href="#tooling">CLI / REPL / 编辑器</a>
         <a href="#online-testing">在线测试</a>
@@ -38,7 +39,7 @@
     <article class="doc-content">
     <h1>Zeta 语言特性学习</h1>
     <p><strong>状态：</strong>draft</p>
-    <p><strong>更新时间：</strong>2026-05-30</p>
+    <p><strong>更新时间：</strong>2026-06-04</p>
     <p><strong>适用范围：</strong>Zeta Stage 0 已实现语言功能、用户示例、CLI 验证方式和官网 Playground 在线测试入口。</p>
     <p><strong>验收标准：</strong>每个已实现语言功能都有用途说明、规则、示例和可复用 Playground 测试入口。</p>
 
@@ -168,6 +169,15 @@ fn main() -&gt; Int {
   return 0;
 }</code></pre>
     <p><a class="button secondary" href="#online-testing" data-zeta-example="control">在本页测试控制流</a></p>
+
+    <h2 id="arrays">数组字面量、下标和 len</h2>
+    <p>Stage 0 当前支持同质数组类型 <code>IntArray</code>、<code>StringArray</code> 和 <code>BoolArray</code>。数组字面量必须非空，元素类型必须一致；下标表达式使用 <code>Int</code>，<code>.len</code> 返回数组长度。</p>
+    <pre><code>fn main() -&gt; Int {
+  let values: IntArray = [2, 4, 6];
+  return values[0] + values[1] + values.len;
+}</code></pre>
+    <p>当前数组能力用于支撑自举编译器的 token/span 列表和小型表结构；还没有泛型 <code>Vec</code>、数组拼接、切片视图或用户自定义元素类型数组。</p>
+    <p><a class="button secondary" href="#online-testing" data-zeta-example="arrays">在本页运行数组示例</a></p>
 
     <h2 id="data-declarations">struct、enum 和 match</h2>
     <p><code>struct</code> 当前支持结构体字面量和字段访问，适合先表达稳定记录数据。<code>enum</code> 当前支持限定变体值，例如 <code>ResultTag.Ok</code>。<code>match</code> 可以对 <code>Int</code>、<code>String</code>、<code>Bool</code>、枚举变体和 <code>_</code> 通配模式执行分支。</p>

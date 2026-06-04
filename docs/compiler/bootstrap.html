@@ -131,7 +131,7 @@
         </tr>
         <tr>
           <td>类型</td>
-          <td><code>Bool</code>、整数、<code>String</code>、数组或 slice、<code>struct</code>、<code>enum</code>、<code>Option</code>、<code>Result</code>。</td>
+          <td><code>Bool</code>、整数、<code>String</code>、<code>IntArray</code>/<code>StringArray</code>/<code>BoolArray</code> 最小数组、<code>struct</code>、<code>enum</code>、<code>Option</code>、<code>Result</code>。</td>
           <td>高阶类型、完整 trait specialization、复杂生命周期。</td>
         </tr>
         <tr>
@@ -223,7 +223,7 @@
         </tr>
         <tr>
           <td>MIR</td>
-          <td>定义 locals、temporaries、call、return、控制流和 drop；当前 MIR verifier 先检查 Stage 0 MIR 的 local 引用、调用参数、条件类型、return 类型、enum variant 和非 Unit 函数返回路径，后续扩展到 CFG、drop/cleanup 和初始化路径。</td>
+          <td>定义 locals、temporaries、call、return、控制流和 drop；当前 MIR verifier 先检查 Stage 0 MIR 的 local 引用、调用参数、条件类型、return 类型、enum variant、数组元素/下标类型和非 Unit 函数返回路径，后续扩展到 CFG、drop/cleanup 和初始化路径。</td>
           <td>未定义 local、错误调用参数、错误 return 类型、缺少终结指令或 return path 不完整。</td>
         </tr>
         <tr>

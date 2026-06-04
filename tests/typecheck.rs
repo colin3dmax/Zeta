@@ -74,6 +74,43 @@ fn main() {
 }
 
 #[test]
+fn check_rejects_mixed_array_elements() {
+    let source = r#"
+fn main() {
+  let values: IntArray = [1, "two"];
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("mixed array should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_ARRAY_ELEMENT");
+    assert_eq!(diagnostics[0].span, span_of(source, "\"two\""));
+}
+
+#[test]
+fn check_rejects_non_int_array_index() {
+    let source = r#"
+fn main() {
+  let values: IntArray = [1, 2];
+  let value: Int = values["0"];
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("string index should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_INDEX");
+    assert_eq!(diagnostics[0].span, span_of(source, "\"0\""));
+}
+
+#[test]
+fn check_rejects_index_on_non_array() {
+    let source = r#"
+fn main() {
+  let value: Int = 1[0];
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("index base should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_INDEX_BASE");
+    assert_eq!(diagnostics[0].span, span_of(source, "1"));
+}
+
+#[test]
 fn check_rejects_non_int_ordering_operands() {
     let source = r#"
 fn main() {

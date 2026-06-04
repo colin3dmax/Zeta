@@ -48,6 +48,13 @@ fn run_executes_loop_break_and_continue() {
 }
 
 #[test]
+fn run_executes_array_index_and_len() {
+    let value =
+        zeta::run_source(include_str!("../testdata/run_array.zeta")).expect("program should run");
+    assert_eq!(value.to_string(), "9");
+}
+
+#[test]
 fn run_executes_scalar_match() {
     let value =
         zeta::run_source(include_str!("../testdata/run_match.zeta")).expect("program should run");

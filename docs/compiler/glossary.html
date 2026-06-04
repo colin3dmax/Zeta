@@ -157,7 +157,7 @@
         <tr>
           <td><code>Verifier</code></td>
           <td>验证器。它检查某个中间表示是否内部一致。</td>
-          <td>MIR verifier 当前会在 <code>mir-dump</code> 和 <code>run</code> 进入执行前检查 local 引用、调用参数、条件类型、return 类型、enum variant 和非 Unit 函数返回路径；后续再扩展到完整控制流图。</td>
+          <td>MIR verifier 当前会在 <code>mir-dump</code> 和 <code>run</code> 进入执行前检查 local 引用、调用参数、条件类型、return 类型、enum variant、数组元素/下标类型和非 Unit 函数返回路径；后续再扩展到完整控制流图。</td>
         </tr>
         <tr>
           <td><code>Self-hosting</code></td>

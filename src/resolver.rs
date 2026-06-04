@@ -472,6 +472,42 @@ fn check_expr(
                 diagnostics,
             );
         }
+        Expr::ArrayLiteral { elements, .. } => {
+            for element in elements {
+                check_expr(
+                    element,
+                    locals,
+                    functions,
+                    top_level_names,
+                    enum_variants,
+                    ambiguous_external_functions,
+                    function_name,
+                    diagnostics,
+                );
+            }
+        }
+        Expr::Index { base, index, .. } => {
+            check_expr(
+                base,
+                locals,
+                functions,
+                top_level_names,
+                enum_variants,
+                ambiguous_external_functions,
+                function_name,
+                diagnostics,
+            );
+            check_expr(
+                index,
+                locals,
+                functions,
+                top_level_names,
+                enum_variants,
+                ambiguous_external_functions,
+                function_name,
+                diagnostics,
+            );
+        }
         Expr::Int { .. } | Expr::String { .. } | Expr::Bool { .. } => {}
     }
 }

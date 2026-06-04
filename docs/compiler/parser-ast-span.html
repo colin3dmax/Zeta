@@ -23,7 +23,7 @@
     <p>本规格冻结 Stage 0 第一版 parser 表面，不定义完整语言。任何新增语法必须先更新本文件、compiler corpus 和对应 golden dump，再进入实现。</p>
     <ul>
       <li><strong>Included：</strong>module/import/export、struct、enum、fn、参数、返回类型、let/let mut、赋值、return、if/else、while、match、函数调用、基础字面量和整数算术。</li>
-      <li><strong>Deferred：</strong>宏、泛型参数、trait/impl、闭包、async/await、for、完整 pattern matching、字段访问、数组/slice 字面量、错误恢复型 AST 节点。</li>
+      <li><strong>Deferred：</strong>宏、泛型参数、trait/impl、闭包、async/await、for、完整 pattern matching、切片视图、错误恢复型 AST 节点。</li>
     </ul>
 
     <h2>Token 与 Span</h2>

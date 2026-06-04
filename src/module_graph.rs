@@ -441,6 +441,33 @@ fn rewrite_expr(
                 );
             }
         }
+        MirExpr::ArrayLiteral { elements } => {
+            for element in elements {
+                rewrite_expr(
+                    element,
+                    current_module,
+                    imported_targets,
+                    local_functions,
+                    is_main_module,
+                );
+            }
+        }
+        MirExpr::Index { base, index } => {
+            rewrite_expr(
+                base,
+                current_module,
+                imported_targets,
+                local_functions,
+                is_main_module,
+            );
+            rewrite_expr(
+                index,
+                current_module,
+                imported_targets,
+                local_functions,
+                is_main_module,
+            );
+        }
         MirExpr::EnumVariant { payload, .. } => {
             if let Some(payload) = payload {
                 rewrite_expr(

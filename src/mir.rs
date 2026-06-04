@@ -111,6 +111,13 @@ pub enum MirExpr {
         base: Box<MirExpr>,
         field: String,
     },
+    ArrayLiteral {
+        elements: Vec<MirExpr>,
+    },
+    Index {
+        base: Box<MirExpr>,
+        index: Box<MirExpr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -401,6 +408,16 @@ fn lower_expr(
                 field: field.clone(),
             }
         }
+        Expr::ArrayLiteral { elements, .. } => MirExpr::ArrayLiteral {
+            elements: elements
+                .iter()
+                .map(|element| lower_expr(element, enum_variants))
+                .collect(),
+        },
+        Expr::Index { base, index, .. } => MirExpr::Index {
+            base: Box::new(lower_expr(base, enum_variants)),
+            index: Box::new(lower_expr(index, enum_variants)),
+        },
     }
 }
 
@@ -612,6 +629,25 @@ impl DumpCtx {
                 out.push_str(&format!("{pad}{temp} = field {base_temp}.{field}\n"));
                 temp
             }
+            MirExpr::ArrayLiteral { elements } => {
+                let mut element_temps = Vec::new();
+                for element in elements {
+                    element_temps.push(self.dump_expr(element, indent, out));
+                }
+                let temp = self.temp();
+                out.push_str(&format!(
+                    "{pad}{temp} = array [{}]\n",
+                    element_temps.join(", ")
+                ));
+                temp
+            }
+            MirExpr::Index { base, index } => {
+                let base_temp = self.dump_expr(base, indent, out);
+                let index_temp = self.dump_expr(index, indent, out);
+                let temp = self.temp();
+                out.push_str(&format!("{pad}{temp} = index {base_temp}[{index_temp}]\n"));
+                temp
+            }
         }
     }
 
@@ -669,6 +705,7 @@ pub fn unary_op_text(op: UnaryOp) -> &'static str {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum MirType {
     Named(String),
+    Array(Box<MirType>),
     Unit,
     Unknown,
 }
@@ -685,9 +722,23 @@ impl MirType {
     fn display(&self) -> String {
         match self {
             Self::Named(name) => name.clone(),
+            Self::Array(element) => match element.as_ref() {
+                Self::Named(name) => format!("{name}Array"),
+                other => format!("{}Array", other.display()),
+            },
             Self::Unit => "Unit".to_string(),
             Self::Unknown => "<unknown>".to_string(),
         }
+    }
+}
+
+fn parse_mir_type(name: &str) -> MirType {
+    match name {
+        "IntArray" => MirType::Array(Box::new(MirType::named("Int"))),
+        "StringArray" => MirType::Array(Box::new(MirType::named("String"))),
+        "BoolArray" => MirType::Array(Box::new(MirType::named("Bool"))),
+        "Unit" => MirType::Unit,
+        other => MirType::named(other),
     }
 }
 
@@ -742,7 +793,7 @@ impl<'a> MirVerifier<'a> {
         let mut locals = HashMap::new();
         for param in &function.params {
             if locals
-                .insert(param.name.clone(), MirType::named(param.ty.clone()))
+                .insert(param.name.clone(), parse_mir_type(&param.ty))
                 .is_some()
             {
                 self.error(
@@ -754,7 +805,7 @@ impl<'a> MirVerifier<'a> {
         let expected_return = function
             .return_type
             .as_ref()
-            .map(|ty| MirType::named(ty.clone()))
+            .map(|ty| parse_mir_type(ty))
             .unwrap_or(MirType::Unit);
         let guarantees_return = self.verify_stmts(&function.body, &mut locals, &expected_return, 0);
         if expected_return != MirType::Unit && !guarantees_return {
@@ -804,7 +855,7 @@ impl<'a> MirVerifier<'a> {
                 let value_ty = self.verify_expr(value, locals);
                 let local_ty = ty
                     .as_ref()
-                    .map(|ty| MirType::named(ty.clone()))
+                    .map(|ty| parse_mir_type(ty))
                     .unwrap_or_else(|| value_ty.clone());
                 self.expect_type(
                     &value_ty,
@@ -1014,11 +1065,55 @@ impl<'a> MirVerifier<'a> {
                 }
                 MirType::named(ty.clone())
             }
-            MirExpr::FieldAccess { base, .. } => {
-                self.verify_expr(base, locals);
+            MirExpr::FieldAccess { base, field } => {
+                let base_ty = self.verify_expr(base, locals);
+                if matches!(base_ty, MirType::Array(_)) && field == "len" {
+                    return MirType::named("Int");
+                }
                 MirType::Unknown
             }
+            MirExpr::ArrayLiteral { elements } => {
+                let Some((first, rest)) = elements.split_first() else {
+                    self.error("MIR_ARRAY_EMPTY", "empty MIR arrays need an element type");
+                    return MirType::Unknown;
+                };
+                let element_ty = self.verify_expr(first, locals);
+                for element in rest {
+                    let found = self.verify_expr(element, locals);
+                    self.expect_type(
+                        &found,
+                        &element_ty,
+                        "MIR_ARRAY_ELEMENT_TYPE",
+                        format!(
+                            "array element expects `{}`, found `{}`",
+                            element_ty.display(),
+                            found.display()
+                        ),
+                    );
+                }
+                MirType::Array(Box::new(element_ty))
+            }
+            MirExpr::Index { base, index } => {
+                let base_ty = self.verify_expr(base, locals);
+                self.expect_int_index(index, locals);
+                match base_ty {
+                    MirType::Array(element_ty) => *element_ty,
+                    MirType::Unknown => MirType::Unknown,
+                    other => {
+                        self.error(
+                            "MIR_INDEX_BASE",
+                            format!("index base expects array, found `{}`", other.display()),
+                        );
+                        MirType::Unknown
+                    }
+                }
+            }
         }
+    }
+
+    fn expect_int_index(&mut self, expr: &MirExpr, locals: &HashMap<String, MirType>) {
+        let ty = self.verify_expr(expr, locals);
+        self.expect_named(&ty, "Int", "MIR_INDEX_TYPE", "index");
     }
 
     fn verify_binary(
@@ -1090,7 +1185,7 @@ impl<'a> MirVerifier<'a> {
         }
         for (param, arg) in function.params.iter().zip(args) {
             let arg_ty = self.verify_expr(arg, locals);
-            let param_ty = MirType::named(param.ty.clone());
+            let param_ty = parse_mir_type(&param.ty);
             self.expect_type(
                 &arg_ty,
                 &param_ty,
@@ -1106,7 +1201,7 @@ impl<'a> MirVerifier<'a> {
         function
             .return_type
             .as_ref()
-            .map(|ty| MirType::named(ty.clone()))
+            .map(|ty| parse_mir_type(ty))
             .unwrap_or(MirType::Unit)
     }
 

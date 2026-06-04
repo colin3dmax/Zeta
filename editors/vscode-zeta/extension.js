@@ -16,7 +16,10 @@ const TOPICS = [
   ["enum", "Declare a tagged set of variants.", "enum ResultTag { Ok, Err, }"],
   ["Int", "Integer scalar type currently supported by the Stage 0 checker.", "let value: Int = 1 + 2;"],
   ["String", "String scalar type currently supported by the Stage 0 checker.", "let name: String = \"zeta\";"],
-  ["Bool", "Boolean scalar type used by if and while conditions.", "let ready: Bool = 1 + 1 == 2 && !false;"]
+  ["Bool", "Boolean scalar type used by if and while conditions.", "let ready: Bool = 1 + 1 == 2 && !false;"],
+  ["IntArray", "Homogeneous Int array. Use [..] literals, integer indexing, and .len.", "let values: IntArray = [2, 4, 6];"],
+  ["StringArray", "Homogeneous String array. Use [..] literals, integer indexing, and .len.", "let names: StringArray = [\"Ada\", \"Zeta\"];"],
+  ["BoolArray", "Homogeneous Bool array. Use [..] literals, integer indexing, and .len.", "let flags: BoolArray = [true, false];"]
 ];
 
 function activate(context) {
@@ -53,7 +56,7 @@ function activate(context) {
 }
 
 function completionKind(name) {
-  if (["Int", "String", "Bool"].includes(name)) {
+  if (["Int", "String", "Bool", "IntArray", "StringArray", "BoolArray"].includes(name)) {
     return vscode.CompletionItemKind.TypeParameter;
   }
   if (name === "fn") {

@@ -210,6 +210,21 @@ pub const TOPICS: &[ReplTopic] = &[
         summary: "Boolean scalar type used by if and while conditions. Use &&, ||, and ! to combine Bool values.",
         example: "let ready: Bool = true && !false;",
     },
+    ReplTopic {
+        name: "IntArray",
+        summary: "Homogeneous Int array. Use [..] literals, integer indexing, and .len.",
+        example: "let values: IntArray = [2, 4, 6];",
+    },
+    ReplTopic {
+        name: "StringArray",
+        summary: "Homogeneous String array. Use [..] literals, integer indexing, and .len.",
+        example: "let names: StringArray = [\"Ada\", \"Zeta\"];",
+    },
+    ReplTopic {
+        name: "BoolArray",
+        summary: "Homogeneous Bool array. Use [..] literals, integer indexing, and .len.",
+        example: "let flags: BoolArray = [true, false];",
+    },
 ];
 
 pub fn complete(prefix: &str) -> Vec<&'static str> {
@@ -379,6 +394,7 @@ pub fn examples_text_colored_lang(language: Language) -> String {
             ("绑定", "let answer: Int = 40 + 2;"),
             ("可变绑定", "let mut answer: Int = 40;"),
             ("布尔逻辑", "true && !false"),
+            ("数组", "fn main() -> Int { let values: IntArray = [2, 4, 6]; return values[0] + values.len; }"),
             ("函数", "fn main() -> Int { return 42; }"),
             ("模块", "module demo.core;"),
             ("文档", ":doc let"),
@@ -390,6 +406,7 @@ pub fn examples_text_colored_lang(language: Language) -> String {
             ("Binding", "let answer: Int = 40 + 2;"),
             ("Mutable", "let mut answer: Int = 40;"),
             ("Boolean", "true && !false"),
+            ("Array", "fn main() -> Int { let values: IntArray = [2, 4, 6]; return values[0] + values.len; }"),
             ("Function", "fn main() -> Int { return 42; }"),
             ("Module", "module demo.core;"),
             ("Doc", ":doc let"),
@@ -424,20 +441,24 @@ Zeta Stage 0 API
   {}  整数标量和整数算术
   {}  字符串标量
   {}  用于 if/while 条件的布尔标量
+  {}  同质数组，支持字面量、Int 下标和 .len
   {}  标准 API 边界：当前可导入 std.core 和 std.io
 
 语言表面
-  模块/导入、std.core/std.io、函数、绑定/可变绑定、赋值、比较、布尔逻辑、返回、if/while、struct、enum 变体、match
+  模块/导入、std.core/std.io、函数、绑定/可变绑定、赋值、比较、布尔逻辑、数组字面量/下标/.len、返回、if/while、struct、enum 变体、match
 
 试试
+  {}
   {}
   {}
 ",
             color("Int", Style::Type),
             color("String", Style::Type),
             color("Bool", Style::Type),
+            color("IntArray/StringArray/BoolArray", Style::Type),
             color("std", Style::Command),
             color(":doc Int", Style::Command),
+            color(":doc IntArray", Style::Command),
             color(":doc std", Style::Command)
         );
     }
@@ -451,20 +472,24 @@ Zeta Stage 0 API
   {}  scalar integer values and arithmetic
   {}  scalar string values
   {}  scalar boolean values for control flow
+  {}  homogeneous arrays with literals, Int indexing, and .len
   {}  standard API boundary: std.core and std.io imports are accepted
 
 Language surface
-  module/import, std.core/std.io, fn, let/let mut, assignment, comparison, boolean logic, return, if/else, while, struct, enum variants, match
+  module/import, std.core/std.io, fn, let/let mut, assignment, comparison, boolean logic, array literals/index/.len, return, if/else, while, struct, enum variants, match
 
 Try
+  {}
   {}
   {}
 ",
         color("Int", Style::Type),
         color("String", Style::Type),
         color("Bool", Style::Type),
+        color("IntArray/StringArray/BoolArray", Style::Type),
         color("std", Style::Command),
         color(":doc Int", Style::Command),
+        color(":doc IntArray", Style::Command),
         color(":doc std", Style::Command)
     )
 }
@@ -517,6 +542,9 @@ fn topic_summary(topic: &ReplTopic, language: Language) -> &'static str {
         "Int" => "当前 Stage 0 checker 支持的整数标量类型。",
         "String" => "当前 Stage 0 checker 支持的字符串标量类型。",
         "Bool" => "if 和 while 条件使用的布尔类型；&&、|| 和 ! 用于组合或取反 Bool。",
+        "IntArray" => "同质 Int 数组；支持 [1, 2] 字面量、Int 下标访问和 .len 长度字段。",
+        "StringArray" => "同质 String 数组；支持字符串数组字面量、Int 下标访问和 .len 长度字段。",
+        "BoolArray" => "同质 Bool 数组；支持布尔数组字面量、Int 下标访问和 .len 长度字段。",
         _ => topic.summary,
     }
 }

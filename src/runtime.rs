@@ -20,6 +20,7 @@ pub enum Value {
         variant: String,
         payload: Option<Box<Value>>,
     },
+    Array(Vec<Value>),
     Unit,
 }
 
@@ -370,6 +371,15 @@ impl MirRuntime {
                     }
                 }
                 let value = self.eval_expr(base, locals)?;
+                if let Value::Array(values) = &value {
+                    if field == "len" {
+                        return Ok(Value::Int(values.len() as i64));
+                    }
+                    return Err(runtime_error(
+                        "RUNTIME_ARRAY_FIELD",
+                        format!("unknown field `{field}` on array; only `len` is supported"),
+                    ));
+                }
                 let Value::Struct { ty, fields } = value else {
                     return Err(runtime_error(
                         "RUNTIME_FIELD_BASE",
@@ -382,6 +392,16 @@ impl MirRuntime {
                         format!("unknown field `{field}` on struct `{ty}`"),
                     )
                 })
+            }
+            MirExpr::ArrayLiteral { elements } => elements
+                .iter()
+                .map(|element| self.eval_expr(element, locals))
+                .collect::<Result<Vec<_>, _>>()
+                .map(Value::Array),
+            MirExpr::Index { base, index } => {
+                let base = self.eval_expr(base, locals)?;
+                let index = self.eval_expr(index, locals)?;
+                index_array_value(base, index)
             }
         }
     }
@@ -655,6 +675,15 @@ impl Runtime {
                     }
                 }
                 let value = self.eval_expr(base, locals)?;
+                if let Value::Array(values) = &value {
+                    if field == "len" {
+                        return Ok(Value::Int(values.len() as i64));
+                    }
+                    return Err(runtime_error(
+                        "RUNTIME_ARRAY_FIELD",
+                        format!("unknown field `{field}` on array; only `len` is supported"),
+                    ));
+                }
                 let Value::Struct { ty, fields } = value else {
                     return Err(runtime_error(
                         "RUNTIME_FIELD_BASE",
@@ -667,6 +696,16 @@ impl Runtime {
                         format!("unknown field `{field}` on struct `{ty}`"),
                     )
                 })
+            }
+            Expr::ArrayLiteral { elements, .. } => elements
+                .iter()
+                .map(|element| self.eval_expr(element, locals))
+                .collect::<Result<Vec<_>, _>>()
+                .map(Value::Array),
+            Expr::Index { base, index, .. } => {
+                let base = self.eval_expr(base, locals)?;
+                let index = self.eval_expr(index, locals)?;
+                index_array_value(base, index)
             }
         }
     }
@@ -778,6 +817,33 @@ fn expect_bool(value: Value, code: &'static str) -> Result<bool, Diagnostic> {
         return Err(runtime_error(code, "operand must evaluate to Bool"));
     };
     Ok(value)
+}
+
+fn index_array_value(base: Value, index: Value) -> Result<Value, Diagnostic> {
+    let Value::Array(values) = base else {
+        return Err(runtime_error(
+            "RUNTIME_INDEX_BASE",
+            "index expression requires an array value",
+        ));
+    };
+    let Value::Int(index) = index else {
+        return Err(runtime_error("RUNTIME_INDEX", "array index must be Int"));
+    };
+    if index < 0 {
+        return Err(runtime_error(
+            "RUNTIME_INDEX_BOUNDS",
+            format!("array index `{index}` is out of bounds"),
+        ));
+    }
+    values.get(index as usize).cloned().ok_or_else(|| {
+        runtime_error(
+            "RUNTIME_INDEX_BOUNDS",
+            format!(
+                "array index `{index}` is out of bounds for length {}",
+                values.len()
+            ),
+        )
+    })
 }
 
 type BindingSnapshot = Vec<(String, Option<Value>)>;
@@ -931,6 +997,14 @@ impl fmt::Display for Value {
                 } else {
                     write!(f, "{ty}.{variant}")
                 }
+            }
+            Value::Array(values) => {
+                let values = values
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "[{values}]")
             }
             Value::Unit => write!(f, "()"),
         }

@@ -15,6 +15,7 @@ fn verifier_accepts_lowered_run_corpus() {
         include_str!("../testdata/run_enum_payload.zeta"),
         include_str!("../testdata/run_match.zeta"),
         include_str!("../testdata/run_loop_control.zeta"),
+        include_str!("../testdata/run_array.zeta"),
     ] {
         let module = zeta::parse_source(source).expect("source should parse");
         zeta::resolver::resolve(&module).expect("source should resolve");

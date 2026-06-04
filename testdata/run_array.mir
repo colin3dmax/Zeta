@@ -1,0 +1,20 @@
+MirModule
+  fn main -> Int
+    block entry
+      local values: IntArray mutability=immutable
+      _t0 = const Int 2
+      _t1 = const Int 4
+      _t2 = const Int 6
+      _t3 = array [_t0, _t1, _t2]
+      store values, _t3
+      _t4 = load values
+      _t5 = const Int 0
+      _t6 = index _t4[_t5]
+      _t7 = load values
+      _t8 = const Int 1
+      _t9 = index _t7[_t8]
+      _t10 = binary add _t6, _t9
+      _t11 = load values
+      _t12 = field _t11.len
+      _t13 = binary add _t10, _t12
+      return _t13
