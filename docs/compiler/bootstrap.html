@@ -131,13 +131,13 @@
         </tr>
         <tr>
           <td>类型</td>
-          <td><code>Bool</code>、整数、<code>String</code>、<code>IntArray</code>/<code>StringArray</code>/<code>BoolArray</code> 最小数组、<code>struct</code>、<code>enum</code>、<code>Option</code>、<code>Result</code>。</td>
+          <td><code>Bool</code>、整数、<code>String</code>、<code>IntArray</code>/<code>StringArray</code>/<code>BoolArray</code> 最小数组、<code>struct</code>、<code>enum</code>、<code>OptionInt</code>/<code>ResultInt</code>/<code>ResultString</code>。</td>
           <td>高阶类型、完整 trait specialization、复杂生命周期。</td>
         </tr>
         <tr>
           <td>编译器库能力</td>
-          <td><code>String</code>、<code>Vec</code>、<code>Map</code>、<code>Set</code>、文件读取、路径处理、诊断输出。</td>
-          <td>完整 std、网络、线程池、AI provider SDK 或 agent 框架。</td>
+          <td><code>String</code> byte 扫描、typed array builder、文件读取、路径处理、诊断格式化。</td>
+          <td>泛型 <code>Vec</code>/<code>Map</code>/<code>Set</code>、完整 std、网络、线程池、AI provider SDK 或 agent 框架。</td>
         </tr>
         <tr>
           <td>错误模型</td>
@@ -240,7 +240,7 @@
     </table>
 
     <h2 id="corpus">最小 Compiler Corpus</h2>
-    <p>Compiler corpus 是 Stage 0 的回归边界。每个样例必须有稳定输入、预期输出或预期诊断；新增语言特性必须先补 corpus，再进入 parser、typechecker、MIR 或 backend 实现。Stage 0D 的 WASM smoke 当前覆盖 struct、enum、match、数组、字符串 byte 扫描、typed array builder 和 module graph 路径，并输出 artifact size。</p>
+    <p>Compiler corpus 是 Stage 0 的回归边界。每个样例必须有稳定输入、预期输出或预期诊断；新增语言特性必须先补 corpus，再进入 parser、typechecker、MIR 或 backend 实现。Stage 0D 的 WASM smoke 当前覆盖 struct、enum、match、数组、字符串 byte 扫描、typed array builder、std.io 路径/诊断和 module graph 路径，并输出 artifact size。</p>
     <table>
       <thead>
         <tr>

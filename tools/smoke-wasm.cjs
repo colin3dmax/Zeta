@@ -92,6 +92,13 @@ fn main() -> Int {
   return values[0] + values[1] + values.len;
 }`;
 
+const ioPathDiagnosticProgram = `import std.io;
+
+fn main() -> String {
+  let path: String = path_join("src", "main.zeta");
+  return diagnostic_format("LEX_BAD_CHAR", 3, 5, path_basename(path));
+}`;
+
 const checks = [
   ["run", "fn main() -> Int { return 40 + 2; }", "42"],
   ["run", "struct User { name: String, age: Int, } fn main() -> Int { let user: User = User { name: \"Ada\", age: 42 }; return user.age; }", "42"],
@@ -99,6 +106,7 @@ const checks = [
   ["run", arrayProgram, "9"],
   ["run", stringScanProgram, "122"],
   ["run", arrayBuilderProgram, "9"],
+  ["run", ioPathDiagnosticProgram, "LEX_BAD_CHAR at 3:5: main.zeta"],
   ["check", "fn main() -> Bool { return true && !false; }", "ok"],
   ["check-module-graph", "// file: main.zeta\nmodule demo.app;\nimport demo.math;\nfn main() -> Int { return answer(); }\n// file: math.zeta\nmodule demo.math;\nexport fn answer() -> Int { return 42; }\n", "ok"],
 ];

@@ -4,7 +4,7 @@
   import PlaygroundSection from "./PlaygroundSection.svelte";
 
   const keywords = new Set(["module", "import", "as", "export", "fn", "let", "mut", "return", "break", "continue", "if", "else", "while", "match", "struct", "enum"]);
-  const types = new Set(["Int", "String", "Bool", "IntArray", "StringArray", "BoolArray"]);
+  const types = new Set(["Int", "String", "Bool", "IntArray", "StringArray", "BoolArray", "ResultString"]);
   const commands = [":help", ":api", ":topics", ":examples", ":doc", ":complete", ":quit"];
   const topics = [
     "getting-started",
@@ -43,13 +43,17 @@
     "string_array_empty",
     "string_array_push",
     "bool_array_empty",
-    "bool_array_push"
+    "bool_array_push",
+    "file_read_to_string",
+    "path_join",
+    "path_basename",
+    "diagnostic_format"
   ];
   const docs = {
     "getting-started": "从表达式开始：输入 40 + 2 可以直接执行；使用 let 声明局部绑定；需要重新赋值时使用 let mut；if/while 条件可以使用比较和布尔逻辑表达式。",
     tutorial: "推荐路径：表达式 -> let/let mut -> 比较/布尔逻辑/控制流 -> fn -> struct 字面量/字段访问 -> enum 变体 -> match -> check/run -> Playground/REPL。",
-    api: "Stage 0 API 覆盖 Int、String、Bool、IntArray/StringArray/BoolArray、std.core 字符串 byte 扫描和 typed array builder、module/import/import alias、std.core/std.io、fn、let/let mut、赋值、比较、布尔逻辑、数组字面量/下标/.len、return、if/while/break/continue、struct 字面量、字段访问、enum 变体和 match。",
-    std: "std 是 Stage 0 标准 API 边界。当前 resolver 接受 import std.core; 和 import std.io;，未知标准库路径会报错；具体 IO 函数在后续权限模型确定后接入。",
+    api: "Stage 0 API 覆盖 Int、String、Bool、IntArray/StringArray/BoolArray、std.core 字符串 byte 扫描和 typed array builder、std.io 文件读取/路径/诊断格式化、module/import/import alias、std.core/std.io、fn、let/let mut、赋值、比较、布尔逻辑、数组字面量/下标/.len、return、if/while/break/continue、struct 字面量、字段访问、enum 变体和 match。",
+    std: "std 是 Stage 0 标准 API 边界。std.core 提供字符串 byte 扫描和 typed array builder；std.io 提供 ResultString、file_read_to_string、path_join、path_basename 和 diagnostic_format。wasm 中文件读取会返回 ResultString.Err。",
     playground: "Playground 通过 zeta.wasm 运行真实编译器前端，支持 AST、检查和运行。",
     module: "module 声明当前源码模块，例如 module demo.core;",
     import: "import 引入模块路径。多文件模块可写 import demo.math as math; 然后调用 math.answer();",
@@ -82,7 +86,11 @@
     string_array_empty: "std.core 内建函数，创建空 StringArray。",
     string_array_push: "std.core 内建函数，返回追加一个 String 后的新 StringArray。",
     bool_array_empty: "std.core 内建函数，创建空 BoolArray。",
-    bool_array_push: "std.core 内建函数，返回追加一个 Bool 后的新 BoolArray。"
+    bool_array_push: "std.core 内建函数，返回追加一个 Bool 后的新 BoolArray。",
+    file_read_to_string: "std.io 内建函数，读取文件并返回 ResultString.Ok(text) 或 ResultString.Err(message)。",
+    path_join: "std.io 内建函数，按需要用斜杠拼接两个路径片段。",
+    path_basename: "std.io 内建函数，返回路径最后的文件名片段。",
+    diagnostic_format: "std.io 内建函数，格式化 code、line、column 和 message 为稳定诊断字符串。"
   };
 
   const navItems = [
@@ -224,6 +232,12 @@ fn main() -> Int {
   values = int_array_push(values, 6);
   return values[0] + values[1] + values.len;
 }`,
+    ioPathDiagnostic: `import std.io;
+
+fn main() -> String {
+  let path: String = path_join("src", "main.zeta");
+  return diagnostic_format("LEX_BAD_CHAR", 3, 5, path_basename(path));
+}`,
     modules: `// file: main.zeta
 module demo.app;
 import demo.math;
@@ -304,6 +318,7 @@ export fn answer() -> Int {
     { name: "数组字面量 / 下标 / len", mode: "run", example: "arrays", expected: "9" },
     { name: "std.core 字符串扫描", mode: "run", example: "stringScan", expected: "122" },
     { name: "std.core typed array builder", mode: "run", example: "arrayBuilder", expected: "9" },
+    { name: "std.io 路径/诊断", mode: "run", example: "ioPathDiagnostic", expected: "LEX_BAD_CHAR at 3:5: main.zeta" },
     { name: "let mut / 赋值", mode: "run", example: "bindings", expected: "42" },
     { name: "函数调用", mode: "run", example: "functions", expected: "42" },
     { name: "if / while", mode: "run", example: "control", expected: "42" },
@@ -486,11 +501,11 @@ export fn answer() -> Int {
   }
 
   function replExamples() {
-    return ["40 + 2", "1 + 1 == 2", "true && !false", "let mut count: Int = 0;", "count = count + 1;", "fn main() -> Int { let values: IntArray = [2, 4, 6]; return values[0] + values.len; }", "import std.core; fn main() -> Int { return string_len(\"zeta\") + string_byte_at(\"A9\", 1); }", "import std.core; fn main() -> Int { let values: IntArray = int_array_push(int_array_empty(), 2); return values[0]; }", "fn main() -> Int { if true && !false { return 42; } return 0; }", "module demo.core;", ":doc int_array_push"].join("\n");
+    return ["40 + 2", "1 + 1 == 2", "true && !false", "let mut count: Int = 0;", "count = count + 1;", "fn main() -> Int { let values: IntArray = [2, 4, 6]; return values[0] + values.len; }", "import std.core; fn main() -> Int { return string_len(\"zeta\") + string_byte_at(\"A9\", 1); }", "import std.core; fn main() -> Int { let values: IntArray = int_array_push(int_array_empty(), 2); return values[0]; }", "import std.io; fn main() -> String { return diagnostic_format(\"LEX\", 1, 2, path_basename(path_join(\"src\", \"main.zeta\"))); }", "fn main() -> Int { if true && !false { return 42; } return 0; }", "module demo.core;", ":doc int_array_push"].join("\n");
   }
 
   function replApi() {
-    return "Zeta Stage 0 API\nInt/String/Bool/IntArray/StringArray/BoolArray\nstd.core: string_len/string_byte_at/string_byte_slice/ascii_is_digit/ascii_is_alpha/ascii_is_alnum/ascii_is_whitespace/int_array_empty/int_array_push/string_array_empty/string_array_push/bool_array_empty/bool_array_push\nmodule/import/import alias/std.core/std.io/fn/let/let mut/assignment/comparison/boolean logic/array literals/index/.len/return/if/while/break/continue/struct literal/field access/enum variants/match\nstd: 当前可导入 std.core 和 std.io；未知标准库路径会被 resolver 拒绝。";
+    return "Zeta Stage 0 API\nInt/String/Bool/IntArray/StringArray/BoolArray/ResultString\nstd.core: string_len/string_byte_at/string_byte_slice/ascii_is_digit/ascii_is_alpha/ascii_is_alnum/ascii_is_whitespace/int_array_empty/int_array_push/string_array_empty/string_array_push/bool_array_empty/bool_array_push\nstd.io: file_read_to_string/path_join/path_basename/diagnostic_format\nmodule/import/import alias/std.core/std.io/fn/let/let mut/assignment/comparison/boolean logic/array literals/index/.len/return/if/while/break/continue/struct literal/field access/enum variants/match\nstd: 当前可导入 std.core 和 std.io；未知标准库路径会被 resolver 拒绝。";
   }
 
   async function submitRepl() {

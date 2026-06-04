@@ -179,6 +179,16 @@ fn main() -&gt; Int {
 }</code></pre>
     <pre><code>cargo run -- run testdata/run_string_scan.zeta</code></pre>
 
+    <h2 id="io-path-diagnostic">文件、路径和诊断</h2>
+    <p><code>std.io</code> 提供自举编译器读取源码、处理路径和格式化诊断所需的最小能力：<code>file_read_to_string</code> 返回 <code>ResultString</code>，<code>path_join</code> / <code>path_basename</code> 处理简单路径，<code>diagnostic_format</code> 生成稳定诊断文本。wasm 目标中的文件读取会返回 <code>ResultString.Err</code>。</p>
+    <pre><code>import std.io;
+
+fn main() -&gt; String {
+  let path: String = path_join("src", "main.zeta");
+  return diagnostic_format("LEX_BAD_CHAR", 3, 5, path_basename(path));
+}</code></pre>
+    <pre><code>cargo run -- run testdata/run_io_path_diagnostic.zeta</code></pre>
+
     <h2 id="match">标量 match</h2>
     <p><code>match</code> 当前支持 <code>Int</code>、<code>String</code>、<code>Bool</code> 字面量模式和 <code>_</code> 通配模式，分支体可以直接 <code>return</code>。</p>
     <pre><code>fn main() -&gt; Int {

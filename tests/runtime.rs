@@ -69,6 +69,37 @@ fn run_executes_typed_array_builder_builtins() {
 }
 
 #[test]
+fn run_executes_std_io_path_and_diagnostic_builtins() {
+    let value = zeta::run_source(include_str!("../testdata/run_io_path_diagnostic.zeta"))
+        .expect("program should run");
+    assert_eq!(value.to_string(), "LEX_BAD_CHAR at 3:5: main.zeta");
+}
+
+#[test]
+fn run_executes_std_io_file_read_to_string() {
+    let path = std::env::temp_dir().join(format!("zeta-io-{}.txt", std::process::id()));
+    std::fs::write(&path, "hello from zeta").expect("temp file should write");
+    let source = format!(
+        r#"
+import std.io;
+
+fn main() -> String {{
+  let result: ResultString = file_read_to_string("{}");
+  match result {{
+    ResultString.Ok(text) -> {{ return text; }},
+    ResultString.Err(message) -> {{ return message; }},
+  }}
+  return "missing";
+}}
+"#,
+        path.display()
+    );
+    let value = zeta::run_source(&source).expect("program should run");
+    assert_eq!(value.to_string(), "hello from zeta");
+    std::fs::remove_file(path).expect("temp file should remove");
+}
+
+#[test]
 fn run_executes_scalar_match() {
     let value =
         zeta::run_source(include_str!("../testdata/run_match.zeta")).expect("program should run");

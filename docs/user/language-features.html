@@ -211,6 +211,16 @@ fn main() -&gt; Int {
     <p>当前刻意不引入 <code>Char</code>、<code>Byte</code> 或 Unicode iterator；完整 Unicode 文本处理会在更成熟的标准库阶段单独设计。</p>
     <p><a class="button secondary" href="#online-testing" data-zeta-example="stringScan">在本页运行字符串扫描示例</a></p>
 
+    <h2 id="io-path-diagnostic">std.io 文件、路径和诊断</h2>
+    <p>导入 <code>std.io</code> 后，可以使用自举编译器需要的最小 IO 基础：<code>file_read_to_string</code> 读取源码文件并返回 <code>ResultString.Ok(text)</code> 或 <code>ResultString.Err(message)</code>；<code>path_join</code> 和 <code>path_basename</code> 处理简单路径片段；<code>diagnostic_format</code> 生成稳定诊断字符串。wasm 目标不会访问宿主文件系统，文件读取会返回 <code>Err</code>。</p>
+    <pre><code>import std.io;
+
+fn main() -&gt; String {
+  let path: String = path_join("src", "main.zeta");
+  return diagnostic_format("LEX_BAD_CHAR", 3, 5, path_basename(path));
+}</code></pre>
+    <p><a class="button secondary" href="#online-testing" data-zeta-example="ioPathDiagnostic">在本页运行路径诊断示例</a></p>
+
     <h2 id="data-declarations">struct、enum 和 match</h2>
     <p><code>struct</code> 当前支持结构体字面量和字段访问，适合先表达稳定记录数据。<code>enum</code> 当前支持限定变体值，例如 <code>ResultTag.Ok</code>。<code>match</code> 可以对 <code>Int</code>、<code>String</code>、<code>Bool</code>、枚举变体和 <code>_</code> 通配模式执行分支。</p>
     <pre><code>struct User {

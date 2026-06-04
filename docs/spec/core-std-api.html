@@ -22,7 +22,7 @@
     <section class="hero">
       <p class="eyebrow">API Boundary</p>
       <h2>先冻结可验证边界，再扩展真实标准库能力。</h2>
-    <p>Zeta 不把尚未实现的标准库伪装成可用功能。Stage 0/1 先承诺最小命名空间边界：<code>std.core</code> 和 <code>std.io</code> 可以被导入；<code>std.core</code> 当前暴露整数专用的 <code>OptionInt</code> 和 <code>ResultInt</code> 枚举、自举 lexer/parser 所需的字符串 byte 扫描函数，以及 typed array builder；目录检查时，module graph 中存在的本地模块也可以被导入；其他路径必须被 resolver 明确拒绝。</p>
+    <p>Zeta 不把尚未实现的标准库伪装成可用功能。Stage 0/1 先承诺最小命名空间边界：<code>std.core</code> 和 <code>std.io</code> 可以被导入；<code>std.core</code> 当前暴露整数专用的 <code>OptionInt</code> 和 <code>ResultInt</code> 枚举、自举 lexer/parser 所需的字符串 byte 扫描函数，以及 typed array builder；<code>std.io</code> 当前暴露 <code>ResultString</code>、文件读取、路径和诊断格式化函数；目录检查时，module graph 中存在的本地模块也可以被导入；其他路径必须被 resolver 明确拒绝。</p>
     </section>
 
     <h2>设计决策</h2>
@@ -32,8 +32,8 @@
         <p><code>std.core</code> 是最小语言核心能力的稳定入口，用于承载无需平台权限的基础 API。当前 Stage 0 暴露 <code>OptionInt</code>、<code>ResultInt</code>、字符串 byte 扫描函数和 typed array builder，先服务 enum payload、match、lexer/parser 自举、token/span 列表和 MIR 运行闭环；泛型 <code>Option&lt;T&gt;</code> / <code>Result&lt;T, E&gt;</code> / <code>Vec&lt;T&gt;</code> 等到类型系统支持后再开放。</p>
       </section>
       <section>
-        <h3>std.io 先占位</h3>
-        <p><code>std.io</code> 代表需要平台能力的 IO 层。真实读写 API 要等权限、错误模型和目标平台契约确定后再进入。</p>
+        <h3>std.io 保持受控</h3>
+        <p><code>std.io</code> 代表需要平台能力的 IO 层。当前只开放自举前端需要的 <code>file_read_to_string</code>、<code>path_join</code>、<code>path_basename</code> 和 <code>diagnostic_format</code>；文件读取用 <code>ResultString</code> 表达成功/失败，wasm 目标会返回 <code>ResultString.Err</code>。</p>
       </section>
       <section>
         <h3>未知路径必须失败</h3>
@@ -59,7 +59,7 @@
         <tr>
           <td><code>std.io</code></td>
           <td>可导入</td>
-          <td>标准 IO API 边界，当前用于语法、resolver 和文档闭环。</td>
+          <td>标准 IO API 边界，当前提供 <code>ResultString</code>、文件读取、路径拼接/取名和诊断格式化。</td>
         </tr>
         <tr>
           <td>本地 module graph</td>
@@ -70,6 +70,57 @@
           <td><code>std.*</code> 其他路径或缺失本地模块</td>
           <td>拒绝</td>
           <td>报告 <code>RESOLVE_UNKNOWN_IMPORT</code>，等对应 API 设计通过后再开放。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>std.io 数据类型</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>类型</th>
+          <th>定义</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>ResultString</code></td>
+          <td><code>Ok(String)</code> / <code>Err(String)</code></td>
+          <td>Stage 0 文件读取结果，用于在没有泛型 <code>Result&lt;T, E&gt;</code> 前表达源码读取成功或错误消息。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>std.io 函数</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>函数</th>
+          <th>签名</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>file_read_to_string</code></td>
+          <td><code>(String) -&gt; ResultString</code></td>
+          <td>原生运行时读取文件内容；读取失败返回 <code>Err(message)</code>。wasm 目标不访问宿主文件系统，返回 <code>Err</code>。</td>
+        </tr>
+        <tr>
+          <td><code>path_join</code></td>
+          <td><code>(String, String) -&gt; String</code></td>
+          <td>按需要用斜杠拼接两个路径片段。</td>
+        </tr>
+        <tr>
+          <td><code>path_basename</code></td>
+          <td><code>(String) -&gt; String</code></td>
+          <td>返回路径最后的文件名片段。</td>
+        </tr>
+        <tr>
+          <td><code>diagnostic_format</code></td>
+          <td><code>(String, Int, Int, String) -&gt; String</code></td>
+          <td>生成稳定诊断字符串：<code>CODE at line:column: message</code>。</td>
         </tr>
       </tbody>
     </table>
@@ -187,6 +238,12 @@ fn main() -&gt; Int {
     return string_len(text);
   }
   return 0;
+}</code></pre>
+    <pre><code>import std.io;
+
+fn main() -&gt; String {
+  let path: String = path_join("src", "main.zeta");
+  return diagnostic_format("LEX_BAD_CHAR", 3, 5, path_basename(path));
 }</code></pre>
     <pre><code>import std.net;
 

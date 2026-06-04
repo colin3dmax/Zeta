@@ -160,6 +160,41 @@ fn main() -> Int {
 }
 
 #[test]
+fn check_accepts_std_io_builtins_and_result_string() {
+    zeta::check_source(
+        r#"
+import std.io;
+
+fn main() -> String {
+  let path: String = path_join("src", "main.zeta");
+  let diag: String = diagnostic_format("IO", 1, 2, path_basename(path));
+  let result: ResultString = file_read_to_string(path);
+  match result {
+    ResultString.Ok(text) -> { return text; },
+    ResultString.Err(message) -> { return diag; },
+  }
+  return "missing";
+}
+"#,
+    )
+    .expect("std.io builtins should typecheck");
+}
+
+#[test]
+fn check_rejects_std_io_argument_type_mismatch() {
+    let source = r#"
+import std.io;
+
+fn main() -> String {
+  return path_join("src", 1);
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("std.io type mismatch should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_CALL_ARGUMENT");
+    assert_eq!(diagnostics[0].span, span_of(source, "1"));
+}
+
+#[test]
 fn check_rejects_typed_array_builder_element_type_mismatch() {
     let source = r#"
 import std.core;

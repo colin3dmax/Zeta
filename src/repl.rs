@@ -290,6 +290,26 @@ pub const TOPICS: &[ReplTopic] = &[
         summary: "std.core builtin that returns a BoolArray with one Bool appended.",
         example: "import std.core; fn main() -> Bool { let values: BoolArray = bool_array_push(bool_array_empty(), true); return values[0]; }",
     },
+    ReplTopic {
+        name: "file_read_to_string",
+        summary: "std.io builtin that reads a file into ResultString.Ok(text) or ResultString.Err(message).",
+        example: "import std.io; fn main() -> ResultString { return file_read_to_string(\"src/main.zeta\"); }",
+    },
+    ReplTopic {
+        name: "path_join",
+        summary: "std.io builtin that joins two path fragments with a slash when needed.",
+        example: "import std.io; fn main() -> String { return path_join(\"src\", \"main.zeta\"); }",
+    },
+    ReplTopic {
+        name: "path_basename",
+        summary: "std.io builtin that returns the final file name segment from a path.",
+        example: "import std.io; fn main() -> String { return path_basename(\"src/main.zeta\"); }",
+    },
+    ReplTopic {
+        name: "diagnostic_format",
+        summary: "std.io builtin that formats a stable diagnostic line from code, line, column, and message.",
+        example: "import std.io; fn main() -> String { return diagnostic_format(\"LEX\", 1, 2, \"bad char\"); }",
+    },
 ];
 
 pub fn complete(prefix: &str) -> Vec<&'static str> {
@@ -305,7 +325,15 @@ pub fn complete(prefix: &str) -> Vec<&'static str> {
         .filter(|name| name.starts_with(prefix))
         .collect::<Vec<_>>();
     matches.extend(TOPICS.iter().map(|topic| topic.name));
-    matches.extend(["std", "std.io", "std.core", "ResultTag.Ok", "ResultTag.Err"]);
+    matches.extend([
+        "std",
+        "std.io",
+        "std.core",
+        "ResultTag.Ok",
+        "ResultTag.Err",
+        "ResultString.Ok",
+        "ResultString.Err",
+    ]);
     matches.retain(|name| name.starts_with(prefix));
     matches.sort_unstable();
     matches.dedup();
@@ -462,6 +490,7 @@ pub fn examples_text_colored_lang(language: Language) -> String {
             ("数组", "fn main() -> Int { let values: IntArray = [2, 4, 6]; return values[0] + values.len; }"),
             ("字符串扫描", "import std.core; fn main() -> Int { return string_len(\"zeta\") + string_byte_at(\"A9\", 1); }"),
             ("数组构造", "import std.core; fn main() -> Int { let values: IntArray = int_array_push(int_array_empty(), 2); return values[0]; }"),
+            ("路径诊断", "import std.io; fn main() -> String { return diagnostic_format(\"LEX\", 1, 2, path_basename(path_join(\"src\", \"main.zeta\"))); }"),
             ("函数", "fn main() -> Int { return 42; }"),
             ("模块", "module demo.core;"),
             ("文档", ":doc let"),
@@ -476,6 +505,7 @@ pub fn examples_text_colored_lang(language: Language) -> String {
             ("Array", "fn main() -> Int { let values: IntArray = [2, 4, 6]; return values[0] + values.len; }"),
             ("String scan", "import std.core; fn main() -> Int { return string_len(\"zeta\") + string_byte_at(\"A9\", 1); }"),
             ("Array builder", "import std.core; fn main() -> Int { let values: IntArray = int_array_push(int_array_empty(), 2); return values[0]; }"),
+            ("Path diagnostic", "import std.io; fn main() -> String { return diagnostic_format(\"LEX\", 1, 2, path_basename(path_join(\"src\", \"main.zeta\"))); }"),
             ("Function", "fn main() -> Int { return 42; }"),
             ("Module", "module demo.core;"),
             ("Doc", ":doc let"),
@@ -511,10 +541,10 @@ Zeta Stage 0 API
   {}  字符串标量
   {}  用于 if/while 条件的布尔标量
   {}  同质数组，支持字面量、Int 下标和 .len
-  {}  标准 API 边界：当前可导入 std.core 和 std.io；std.core 提供字符串 byte 扫描和 typed array builder 函数
+  {}  标准 API 边界：std.core 提供字符串 byte 扫描和 typed array builder；std.io 提供 ResultString、文件读取、路径和诊断格式化函数
 
 语言表面
-  模块/导入、std.core/std.io、函数、绑定/可变绑定、赋值、比较、布尔逻辑、数组字面量/下标/.len、字符串 byte 扫描、typed array builder、返回、if/while、struct、enum 变体、match
+  模块/导入、std.core/std.io、函数、绑定/可变绑定、赋值、比较、布尔逻辑、数组字面量/下标/.len、字符串 byte 扫描、typed array builder、文件/路径/诊断 IO、返回、if/while、struct、enum 变体、match
 
 试试
   {}
@@ -542,10 +572,10 @@ Zeta Stage 0 API
   {}  scalar string values
   {}  scalar boolean values for control flow
   {}  homogeneous arrays with literals, Int indexing, and .len
-  {}  standard API boundary: std.core and std.io imports are accepted; std.core includes string byte scan and typed array builder builtins
+  {}  standard API boundary: std.core includes string byte scan and typed array builder; std.io includes ResultString, file read, path, and diagnostic formatting builtins
 
 Language surface
-  module/import, std.core/std.io, fn, let/let mut, assignment, comparison, boolean logic, array literals/index/.len, string byte scan, typed array builder, return, if/else, while, struct, enum variants, match
+  module/import, std.core/std.io, fn, let/let mut, assignment, comparison, boolean logic, array literals/index/.len, string byte scan, typed array builder, file/path/diagnostic IO, return, if/else, while, struct, enum variants, match
 
 Try
   {}
@@ -593,7 +623,7 @@ fn topic_summary(topic: &ReplTopic, language: Language) -> &'static str {
         "getting-started" => "从表达式、let/let mut 绑定、函数、run/check 和在线 Playground 开始。",
         "tutorial" => "推荐学习路径：表达式、函数、控制流、数据类型和工具链。",
         "api" => "在终端里浏览 Stage 0 内置语言能力和标准 API 表面。",
-        "std" => "Stage 0 标准 API 边界；resolver 当前接受 import std.core; 和 import std.io;，未知标准库路径会报错。",
+        "std" => "Stage 0 标准 API 边界；std.core 提供字符串 byte 扫描和 typed array builder，std.io 提供 ResultString、文件读取、路径和诊断格式化函数。",
         "playground" => "官网 Playground 运行编译为 WebAssembly 的真实 Zeta 编译器前端。",
         "module" => "声明当前源码模块。",
         "import" => "引入另一个模块路径；module graph 程序中可用 as 创建本地别名。",
@@ -627,6 +657,10 @@ fn topic_summary(topic: &ReplTopic, language: Language) -> &'static str {
         "string_array_push" => "std.core 内建函数，返回追加一个 String 后的新 StringArray。",
         "bool_array_empty" => "std.core 内建函数，创建空 BoolArray。",
         "bool_array_push" => "std.core 内建函数，返回追加一个 Bool 后的新 BoolArray。",
+        "file_read_to_string" => "std.io 内建函数，读取文件并返回 ResultString.Ok(text) 或 ResultString.Err(message)。wasm 目标会返回 Err。",
+        "path_join" => "std.io 内建函数，按需要用斜杠拼接两个路径片段。",
+        "path_basename" => "std.io 内建函数，返回路径最后的文件名片段。",
+        "diagnostic_format" => "std.io 内建函数，格式化 code、line、column 和 message 为稳定诊断字符串。",
         _ => topic.summary,
     }
 }

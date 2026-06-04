@@ -20,6 +20,7 @@ const TOPICS = [
   ["IntArray", "Homogeneous Int array. Use [..] literals, integer indexing, and .len.", "let values: IntArray = [2, 4, 6];"],
   ["StringArray", "Homogeneous String array. Use [..] literals, integer indexing, and .len.", "let names: StringArray = [\"Ada\", \"Zeta\"];"],
   ["BoolArray", "Homogeneous Bool array. Use [..] literals, integer indexing, and .len.", "let flags: BoolArray = [true, false];"],
+  ["ResultString", "std.io result enum for file reads: ResultString.Ok(text) or ResultString.Err(message).", "import std.io;\nfn main() -> ResultString { return file_read_to_string(\"src/main.zeta\"); }"],
   ["string_len", "std.core builtin returning UTF-8 byte length for a String.", "import std.core;\nfn main() -> Int { return string_len(\"zeta\"); }"],
   ["string_byte_at", "std.core builtin returning the byte at an Int index as Int.", "import std.core;\nfn main() -> Int { return string_byte_at(\"A9\", 1); }"],
   ["string_byte_slice", "std.core builtin returning a String slice by byte start and byte length.", "import std.core;\nfn main() -> String { return string_byte_slice(\"zeta\", 1, 2); }"],
@@ -32,7 +33,11 @@ const TOPICS = [
   ["string_array_empty", "std.core builtin that creates an empty StringArray.", "import std.core;\nfn main() -> Int { let values: StringArray = string_array_empty(); return values.len; }"],
   ["string_array_push", "std.core builtin that returns a StringArray with one String appended.", "import std.core;\nfn main() -> Int { let values: StringArray = string_array_push(string_array_empty(), \"zeta\"); return values.len; }"],
   ["bool_array_empty", "std.core builtin that creates an empty BoolArray.", "import std.core;\nfn main() -> Int { let values: BoolArray = bool_array_empty(); return values.len; }"],
-  ["bool_array_push", "std.core builtin that returns a BoolArray with one Bool appended.", "import std.core;\nfn main() -> Bool { let values: BoolArray = bool_array_push(bool_array_empty(), true); return values[0]; }"]
+  ["bool_array_push", "std.core builtin that returns a BoolArray with one Bool appended.", "import std.core;\nfn main() -> Bool { let values: BoolArray = bool_array_push(bool_array_empty(), true); return values[0]; }"],
+  ["file_read_to_string", "std.io builtin that reads a file into ResultString.Ok(text) or ResultString.Err(message).", "import std.io;\nfn main() -> ResultString { return file_read_to_string(\"src/main.zeta\"); }"],
+  ["path_join", "std.io builtin that joins two path fragments with a slash when needed.", "import std.io;\nfn main() -> String { return path_join(\"src\", \"main.zeta\"); }"],
+  ["path_basename", "std.io builtin that returns the final file name segment from a path.", "import std.io;\nfn main() -> String { return path_basename(\"src/main.zeta\"); }"],
+  ["diagnostic_format", "std.io builtin that formats code, line, column, and message into a stable diagnostic line.", "import std.io;\nfn main() -> String { return diagnostic_format(\"LEX\", 1, 2, \"bad char\"); }"]
 ];
 
 function activate(context) {
@@ -69,10 +74,10 @@ function activate(context) {
 }
 
 function completionKind(name) {
-  if (["Int", "String", "Bool", "IntArray", "StringArray", "BoolArray"].includes(name)) {
+  if (["Int", "String", "Bool", "IntArray", "StringArray", "BoolArray", "ResultString"].includes(name)) {
     return vscode.CompletionItemKind.TypeParameter;
   }
-  if (["fn", "string_len", "string_byte_at", "string_byte_slice", "ascii_is_digit", "ascii_is_alpha", "ascii_is_alnum", "ascii_is_whitespace", "int_array_empty", "int_array_push", "string_array_empty", "string_array_push", "bool_array_empty", "bool_array_push"].includes(name)) {
+  if (["fn", "string_len", "string_byte_at", "string_byte_slice", "ascii_is_digit", "ascii_is_alpha", "ascii_is_alnum", "ascii_is_whitespace", "int_array_empty", "int_array_push", "string_array_empty", "string_array_push", "bool_array_empty", "bool_array_push", "file_read_to_string", "path_join", "path_basename", "diagnostic_format"].includes(name)) {
     return vscode.CompletionItemKind.Function;
   }
   return vscode.CompletionItemKind.Keyword;

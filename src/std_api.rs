@@ -48,6 +48,20 @@ const STD_CORE_ENUMS: &[StandardEnum] = &[
     },
 ];
 
+const STD_IO_ENUMS: &[StandardEnum] = &[StandardEnum {
+    name: "ResultString",
+    variants: &[
+        StandardEnumVariant {
+            name: "Ok",
+            payload_type: Some("String"),
+        },
+        StandardEnumVariant {
+            name: "Err",
+            payload_type: Some("String"),
+        },
+    ],
+}];
+
 const STD_CORE_FUNCTIONS: &[StandardFunction] = &[
     StandardFunction {
         name: "string_len",
@@ -116,6 +130,29 @@ const STD_CORE_FUNCTIONS: &[StandardFunction] = &[
     },
 ];
 
+const STD_IO_FUNCTIONS: &[StandardFunction] = &[
+    StandardFunction {
+        name: "file_read_to_string",
+        params: &["String"],
+        return_type: Some("ResultString"),
+    },
+    StandardFunction {
+        name: "path_join",
+        params: &["String", "String"],
+        return_type: Some("String"),
+    },
+    StandardFunction {
+        name: "path_basename",
+        params: &["String"],
+        return_type: Some("String"),
+    },
+    StandardFunction {
+        name: "diagnostic_format",
+        params: &["String", "Int", "Int", "String"],
+        return_type: Some("String"),
+    },
+];
+
 pub fn is_standard_import(path: &[String]) -> bool {
     STANDARD_IMPORTS.iter().any(|candidate| {
         candidate
@@ -135,10 +172,24 @@ pub fn is_std_core_import(path: &[String]) -> bool {
         .eq(path.iter().map(String::as_str))
 }
 
+pub fn is_std_io_import(path: &[String]) -> bool {
+    ["std", "io"]
+        .into_iter()
+        .eq(path.iter().map(String::as_str))
+}
+
 pub fn core_enums() -> &'static [StandardEnum] {
     STD_CORE_ENUMS
 }
 
+pub fn io_enums() -> &'static [StandardEnum] {
+    STD_IO_ENUMS
+}
+
 pub fn core_functions() -> &'static [StandardFunction] {
     STD_CORE_FUNCTIONS
+}
+
+pub fn io_functions() -> &'static [StandardFunction] {
+    STD_IO_FUNCTIONS
 }

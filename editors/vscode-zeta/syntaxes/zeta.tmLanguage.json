@@ -55,7 +55,7 @@
       "patterns": [
         {
           "name": "support.type.zeta",
-          "match": "\\b(?:Bool|Int|String|IntArray|StringArray|BoolArray|Option|Result)\\b"
+          "match": "\\b(?:Bool|Int|String|IntArray|StringArray|BoolArray|ResultString|Option|Result)\\b"
         },
         {
           "name": "entity.name.type.zeta",

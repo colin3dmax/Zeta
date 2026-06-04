@@ -80,5 +80,21 @@
       "}"
     ],
     "description": "Branch with a Bool logic condition"
+  },
+  "read file": {
+    "prefix": "readfile",
+    "body": [
+      "import std.io;",
+      "",
+      "fn ${1:main}() -> String {",
+      "  let result: ResultString = file_read_to_string(${2:\"src/main.zeta\"});",
+      "  match result {",
+      "    ResultString.Ok(text) -> { return text; },",
+      "    ResultString.Err(message) -> { return message; },",
+      "  }",
+      "  return \"\";",
+      "}"
+    ],
+    "description": "Read a file through std.io ResultString"
   }
 }

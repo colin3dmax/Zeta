@@ -579,11 +579,63 @@ fn standard_enum_variants(module: &Module) -> Vec<(String, HashSet<String>)> {
         Item::Import { path, .. } => std_api::is_std_core_import(path),
         _ => false,
     });
-    if !imports_std_core {
-        return Vec::new();
-    }
+    let imports_std_io = module.items.iter().any(|item| match item {
+        Item::Import { path, .. } => std_api::is_std_io_import(path),
+        _ => false,
+    });
 
-    std_api::core_enums()
+    let mut variants = Vec::new();
+    if imports_std_core {
+        variants.extend(standard_enum_variant_names(std_api::core_enums()));
+    }
+    if imports_std_io {
+        variants.extend(standard_enum_variant_names(std_api::io_enums()));
+    }
+    variants
+}
+
+fn standard_top_level_names(module: &Module) -> HashSet<String> {
+    let imports_std_core = module.items.iter().any(|item| match item {
+        Item::Import { path, .. } => std_api::is_std_core_import(path),
+        _ => false,
+    });
+    let imports_std_io = module.items.iter().any(|item| match item {
+        Item::Import { path, .. } => std_api::is_std_io_import(path),
+        _ => false,
+    });
+
+    let mut names = HashSet::new();
+    if imports_std_core {
+        names.extend(standard_enum_names(std_api::core_enums()));
+    }
+    if imports_std_io {
+        names.extend(standard_enum_names(std_api::io_enums()));
+    }
+    names
+}
+
+fn standard_function_names(module: &Module) -> HashSet<String> {
+    let imports_std_core = module.items.iter().any(|item| match item {
+        Item::Import { path, .. } => std_api::is_std_core_import(path),
+        _ => false,
+    });
+    let imports_std_io = module.items.iter().any(|item| match item {
+        Item::Import { path, .. } => std_api::is_std_io_import(path),
+        _ => false,
+    });
+
+    let mut names = HashSet::new();
+    if imports_std_core {
+        names.extend(standard_function_name_set(std_api::core_functions()));
+    }
+    if imports_std_io {
+        names.extend(standard_function_name_set(std_api::io_functions()));
+    }
+    names
+}
+
+fn standard_enum_variant_names(enums: &[std_api::StandardEnum]) -> Vec<(String, HashSet<String>)> {
+    enums
         .iter()
         .map(|standard_enum| {
             (
@@ -598,31 +650,15 @@ fn standard_enum_variants(module: &Module) -> Vec<(String, HashSet<String>)> {
         .collect()
 }
 
-fn standard_top_level_names(module: &Module) -> HashSet<String> {
-    let imports_std_core = module.items.iter().any(|item| match item {
-        Item::Import { path, .. } => std_api::is_std_core_import(path),
-        _ => false,
-    });
-    if !imports_std_core {
-        return HashSet::new();
-    }
-
-    std_api::core_enums()
+fn standard_enum_names(enums: &[std_api::StandardEnum]) -> HashSet<String> {
+    enums
         .iter()
         .map(|standard_enum| standard_enum.name.to_string())
         .collect()
 }
 
-fn standard_function_names(module: &Module) -> HashSet<String> {
-    let imports_std_core = module.items.iter().any(|item| match item {
-        Item::Import { path, .. } => std_api::is_std_core_import(path),
-        _ => false,
-    });
-    if !imports_std_core {
-        return HashSet::new();
-    }
-
-    std_api::core_functions()
+fn standard_function_name_set(functions: &[std_api::StandardFunction]) -> HashSet<String> {
+    functions
         .iter()
         .map(|function| function.name.to_string())
         .collect()

@@ -1,0 +1,16 @@
+MirModule
+  enum ResultString variants=Err(String),Ok(String)
+  fn main -> String
+    block entry
+      local path: String mutability=immutable
+      _t0 = const String "src"
+      _t1 = const String "main.zeta"
+      _t2 = call path_join(_t0, _t1)
+      store path, _t2
+      _t3 = const String "LEX_BAD_CHAR"
+      _t4 = const Int 3
+      _t5 = const Int 5
+      _t6 = load path
+      _t7 = call path_basename(_t6)
+      _t8 = call diagnostic_format(_t3, _t4, _t5, _t7)
+      return _t8

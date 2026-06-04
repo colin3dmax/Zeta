@@ -6,8 +6,8 @@ VS Code syntax highlighting and snippets for Zeta.
 
 - `.zeta` file association.
 - TextMate syntax highlighting for modules, imports, functions, structs, enums, control flow, literals, comments, and operators.
-- Basic snippets for modules, functions, structs, enums, and local bindings.
-- Static completion and hover documentation for Stage 0 keywords and scalar types.
+- Basic snippets for modules, functions, structs, enums, local bindings, and std.io file reads.
+- Static completion and hover documentation for Stage 0 keywords, scalar/array/result types, and std.core/std.io functions.
 
 ## Local Development
 

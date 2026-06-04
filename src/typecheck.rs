@@ -245,11 +245,43 @@ pub fn standard_external_enums(module: &Module) -> Vec<ExternalEnum> {
         Item::Import { path, .. } => std_api::is_std_core_import(path),
         _ => false,
     });
-    if !imports_std_core {
-        return Vec::new();
-    }
+    let imports_std_io = module.items.iter().any(|item| match item {
+        Item::Import { path, .. } => std_api::is_std_io_import(path),
+        _ => false,
+    });
 
-    std_api::core_enums()
+    let mut enums = Vec::new();
+    if imports_std_core {
+        enums.extend(standard_enums("std.core", std_api::core_enums()));
+    }
+    if imports_std_io {
+        enums.extend(standard_enums("std.io", std_api::io_enums()));
+    }
+    enums
+}
+
+pub fn standard_external_functions(module: &Module) -> Vec<ExternalFunction> {
+    let imports_std_core = module.items.iter().any(|item| match item {
+        Item::Import { path, .. } => std_api::is_std_core_import(path),
+        _ => false,
+    });
+    let imports_std_io = module.items.iter().any(|item| match item {
+        Item::Import { path, .. } => std_api::is_std_io_import(path),
+        _ => false,
+    });
+
+    let mut functions = Vec::new();
+    if imports_std_core {
+        functions.extend(standard_functions("std.core", std_api::core_functions()));
+    }
+    if imports_std_io {
+        functions.extend(standard_functions("std.io", std_api::io_functions()));
+    }
+    functions
+}
+
+fn standard_enums(module_name: &str, enums: &[std_api::StandardEnum]) -> Vec<ExternalEnum> {
+    enums
         .iter()
         .map(|standard_enum| ExternalEnum {
             name: standard_enum.name.to_string(),
@@ -263,21 +295,16 @@ pub fn standard_external_enums(module: &Module) -> Vec<ExternalEnum> {
                     )
                 })
                 .collect(),
-            target_name: Some(format!("std.core.{}", standard_enum.name)),
+            target_name: Some(format!("{module_name}.{}", standard_enum.name)),
         })
         .collect()
 }
 
-pub fn standard_external_functions(module: &Module) -> Vec<ExternalFunction> {
-    let imports_std_core = module.items.iter().any(|item| match item {
-        Item::Import { path, .. } => std_api::is_std_core_import(path),
-        _ => false,
-    });
-    if !imports_std_core {
-        return Vec::new();
-    }
-
-    std_api::core_functions()
+fn standard_functions(
+    module_name: &str,
+    functions: &[std_api::StandardFunction],
+) -> Vec<ExternalFunction> {
+    functions
         .iter()
         .map(|function| ExternalFunction {
             name: function.name.to_string(),
@@ -287,7 +314,7 @@ pub fn standard_external_functions(module: &Module) -> Vec<ExternalFunction> {
                 .map(|param| param.to_string())
                 .collect(),
             return_type: function.return_type.map(str::to_string),
-            target_name: Some(format!("std.core.{}", function.name)),
+            target_name: Some(format!("{module_name}.{}", function.name)),
         })
         .collect()
 }

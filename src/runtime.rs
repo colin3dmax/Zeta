@@ -299,12 +299,12 @@ impl MirRuntime {
                 eval_unary(*op, value)
             }
             MirExpr::Call { callee, args } => {
-                if is_std_core_builtin(callee) {
+                if is_std_builtin(callee) {
                     let args = args
                         .iter()
                         .map(|arg| self.eval_expr(arg, locals))
                         .collect::<Result<Vec<_>, _>>()?;
-                    return eval_std_core_builtin(callee, args);
+                    return eval_std_builtin(callee, args);
                 }
                 let Some(function) = self.functions.get(callee).cloned() else {
                     return Err(runtime_error(
@@ -603,12 +603,12 @@ impl Runtime {
                 eval_unary(*op, value)
             }
             Expr::Call { callee, args, .. } => {
-                if is_std_core_builtin(callee) {
+                if is_std_builtin(callee) {
                     let args = args
                         .iter()
                         .map(|arg| self.eval_expr(arg, locals))
                         .collect::<Result<Vec<_>, _>>()?;
-                    return eval_std_core_builtin(callee, args);
+                    return eval_std_builtin(callee, args);
                 }
                 if let Some((enum_name, variant)) = callee.rsplit_once('.') {
                     if self
@@ -860,7 +860,7 @@ fn index_array_value(base: Value, index: Value) -> Result<Value, Diagnostic> {
     })
 }
 
-fn is_std_core_builtin(callee: &str) -> bool {
+fn is_std_builtin(callee: &str) -> bool {
     matches!(
         callee,
         "string_len"
@@ -876,10 +876,14 @@ fn is_std_core_builtin(callee: &str) -> bool {
             | "string_array_push"
             | "bool_array_empty"
             | "bool_array_push"
+            | "file_read_to_string"
+            | "path_join"
+            | "path_basename"
+            | "diagnostic_format"
     )
 }
 
-fn eval_std_core_builtin(callee: &str, args: Vec<Value>) -> Result<Value, Diagnostic> {
+fn eval_std_builtin(callee: &str, args: Vec<Value>) -> Result<Value, Diagnostic> {
     match callee {
         "string_len" => {
             let [value]: [Value; 1] = expect_arity(callee, args)?.try_into().ok().unwrap();
@@ -979,11 +983,125 @@ fn eval_std_core_builtin(callee: &str, args: Vec<Value>) -> Result<Value, Diagno
         "int_array_push" => eval_array_push(callee, args, "Int"),
         "string_array_push" => eval_array_push(callee, args, "String"),
         "bool_array_push" => eval_array_push(callee, args, "Bool"),
+        "file_read_to_string" => {
+            let [path]: [Value; 1] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            let Value::String(path) = path else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "file_read_to_string expects String",
+                ));
+            };
+            Ok(result_string_value(read_file_to_string(&path)))
+        }
+        "path_join" => {
+            let [left, right]: [Value; 2] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            let Value::String(left) = left else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "path_join left expects String",
+                ));
+            };
+            let Value::String(right) = right else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "path_join right expects String",
+                ));
+            };
+            Ok(Value::String(join_path(&left, &right)))
+        }
+        "path_basename" => {
+            let [path]: [Value; 1] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            let Value::String(path) = path else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "path_basename expects String",
+                ));
+            };
+            Ok(Value::String(path_basename(&path)))
+        }
+        "diagnostic_format" => {
+            let [code, line, column, message]: [Value; 4] =
+                expect_arity(callee, args)?.try_into().ok().unwrap();
+            let Value::String(code) = code else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "diagnostic_format code expects String",
+                ));
+            };
+            let Value::Int(line) = line else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "diagnostic_format line expects Int",
+                ));
+            };
+            let Value::Int(column) = column else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "diagnostic_format column expects Int",
+                ));
+            };
+            let Value::String(message) = message else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "diagnostic_format message expects String",
+                ));
+            };
+            Ok(Value::String(format!(
+                "{code} at {line}:{column}: {message}"
+            )))
+        }
         _ => Err(runtime_error(
             "RUNTIME_UNKNOWN_FUNCTION",
             format!("unknown function `{callee}`"),
         )),
     }
+}
+
+fn result_string_value(result: Result<String, String>) -> Value {
+    let (variant, payload) = match result {
+        Ok(value) => ("Ok", value),
+        Err(message) => ("Err", message),
+    };
+    Value::Enum {
+        ty: "ResultString".to_string(),
+        variant: variant.to_string(),
+        payload: Some(Box::new(Value::String(payload))),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_file_to_string(path: &str) -> Result<String, String> {
+    std::fs::read_to_string(path).map_err(|err| err.to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn read_file_to_string(_path: &str) -> Result<String, String> {
+    Err("file io unavailable on wasm32".to_string())
+}
+
+fn join_path(left: &str, right: &str) -> String {
+    if left.is_empty() {
+        return right.to_string();
+    }
+    if right.is_empty() {
+        return left.to_string();
+    }
+    if right.starts_with('/') || right.starts_with('\\') {
+        return right.to_string();
+    }
+    if left.ends_with('/') || left.ends_with('\\') {
+        format!("{left}{right}")
+    } else {
+        format!("{left}/{right}")
+    }
+}
+
+fn path_basename(path: &str) -> String {
+    path.trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("")
+        .to_string()
 }
 
 fn eval_array_push(

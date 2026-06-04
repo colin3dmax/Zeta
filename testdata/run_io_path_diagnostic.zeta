@@ -1,0 +1,6 @@
+import std.io;
+
+fn main() -> String {
+  let path: String = path_join("src", "main.zeta");
+  return diagnostic_format("LEX_BAD_CHAR", 3, 5, path_basename(path));
+}

@@ -1230,6 +1230,13 @@ impl<'a> MirVerifier<'a> {
             ),
             "bool_array_empty" => (&[][..], parse_mir_type("BoolArray")),
             "bool_array_push" => (&["BoolArray", "Bool"][..], parse_mir_type("BoolArray")),
+            "file_read_to_string" => (&["String"][..], parse_mir_type("ResultString")),
+            "path_join" => (&["String", "String"][..], parse_mir_type("String")),
+            "path_basename" => (&["String"][..], parse_mir_type("String")),
+            "diagnostic_format" => (
+                &["String", "Int", "Int", "String"][..],
+                parse_mir_type("String"),
+            ),
             _ => return None,
         };
         if args.len() != params.len() {
