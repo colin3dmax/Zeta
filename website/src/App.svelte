@@ -580,6 +580,22 @@ export fn answer() -> Int {
     replInputEl?.focus();
   }
 
+  function focusReplFromTerminalEvent(event) {
+    if (event.target?.closest?.(".terminal-completion")) return;
+    if (event.target?.closest?.(".terminal-input-row input")) return;
+    event.preventDefault();
+    replInputEl?.focus({ preventScroll: true });
+  }
+
+  function replTerminalFocus(node) {
+    node.addEventListener("pointerdown", focusReplFromTerminalEvent);
+    return {
+      destroy() {
+        node.removeEventListener("pointerdown", focusReplFromTerminalEvent);
+      }
+    };
+  }
+
   function loadPlaygroundExample(name) {
     const example = playgroundExamples[name] ?? playgroundExamples.overview;
     source = example;
@@ -737,7 +753,7 @@ python3 tools/check-vscode-extension.py</code></pre>
           <span class="window-title">Zeta Web REPL</span>
           <small class="window-status">docs · api · run</small>
         </div>
-        <div class="terminal-body">
+        <div class="terminal-body" use:replTerminalFocus>
           {#each replLines as line}
             <div class={`terminal-line ${line.kind}`}>
               {#if line.kind === "input"}<span class="prompt">zeta&gt;</span>{/if}

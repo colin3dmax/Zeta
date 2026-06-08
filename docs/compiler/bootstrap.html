@@ -240,7 +240,7 @@
     </table>
 
     <h2 id="corpus">最小 Compiler Corpus</h2>
-    <p>Compiler corpus 是 Stage 0 的回归边界。每个样例必须有稳定输入、预期输出或预期诊断；新增语言特性必须先补 corpus，再进入 parser、typechecker、MIR 或 backend 实现。Stage 0D 的 WASM smoke 当前覆盖 struct、enum、match、数组、字符串 byte 扫描、字符串构造、typed array builder、std.io 路径/诊断和 module graph 路径，并输出 artifact size。Stage 2 bootstrap harness 当前读取 <code>testdata/stage2_bootstrap/input.zeta</code>，并通过 Stage1 Zeta 前端种子输出稳定分数 <code>111</code> 和文本摘要 <code>fn=1;let=1;return=1</code>。</p>
+    <p>Compiler corpus 是 Stage 0 的回归边界。每个样例必须有稳定输入、预期输出或预期诊断；新增语言特性必须先补 corpus，再进入 parser、typechecker、MIR 或 backend 实现。Stage 0D 的 WASM smoke 当前覆盖 struct、enum、match、数组、字符串 byte 扫描、字符串构造、typed array builder、std.io 路径/诊断和 module graph 路径，并输出 artifact size。Stage 2 bootstrap harness 当前读取 <code>testdata/stage2_bootstrap/input.zeta</code>，并通过 Stage1 Zeta 前端种子输出稳定分数 <code>111</code>、文本摘要 <code>fn=1;let=1;return=1</code>、覆盖 Stage 0 关键字的 keyword summary、覆盖 Stage 0 符号的 symbol summary、覆盖 token class 的 summary、顶层 item kind summary、顶层 export summary、顶层 import summary、稳定顶层 item kind 文本 dump、基于 token lexeme 的 named item dump、函数参数/返回类型、struct 字段和 enum variant payload 的 signature dump，以及 Rust <code>ast-dump</code> 风格的顶层声明、最小函数体 <code>Let</code>/<code>Assign</code>/<code>Return</code>/<code>If</code>/<code>While</code>/<code>Break</code>/<code>Continue</code>/<code>Match</code>/<code>ExprStmt</code>、算术二元表达式、比较表达式、逻辑二元表达式、一元逻辑非/负号、简单/限定/嵌套函数调用表达式、数组/索引/结构体字段中的调用表达式和嵌套结构体字面量、字段访问/索引后缀表达式、数组字面量表达式、结构体字面量表达式和括号分组子集 dump。</p>
     <table>
       <thead>
         <tr>
@@ -283,7 +283,7 @@
         </tr>
         <tr>
           <td>自举模块</td>
-          <td>token、span、diagnostic、AST node、parser result、symbol table 的 Zeta 子集实现；当前种子已能用 Zeta 扫描 token kind 数组并产出稳定 <code>ast_dump_score</code> 和文本摘要。</td>
+          <td>token、span、diagnostic、AST node、parser result、symbol table 的 Zeta 子集实现；当前种子已能用 Zeta 扫描 token kind 数组和 token lexeme 文本，并产出稳定 <code>ast_dump_score</code>、文本摘要、Stage 0 关键字摘要、Stage 0 符号摘要、token class 摘要、顶层 item kind 摘要、顶层 export 摘要、顶层 import 摘要、顶层 item kind 文本 dump、带 module name、import path/alias、声明 name 和 exported flag 的 named item dump、函数参数/返回类型、struct 字段和 enum variant payload 的 signature dump，以及 Rust <code>ast-dump</code> 风格的顶层声明、最小函数体 <code>Let</code>/<code>Assign</code>/<code>Return</code>/<code>If</code>/<code>While</code>/<code>Break</code>/<code>Continue</code>/<code>Match</code>/<code>ExprStmt</code>、算术二元表达式、比较表达式、逻辑二元表达式、一元逻辑非/负号、简单/限定/嵌套函数调用表达式、数组/索引/结构体字段中的调用表达式和嵌套结构体字面量、字段访问/索引后缀表达式、数组字面量表达式、结构体字面量表达式和括号分组子集 dump；当前仍是 token-level seed，后续再对齐 Rust AST dump golden。</td>
           <td>Stage 0 可编译这些模块，并与 Rust 宿主实现的公开 dump/诊断契约一致。</td>
           <td>Zeta 子集需要 deferred 特性才能表达编译器核心数据结构，或 Stage 1 种子不能由 Stage 0 编译运行。</td>
         </tr>

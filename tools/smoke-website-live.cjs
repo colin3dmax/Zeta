@@ -69,6 +69,8 @@ const publicDocs = [
   const loadedExample = await page.locator(".source-pane textarea").inputValue();
 
   await page.locator('a[href="#repl"]').click();
+  await page.locator(".terminal-body").click({ position: { x: 24, y: 220 } });
+  const replFocusFromBody = await page.evaluate(() => document.activeElement?.matches(".terminal-input-row input"));
   const replInput = page.locator(".terminal-input-row input");
   await replInput.fill("true && !false");
   await page.waitForTimeout(100);
@@ -206,6 +208,7 @@ const publicDocs = [
       loadedExample.includes("fn add") &&
       activeControlExample === "true" &&
       activeBoolExample === "true" &&
+      replFocusFromBody &&
       operatorCount > 0 &&
       boolCount > 0 &&
       previewText.includes("while count < 3") &&
@@ -225,6 +228,7 @@ const publicDocs = [
     activeBoolExample,
     replOperatorTokens: operatorCount,
     replBoolTokens: boolCount,
+    replFocusFromBody,
     previewHasRawLessThan: previewText.includes("while count < 3"),
     previewLeaksHtmlEntity: escapedPreviewText.includes("&lt;"),
     previewLetKeywordTokens: letKeywordCount,

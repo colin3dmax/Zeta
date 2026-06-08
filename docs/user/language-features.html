@@ -196,7 +196,7 @@ fn main() -&gt; Int {
     <p><a class="button secondary" href="#online-testing" data-zeta-example="arrayBuilder">在本页运行数组构造示例</a></p>
 
     <h2 id="string-scan">std.core 字符串 byte 扫描</h2>
-    <p>导入 <code>std.core</code> 后，可以使用自举 lexer/parser 需要的最小字符串扫描函数：<code>string_len</code> 返回 UTF-8 byte 长度，<code>string_byte_at</code> 用 <code>Int</code> 下标读取 byte 并以 <code>Int</code> 返回，<code>string_byte_slice</code> 使用 byte 起点和 byte 长度截取字符串，ASCII 分类函数接收 byte <code>Int</code> 并返回 <code>Bool</code>。</p>
+    <p>导入 <code>std.core</code> 后，可以使用自举 lexer/parser 需要的最小字符串扫描函数：<code>string_len</code> 返回 UTF-8 byte 长度，<code>string_byte_at</code> 用 <code>Int</code> 下标读取 byte 并以 <code>Int</code> 返回，<code>string_byte_slice</code> 使用 byte 起点和 byte 长度截取字符串，ASCII 分类函数接收 byte <code>Int</code> 并返回 <code>Bool</code>。Stage 1 Zeta 前端种子已用这些 API 对齐 Rust Stage 0 的 <code>//</code> 行注释跳过行为。</p>
     <pre><code>import std.core;
 
 fn main() -&gt; Int {

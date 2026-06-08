@@ -165,7 +165,7 @@ fn main() -&gt; Int {
     <pre><code>cargo run -- run testdata/run_array_builder.zeta</code></pre>
 
     <h2 id="string-scan">字符串 byte 扫描</h2>
-    <p><code>std.core</code> 当前提供自举 lexer/parser 所需的最小字符串扫描函数：<code>string_len</code>、<code>string_byte_at</code>、<code>string_byte_slice</code>、<code>ascii_is_digit</code>、<code>ascii_is_alpha</code>、<code>ascii_is_alnum</code> 和 <code>ascii_is_whitespace</code>。这些 API 按 UTF-8 byte 工作，返回 byte 时使用 <code>Int</code>。</p>
+    <p><code>std.core</code> 当前提供自举 lexer/parser 所需的最小字符串扫描函数：<code>string_len</code>、<code>string_byte_at</code>、<code>string_byte_slice</code>、<code>ascii_is_digit</code>、<code>ascii_is_alpha</code>、<code>ascii_is_alnum</code> 和 <code>ascii_is_whitespace</code>。这些 API 按 UTF-8 byte 工作，返回 byte 时使用 <code>Int</code>；Stage 1 Zeta 前端种子已用它们跳过 <code>//</code> 行注释。</p>
     <pre><code>import std.core;
 
 fn main() -&gt; Int {

@@ -1,4 +1,5 @@
 fn stage2_sample() -> Int {
+  // ignored tokens: fn fake() { let noise: Int = 0; return noise; }
   let answer: Int = 40;
   return answer;
 }

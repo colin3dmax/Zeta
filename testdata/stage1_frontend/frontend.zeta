@@ -17,6 +17,348 @@ export fn ast_dump_summary(source: String) -> String {
   return out;
 }
 
+export fn ast_dump_keyword_summary(source: String) -> String {
+  let kinds: IntArray = lex_kinds(source);
+  let mut out: String = "module=";
+  out = string_concat(out, int_to_string(count_token(kinds, token_module())));
+  out = string_concat(out, ";import=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_import())));
+  out = string_concat(out, ";as=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_as())));
+  out = string_concat(out, ";export=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_export())));
+  out = string_concat(out, ";fn=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_fn())));
+  out = string_concat(out, ";let=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_let())));
+  out = string_concat(out, ";mut=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_mut())));
+  out = string_concat(out, ";return=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_return())));
+  out = string_concat(out, ";break=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_break())));
+  out = string_concat(out, ";continue=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_continue())));
+  out = string_concat(out, ";if=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_if())));
+  out = string_concat(out, ";else=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_else())));
+  out = string_concat(out, ";while=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_while())));
+  out = string_concat(out, ";match=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_match())));
+  out = string_concat(out, ";struct=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_struct())));
+  out = string_concat(out, ";enum=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_enum())));
+  return out;
+}
+
+export fn ast_dump_symbol_summary(source: String) -> String {
+  let kinds: IntArray = lex_kinds(source);
+  let mut out: String = "lparen=";
+  out = string_concat(out, int_to_string(count_token(kinds, token_lparen())));
+  out = string_concat(out, ";rparen=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_rparen())));
+  out = string_concat(out, ";lbrace=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_lbrace())));
+  out = string_concat(out, ";rbrace=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_rbrace())));
+  out = string_concat(out, ";lbracket=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_lbracket())));
+  out = string_concat(out, ";rbracket=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_rbracket())));
+  out = string_concat(out, ";colon=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_colon())));
+  out = string_concat(out, ";semicolon=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_semicolon())));
+  out = string_concat(out, ";comma=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_comma())));
+  out = string_concat(out, ";dot=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_dot())));
+  out = string_concat(out, ";arrow=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_arrow())));
+  out = string_concat(out, ";eq=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_eq())));
+  out = string_concat(out, ";eqeq=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_eqeq())));
+  out = string_concat(out, ";bang=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_bang())));
+  out = string_concat(out, ";bangeq=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_bangeq())));
+  out = string_concat(out, ";andand=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_andand())));
+  out = string_concat(out, ";oror=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_oror())));
+  out = string_concat(out, ";lt=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_lt())));
+  out = string_concat(out, ";lte=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_lte())));
+  out = string_concat(out, ";gt=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_gt())));
+  out = string_concat(out, ";gte=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_gte())));
+  out = string_concat(out, ";plus=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_plus())));
+  out = string_concat(out, ";minus=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_minus())));
+  out = string_concat(out, ";star=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_star())));
+  out = string_concat(out, ";slash=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_slash())));
+  return out;
+}
+
+export fn ast_dump_token_class_summary(source: String) -> String {
+  let kinds: IntArray = lex_kinds(source);
+  let mut out: String = "ident=";
+  out = string_concat(out, int_to_string(count_token(kinds, token_ident())));
+  out = string_concat(out, ";int=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_int())));
+  out = string_concat(out, ";string=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_string())));
+  out = string_concat(out, ";bool=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_bool())));
+  out = string_concat(out, ";unknown=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_unknown())));
+  out = string_concat(out, ";eof=");
+  out = string_concat(out, int_to_string(count_token(kinds, token_eof())));
+  return out;
+}
+
+export fn ast_dump_item_summary(source: String) -> String {
+  let kinds: IntArray = lex_kinds(source);
+  let mut out: String = "module=";
+  out = string_concat(out, int_to_string(count_top_level_token(kinds, token_module())));
+  out = string_concat(out, ";import=");
+  out = string_concat(out, int_to_string(count_top_level_token(kinds, token_import())));
+  out = string_concat(out, ";struct=");
+  out = string_concat(out, int_to_string(count_top_level_token(kinds, token_struct())));
+  out = string_concat(out, ";enum=");
+  out = string_concat(out, int_to_string(count_top_level_token(kinds, token_enum())));
+  out = string_concat(out, ";fn=");
+  out = string_concat(out, int_to_string(count_top_level_token(kinds, token_fn())));
+  return out;
+}
+
+export fn ast_dump_export_summary(source: String) -> String {
+  let kinds: IntArray = lex_kinds(source);
+  let mut out: String = "export_import=";
+  out = string_concat(out, int_to_string(count_top_level_export_target(kinds, token_import())));
+  out = string_concat(out, ";export_struct=");
+  out = string_concat(out, int_to_string(count_top_level_export_target(kinds, token_struct())));
+  out = string_concat(out, ";export_enum=");
+  out = string_concat(out, int_to_string(count_top_level_export_target(kinds, token_enum())));
+  out = string_concat(out, ";export_fn=");
+  out = string_concat(out, int_to_string(count_top_level_export_target(kinds, token_fn())));
+  return out;
+}
+
+export fn ast_dump_import_summary(source: String) -> String {
+  let kinds: IntArray = lex_kinds(source);
+  let mut out: String = "imports=";
+  out = string_concat(out, int_to_string(count_top_level_token(kinds, token_import())));
+  out = string_concat(out, ";aliased=");
+  out = string_concat(out, int_to_string(count_top_level_import_aliases(kinds)));
+  out = string_concat(out, ";exported=");
+  out = string_concat(out, int_to_string(count_top_level_export_target(kinds, token_import())));
+  out = string_concat(out, ";path_segments=");
+  out = string_concat(out, int_to_string(count_top_level_import_path_segments(kinds)));
+  return out;
+}
+
+export fn ast_dump_item_dump(source: String) -> String {
+  let kinds: IntArray = lex_kinds(source);
+  let mut out: String = "items\n";
+  let mut index: Int = 0;
+  let mut depth: Int = 0;
+  while index < kinds.len {
+    let kind: Int = kinds[index];
+    if depth == 0 && kind == token_module() {
+      out = string_concat(out, "  module\n");
+    }
+    if depth == 0 && kind == token_import() {
+      out = append_import_dump(out, kinds, index, false);
+    }
+    if depth == 0 && kind == token_export() && index + 1 < kinds.len {
+      let target: Int = kinds[index + 1];
+      if target == token_import() {
+        out = append_import_dump(out, kinds, index + 1, true);
+      }
+      if target == token_struct() {
+        out = string_concat(out, "  struct exported=true\n");
+      }
+      if target == token_enum() {
+        out = string_concat(out, "  enum exported=true\n");
+      }
+      if target == token_fn() {
+        out = string_concat(out, "  fn exported=true\n");
+      }
+      index = index + 1;
+    }
+    if depth == 0 && kind == token_struct() {
+      out = string_concat(out, "  struct exported=false\n");
+    }
+    if depth == 0 && kind == token_enum() {
+      out = string_concat(out, "  enum exported=false\n");
+    }
+    if depth == 0 && kind == token_fn() {
+      out = string_concat(out, "  fn exported=false\n");
+    }
+    if kind == token_lbrace() {
+      depth = depth + 1;
+    }
+    if kind == token_rbrace() && depth > 0 {
+      depth = depth - 1;
+    }
+    index = index + 1;
+  }
+  return out;
+}
+
+export fn ast_dump_named_item_dump(source: String) -> String {
+  let kinds: IntArray = lex_kinds(source);
+  let texts: StringArray = lex_texts(source);
+  let mut out: String = "items\n";
+  let mut index: Int = 0;
+  let mut depth: Int = 0;
+  while index < kinds.len {
+    let kind: Int = kinds[index];
+    if depth == 0 && kind == token_module() {
+      out = string_concat(out, "  module name=");
+      out = string_concat(out, path_text_at(kinds, texts, index));
+      out = string_concat(out, "\n");
+    }
+    if depth == 0 && kind == token_import() {
+      out = append_named_import_dump(out, kinds, texts, index, false);
+    }
+    if depth == 0 && kind == token_export() && index + 1 < kinds.len {
+      let target: Int = kinds[index + 1];
+      if target == token_import() {
+        out = append_named_import_dump(out, kinds, texts, index + 1, true);
+      }
+      if target == token_struct() {
+        out = append_named_decl_dump(out, "struct", ident_text_after(texts, index + 1), true);
+      }
+      if target == token_enum() {
+        out = append_named_decl_dump(out, "enum", ident_text_after(texts, index + 1), true);
+      }
+      if target == token_fn() {
+        out = append_named_decl_dump(out, "fn", ident_text_after(texts, index + 1), true);
+      }
+      index = index + 1;
+    }
+    if depth == 0 && kind == token_struct() {
+      out = append_named_decl_dump(out, "struct", ident_text_after(texts, index), false);
+    }
+    if depth == 0 && kind == token_enum() {
+      out = append_named_decl_dump(out, "enum", ident_text_after(texts, index), false);
+    }
+    if depth == 0 && kind == token_fn() {
+      out = append_named_decl_dump(out, "fn", ident_text_after(texts, index), false);
+    }
+    if kind == token_lbrace() {
+      depth = depth + 1;
+    }
+    if kind == token_rbrace() && depth > 0 {
+      depth = depth - 1;
+    }
+    index = index + 1;
+  }
+  return out;
+}
+
+export fn ast_dump_signature_dump(source: String) -> String {
+  let kinds: IntArray = lex_kinds(source);
+  let texts: StringArray = lex_texts(source);
+  let mut out: String = "signatures\n";
+  let mut index: Int = 0;
+  let mut depth: Int = 0;
+  while index < kinds.len {
+    let kind: Int = kinds[index];
+    if depth == 0 && kind == token_export() && index + 1 < kinds.len {
+      let target: Int = kinds[index + 1];
+      if target == token_struct() {
+        out = append_struct_signature_dump(out, kinds, texts, index + 1, true);
+      }
+      if target == token_enum() {
+        out = append_enum_signature_dump(out, kinds, texts, index + 1, true);
+      }
+      if target == token_fn() {
+        out = append_fn_signature_dump(out, kinds, texts, index + 1, true);
+      }
+      index = index + 1;
+    }
+    if depth == 0 && kind == token_struct() {
+      out = append_struct_signature_dump(out, kinds, texts, index, false);
+    }
+    if depth == 0 && kind == token_enum() {
+      out = append_enum_signature_dump(out, kinds, texts, index, false);
+    }
+    if depth == 0 && kind == token_fn() {
+      out = append_fn_signature_dump(out, kinds, texts, index, false);
+    }
+    if kind == token_lbrace() {
+      depth = depth + 1;
+    }
+    if kind == token_rbrace() && depth > 0 {
+      depth = depth - 1;
+    }
+    index = index + 1;
+  }
+  return out;
+}
+
+export fn ast_dump_rust_item_dump(source: String) -> String {
+  let kinds: IntArray = lex_kinds(source);
+  let texts: StringArray = lex_texts(source);
+  let mut out: String = "Module\n";
+  let mut index: Int = 0;
+  let mut depth: Int = 0;
+  while index < kinds.len {
+    let kind: Int = kinds[index];
+    if depth == 0 && kind == token_module() {
+      out = append_rust_module_decl_dump(out, kinds, texts, index);
+    }
+    if depth == 0 && kind == token_import() {
+      out = append_rust_import_dump(out, kinds, texts, index, false);
+    }
+    if depth == 0 && kind == token_export() && index + 1 < kinds.len {
+      let target: Int = kinds[index + 1];
+      if target == token_import() {
+        out = append_rust_import_dump(out, kinds, texts, index + 1, true);
+      }
+      if target == token_struct() {
+        out = append_rust_struct_dump(out, kinds, texts, index + 1, true);
+      }
+      if target == token_enum() {
+        out = append_rust_enum_dump(out, kinds, texts, index + 1, true);
+      }
+      if target == token_fn() {
+        out = append_rust_fn_dump(out, kinds, texts, index + 1, true);
+      }
+      index = index + 1;
+    }
+    if depth == 0 && kind == token_struct() {
+      out = append_rust_struct_dump(out, kinds, texts, index, false);
+    }
+    if depth == 0 && kind == token_enum() {
+      out = append_rust_enum_dump(out, kinds, texts, index, false);
+    }
+    if depth == 0 && kind == token_fn() {
+      out = append_rust_fn_dump(out, kinds, texts, index, false);
+    }
+    if kind == token_lbrace() {
+      depth = depth + 1;
+    }
+    if kind == token_rbrace() && depth > 0 {
+      depth = depth - 1;
+    }
+    index = index + 1;
+  }
+  return out;
+}
+
 fn parse_module_score(kinds: IntArray) -> Int {
   let mut index: Int = 0;
   let mut functions: Int = 0;
@@ -49,6 +391,2188 @@ fn count_token(kinds: IntArray, token: Int) -> Int {
   return count;
 }
 
+fn append_import_dump(out: String, kinds: IntArray, index: Int, exported: Bool) -> String {
+  let mut next: String = string_concat(out, "  import segments=");
+  next = string_concat(next, int_to_string(count_import_path_segments_at(kinds, index)));
+  next = string_concat(next, " alias=");
+  next = string_concat(next, bool_text(import_has_alias_at(kinds, index)));
+  next = string_concat(next, " exported=");
+  next = string_concat(next, bool_text(exported));
+  next = string_concat(next, "\n");
+  return next;
+}
+
+fn append_named_import_dump(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  index: Int,
+  exported: Bool
+) -> String {
+  let mut next: String = string_concat(out, "  import path=");
+  next = string_concat(next, path_text_at(kinds, texts, index));
+  let alias: String = import_alias_text_at(kinds, texts, index);
+  if alias != "" {
+    next = string_concat(next, " alias=");
+    next = string_concat(next, alias);
+  }
+  next = string_concat(next, " exported=");
+  next = string_concat(next, bool_text(exported));
+  next = string_concat(next, "\n");
+  return next;
+}
+
+fn append_named_decl_dump(out: String, item_kind: String, name: String, exported: Bool) -> String {
+  let mut next: String = string_concat(out, "  ");
+  next = string_concat(next, item_kind);
+  next = string_concat(next, " name=");
+  next = string_concat(next, name);
+  next = string_concat(next, " exported=");
+  next = string_concat(next, bool_text(exported));
+  next = string_concat(next, "\n");
+  return next;
+}
+
+fn append_struct_signature_dump(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  index: Int,
+  exported: Bool
+) -> String {
+  let mut next: String = string_concat(out, "  struct name=");
+  next = string_concat(next, ident_text_after(texts, index));
+  next = string_concat(next, " exported=");
+  next = string_concat(next, bool_text(exported));
+  next = string_concat(next, "\n");
+  let mut scan: Int = index + 1;
+  while scan < kinds.len && kinds[scan] != token_lbrace() {
+    scan = scan + 1;
+  }
+  if scan < kinds.len {
+    scan = scan + 1;
+  }
+  while scan + 2 < kinds.len && kinds[scan] != token_rbrace() {
+    if kinds[scan] == token_ident() && kinds[scan + 1] == token_colon() {
+      next = string_concat(next, "    field name=");
+      next = string_concat(next, texts[scan]);
+      next = string_concat(next, " type=");
+      next = string_concat(next, texts[scan + 2]);
+      next = string_concat(next, "\n");
+      scan = scan + 2;
+    }
+    scan = scan + 1;
+  }
+  return next;
+}
+
+fn append_enum_signature_dump(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  index: Int,
+  exported: Bool
+) -> String {
+  let mut next: String = string_concat(out, "  enum name=");
+  next = string_concat(next, ident_text_after(texts, index));
+  next = string_concat(next, " exported=");
+  next = string_concat(next, bool_text(exported));
+  next = string_concat(next, "\n");
+  let mut scan: Int = index + 1;
+  while scan < kinds.len && kinds[scan] != token_lbrace() {
+    scan = scan + 1;
+  }
+  if scan < kinds.len {
+    scan = scan + 1;
+  }
+  while scan < kinds.len && kinds[scan] != token_rbrace() {
+    if kinds[scan] == token_ident() {
+      next = string_concat(next, "    variant name=");
+      next = string_concat(next, texts[scan]);
+      if scan + 2 < kinds.len && kinds[scan + 1] == token_lparen() && kinds[scan + 2] == token_ident() {
+        next = string_concat(next, " payload=");
+        next = string_concat(next, texts[scan + 2]);
+        scan = scan + 3;
+      }
+      next = string_concat(next, "\n");
+    }
+    scan = scan + 1;
+  }
+  return next;
+}
+
+fn append_fn_signature_dump(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  index: Int,
+  exported: Bool
+) -> String {
+  let mut next: String = string_concat(out, "  fn name=");
+  next = string_concat(next, ident_text_after(texts, index));
+  next = string_concat(next, " exported=");
+  next = string_concat(next, bool_text(exported));
+  next = string_concat(next, "\n");
+  next = append_param_lines_at(next, kinds, texts, index);
+  let return_type: String = return_type_text_at(kinds, texts, index);
+  next = string_concat(next, "    return type=");
+  next = string_concat(next, return_type);
+  next = string_concat(next, "\n");
+  return next;
+}
+
+fn append_rust_module_decl_dump(out: String, kinds: IntArray, texts: StringArray, index: Int) -> String {
+  let mut next: String = string_concat(out, "  ModuleDecl name=");
+  next = string_concat(next, path_text_at(kinds, texts, index));
+  next = string_concat(next, "\n");
+  return next;
+}
+
+fn append_rust_import_dump(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  index: Int,
+  exported: Bool
+) -> String {
+  let mut next: String = string_concat(out, "  Import path=");
+  next = string_concat(next, path_text_at(kinds, texts, index));
+  let alias: String = import_alias_text_at(kinds, texts, index);
+  if alias != "" {
+    next = string_concat(next, " alias=");
+    next = string_concat(next, alias);
+  }
+  if exported {
+    next = string_concat(next, " exported=true");
+  }
+  next = string_concat(next, "\n");
+  return next;
+}
+
+fn append_rust_struct_dump(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  index: Int,
+  exported: Bool
+) -> String {
+  let mut next: String = string_concat(out, "  Struct name=");
+  next = string_concat(next, ident_text_after(texts, index));
+  next = string_concat(next, " exported=");
+  next = string_concat(next, bool_text(exported));
+  next = string_concat(next, "\n");
+  next = append_rust_field_lines_at(next, kinds, texts, index);
+  return next;
+}
+
+fn append_rust_enum_dump(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  index: Int,
+  exported: Bool
+) -> String {
+  let mut next: String = string_concat(out, "  Enum name=");
+  next = string_concat(next, ident_text_after(texts, index));
+  next = string_concat(next, " exported=");
+  next = string_concat(next, bool_text(exported));
+  next = string_concat(next, "\n");
+  next = append_rust_variant_lines_at(next, kinds, texts, index);
+  return next;
+}
+
+fn append_rust_fn_dump(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  index: Int,
+  exported: Bool
+) -> String {
+  let mut next: String = string_concat(out, "  Function name=");
+  next = string_concat(next, ident_text_after(texts, index));
+  next = string_concat(next, " exported=");
+  next = string_concat(next, bool_text(exported));
+  next = string_concat(next, "\n");
+  next = append_rust_param_lines_at(next, kinds, texts, index);
+  let return_type: String = explicit_return_type_text_at(kinds, texts, index);
+  if return_type != "" {
+    next = string_concat(next, "    Return type=");
+    next = string_concat(next, return_type);
+    next = string_concat(next, "\n");
+  }
+  next = append_rust_body_lines_at(next, kinds, texts, index);
+  return next;
+}
+
+fn append_rust_field_lines_at(out: String, kinds: IntArray, texts: StringArray, index: Int) -> String {
+  let mut scan: Int = index + 1;
+  while scan < kinds.len && kinds[scan] != token_lbrace() {
+    scan = scan + 1;
+  }
+  if scan < kinds.len {
+    scan = scan + 1;
+  }
+  let mut next: String = out;
+  while scan + 2 < kinds.len && kinds[scan] != token_rbrace() {
+    if kinds[scan] == token_ident() && kinds[scan + 1] == token_colon() {
+      next = string_concat(next, "    Field name=");
+      next = string_concat(next, texts[scan]);
+      next = string_concat(next, " type=");
+      next = string_concat(next, texts[scan + 2]);
+      next = string_concat(next, "\n");
+      scan = scan + 2;
+    }
+    scan = scan + 1;
+  }
+  return next;
+}
+
+fn append_rust_variant_lines_at(out: String, kinds: IntArray, texts: StringArray, index: Int) -> String {
+  let mut scan: Int = index + 1;
+  while scan < kinds.len && kinds[scan] != token_lbrace() {
+    scan = scan + 1;
+  }
+  if scan < kinds.len {
+    scan = scan + 1;
+  }
+  let mut next: String = out;
+  while scan < kinds.len && kinds[scan] != token_rbrace() {
+    if kinds[scan] == token_ident() {
+      next = string_concat(next, "    Variant name=");
+      next = string_concat(next, texts[scan]);
+      if scan + 2 < kinds.len && kinds[scan + 1] == token_lparen() && kinds[scan + 2] == token_ident() {
+        next = string_concat(next, " payload=");
+        next = string_concat(next, texts[scan + 2]);
+        scan = scan + 3;
+      }
+      next = string_concat(next, "\n");
+    }
+    scan = scan + 1;
+  }
+  return next;
+}
+
+fn append_rust_param_lines_at(out: String, kinds: IntArray, texts: StringArray, index: Int) -> String {
+  let mut scan: Int = index + 1;
+  while scan < kinds.len && kinds[scan] != token_lparen() {
+    scan = scan + 1;
+  }
+  if scan < kinds.len {
+    scan = scan + 1;
+  }
+  let mut next: String = out;
+  while scan + 2 < kinds.len && kinds[scan] != token_rparen() {
+    if kinds[scan] == token_ident() && kinds[scan + 1] == token_colon() {
+      next = string_concat(next, "    Param name=");
+      next = string_concat(next, texts[scan]);
+      next = string_concat(next, " type=");
+      next = string_concat(next, texts[scan + 2]);
+      next = string_concat(next, "\n");
+      scan = scan + 2;
+    }
+    scan = scan + 1;
+  }
+  return next;
+}
+
+fn append_rust_body_lines_at(out: String, kinds: IntArray, texts: StringArray, index: Int) -> String {
+  let mut scan: Int = index + 1;
+  while scan < kinds.len && kinds[scan] != token_lbrace() {
+    scan = scan + 1;
+  }
+  if scan >= kinds.len {
+    return out;
+  }
+  let end: Int = matching_rbrace_at(kinds, scan);
+  if end >= kinds.len {
+    return out;
+  }
+  return append_rust_block_stmt_lines_range(out, kinds, texts, scan + 1, end, "    ");
+}
+
+fn append_rust_block_stmt_lines_range(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  start: Int,
+  end: Int,
+  indent: String
+) -> String {
+  let mut scan: Int = start;
+  let mut next: String = out;
+  while scan < end {
+    let kind: Int = kinds[scan];
+    if kind == token_let() {
+      next = append_rust_let_stmt_at(next, kinds, texts, scan, indent);
+      while scan < kinds.len && kinds[scan] != token_semicolon() {
+        scan = scan + 1;
+      }
+    }
+    if kind == token_return() {
+      next = append_rust_return_stmt_at(next, kinds, texts, scan, indent);
+      while scan < kinds.len && kinds[scan] != token_semicolon() {
+        scan = scan + 1;
+      }
+    }
+    if rust_assign_stmt_at(kinds, scan) {
+      next = append_rust_assign_stmt_at(next, kinds, texts, scan, indent);
+      while scan < kinds.len && kinds[scan] != token_semicolon() {
+        scan = scan + 1;
+      }
+    }
+    if kind == token_break() {
+      next = string_concat(next, indent);
+      next = string_concat(next, "Break\n");
+      while scan < kinds.len && kinds[scan] != token_semicolon() {
+        scan = scan + 1;
+      }
+    }
+    if kind == token_continue() {
+      next = string_concat(next, indent);
+      next = string_concat(next, "Continue\n");
+      while scan < kinds.len && kinds[scan] != token_semicolon() {
+        scan = scan + 1;
+      }
+    }
+    if rust_if_stmt_supported_at(kinds, scan) {
+      next = append_rust_if_stmt_at(next, kinds, texts, scan, indent);
+      scan = rust_if_stmt_end_at(kinds, scan) - 1;
+    }
+    if rust_while_stmt_supported_at(kinds, scan) {
+      next = append_rust_while_stmt_at(next, kinds, texts, scan, indent);
+      scan = rust_while_stmt_end_at(kinds, scan) - 1;
+    }
+    if rust_match_stmt_supported_at(kinds, scan) {
+      next = append_rust_match_stmt_at(next, kinds, texts, scan, indent);
+      scan = rust_match_stmt_end_at(kinds, scan) - 1;
+    }
+    if rust_expr_stmt_supported_at(kinds, scan, start) {
+      next = append_rust_expr_statement_at(next, kinds, texts, scan, indent);
+      while scan < kinds.len && kinds[scan] != token_semicolon() {
+        scan = scan + 1;
+      }
+    }
+    if kind == token_rbrace() {
+      return next;
+    }
+    if kind == token_lbrace() {
+      scan = matching_rbrace_at(kinds, scan);
+    }
+    scan = scan + 1;
+  }
+  return next;
+}
+
+fn rust_expr_stmt_supported_at(kinds: IntArray, index: Int, block_start: Int) -> Bool {
+  if !rust_stmt_start_at(kinds, index, block_start) {
+    return false;
+  }
+  if index >= kinds.len {
+    return false;
+  }
+  if kinds[index] == token_let()
+    || kinds[index] == token_return()
+    || kinds[index] == token_break()
+    || kinds[index] == token_continue()
+    || kinds[index] == token_if()
+    || kinds[index] == token_while()
+    || kinds[index] == token_match() {
+    return false;
+  }
+  if rust_assign_stmt_at(kinds, index) {
+    return false;
+  }
+  return rust_expr_supported_stmt_at(kinds, index);
+}
+
+fn rust_stmt_start_at(kinds: IntArray, index: Int, block_start: Int) -> Bool {
+  if index == block_start {
+    return true;
+  }
+  if index == 0 {
+    return true;
+  }
+  return kinds[index - 1] == token_semicolon()
+    || kinds[index - 1] == token_lbrace()
+    || kinds[index - 1] == token_rbrace();
+}
+
+fn rust_if_stmt_supported_at(kinds: IntArray, index: Int) -> Bool {
+  if index >= kinds.len || kinds[index] != token_if() {
+    return false;
+  }
+  let lbrace: Int = rust_block_lbrace_after_condition(kinds, index + 1);
+  if lbrace >= kinds.len || matching_rbrace_at(kinds, lbrace) >= kinds.len {
+    return false;
+  }
+  return rust_expr_supported_range(kinds, index + 1, lbrace);
+}
+
+fn rust_while_stmt_supported_at(kinds: IntArray, index: Int) -> Bool {
+  if index >= kinds.len || kinds[index] != token_while() {
+    return false;
+  }
+  let lbrace: Int = rust_block_lbrace_after_condition(kinds, index + 1);
+  if lbrace >= kinds.len || matching_rbrace_at(kinds, lbrace) >= kinds.len {
+    return false;
+  }
+  return rust_expr_supported_range(kinds, index + 1, lbrace);
+}
+
+fn rust_match_stmt_supported_at(kinds: IntArray, index: Int) -> Bool {
+  if index >= kinds.len || kinds[index] != token_match() {
+    return false;
+  }
+  let lbrace: Int = rust_block_lbrace_after_condition(kinds, index + 1);
+  if lbrace >= kinds.len || matching_rbrace_at(kinds, lbrace) >= kinds.len {
+    return false;
+  }
+  return rust_expr_supported_range(kinds, index + 1, lbrace);
+}
+
+fn append_rust_if_stmt_at(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  index: Int,
+  indent: String
+) -> String {
+  let lbrace: Int = rust_block_lbrace_after_condition(kinds, index + 1);
+  let rbrace: Int = matching_rbrace_at(kinds, lbrace);
+  let mut next: String = string_concat(out, indent);
+  next = string_concat(next, "If\n");
+  next = string_concat(next, indent);
+  next = string_concat(next, "  Condition\n");
+  let condition_indent: String = string_concat(indent, "    ");
+  next = append_rust_expr_range(next, kinds, texts, index + 1, lbrace, condition_indent);
+  next = string_concat(next, indent);
+  next = string_concat(next, "  Then\n");
+  next = append_rust_block_stmt_lines_range(next, kinds, texts, lbrace + 1, rbrace, condition_indent);
+  let else_index: Int = rbrace + 1;
+  if else_index < kinds.len && kinds[else_index] == token_else() {
+    let else_lbrace: Int = rust_block_lbrace_after_condition(kinds, else_index + 1);
+    let else_rbrace: Int = matching_rbrace_at(kinds, else_lbrace);
+    if else_lbrace < kinds.len && else_rbrace < kinds.len {
+      next = string_concat(next, indent);
+      next = string_concat(next, "  Else\n");
+      next = append_rust_block_stmt_lines_range(next, kinds, texts, else_lbrace + 1, else_rbrace, condition_indent);
+    }
+  }
+  return next;
+}
+
+fn append_rust_while_stmt_at(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  index: Int,
+  indent: String
+) -> String {
+  let lbrace: Int = rust_block_lbrace_after_condition(kinds, index + 1);
+  let rbrace: Int = matching_rbrace_at(kinds, lbrace);
+  let mut next: String = string_concat(out, indent);
+  next = string_concat(next, "While\n");
+  next = string_concat(next, indent);
+  next = string_concat(next, "  Condition\n");
+  let condition_indent: String = string_concat(indent, "    ");
+  next = append_rust_expr_range(next, kinds, texts, index + 1, lbrace, condition_indent);
+  next = string_concat(next, indent);
+  next = string_concat(next, "  Body\n");
+  return append_rust_block_stmt_lines_range(next, kinds, texts, lbrace + 1, rbrace, condition_indent);
+}
+
+fn rust_if_stmt_end_at(kinds: IntArray, index: Int) -> Int {
+  let lbrace: Int = rust_block_lbrace_after_condition(kinds, index + 1);
+  let rbrace: Int = matching_rbrace_at(kinds, lbrace);
+  let else_index: Int = rbrace + 1;
+  if else_index < kinds.len && kinds[else_index] == token_else() {
+    let else_lbrace: Int = rust_block_lbrace_after_condition(kinds, else_index + 1);
+    let else_rbrace: Int = matching_rbrace_at(kinds, else_lbrace);
+    if else_rbrace < kinds.len {
+      return else_rbrace + 1;
+    }
+  }
+  return rbrace + 1;
+}
+
+fn rust_while_stmt_end_at(kinds: IntArray, index: Int) -> Int {
+  let lbrace: Int = rust_block_lbrace_after_condition(kinds, index + 1);
+  return matching_rbrace_at(kinds, lbrace) + 1;
+}
+
+fn append_rust_match_stmt_at(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  index: Int,
+  indent: String
+) -> String {
+  let lbrace: Int = rust_block_lbrace_after_condition(kinds, index + 1);
+  let rbrace: Int = matching_rbrace_at(kinds, lbrace);
+  let mut next: String = string_concat(out, indent);
+  next = string_concat(next, "Match\n");
+  next = string_concat(next, indent);
+  next = string_concat(next, "  Value\n");
+  let child_indent: String = string_concat(indent, "    ");
+  next = append_rust_expr_range(next, kinds, texts, index + 1, lbrace, child_indent);
+  return append_rust_match_arms_range(next, kinds, texts, lbrace + 1, rbrace, indent);
+}
+
+fn append_rust_match_arms_range(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  start: Int,
+  end: Int,
+  indent: String
+) -> String {
+  let mut scan: Int = start;
+  let mut next: String = out;
+  while scan < end {
+    let arrow: Int = rust_match_arm_arrow_at(kinds, scan, end);
+    if arrow >= end {
+      return next;
+    }
+    let lbrace: Int = arrow + 1;
+    if lbrace >= end || kinds[lbrace] != token_lbrace() {
+      return next;
+    }
+    let rbrace: Int = matching_rbrace_at(kinds, lbrace);
+    if rbrace >= end + 1 {
+      return next;
+    }
+    next = string_concat(next, indent);
+    next = string_concat(next, "  Arm pattern=");
+    next = string_concat(next, rust_pattern_text_range(kinds, texts, scan, arrow));
+    next = string_concat(next, "\n");
+    let arm_indent: String = string_concat(indent, "    ");
+    next = append_rust_block_stmt_lines_range(next, kinds, texts, lbrace + 1, rbrace, arm_indent);
+    scan = rbrace + 1;
+    if scan < end && kinds[scan] == token_comma() {
+      scan = scan + 1;
+    }
+  }
+  return next;
+}
+
+fn rust_match_arm_arrow_at(kinds: IntArray, start: Int, end: Int) -> Int {
+  let mut scan: Int = start;
+  let mut paren_depth: Int = 0;
+  while scan < end {
+    if kinds[scan] == token_lparen() {
+      paren_depth = paren_depth + 1;
+    }
+    if kinds[scan] == token_rparen() && paren_depth > 0 {
+      paren_depth = paren_depth - 1;
+    }
+    if paren_depth == 0 && kinds[scan] == token_arrow() {
+      return scan;
+    }
+    if paren_depth == 0 && kinds[scan] == token_lbrace() {
+      return end;
+    }
+    scan = scan + 1;
+  }
+  return end;
+}
+
+fn rust_pattern_text_range(kinds: IntArray, texts: StringArray, start: Int, end: Int) -> String {
+  if start >= end {
+    return "";
+  }
+  if start + 1 == end {
+    if kinds[start] == token_int() {
+      return string_concat("int:", texts[start]);
+    }
+    if kinds[start] == token_string() {
+      return string_concat("string:", texts[start]);
+    }
+    if kinds[start] == token_bool() {
+      return string_concat("bool:", texts[start]);
+    }
+    if kinds[start] == token_ident() && texts[start] == "_" {
+      return "_";
+    }
+    if kinds[start] == token_ident() {
+      return string_concat("name:", texts[start]);
+    }
+  }
+  if start + 3 == end && kinds[start] == token_ident() && kinds[start + 1] == token_dot() && kinds[start + 2] == token_ident() {
+    let mut out: String = "variant:";
+    out = string_concat(out, texts[start]);
+    out = string_concat(out, ".");
+    out = string_concat(out, texts[start + 2]);
+    return out;
+  }
+  if start + 6 == end
+    && kinds[start] == token_ident()
+    && kinds[start + 1] == token_dot()
+    && kinds[start + 2] == token_ident()
+    && kinds[start + 3] == token_lparen()
+    && kinds[start + 4] == token_ident()
+    && kinds[start + 5] == token_rparen() {
+    let mut out: String = "variant:";
+    out = string_concat(out, texts[start]);
+    out = string_concat(out, ".");
+    out = string_concat(out, texts[start + 2]);
+    out = string_concat(out, "(");
+    out = string_concat(out, texts[start + 4]);
+    out = string_concat(out, ")");
+    return out;
+  }
+  return "";
+}
+
+fn rust_match_stmt_end_at(kinds: IntArray, index: Int) -> Int {
+  let lbrace: Int = rust_block_lbrace_after_condition(kinds, index + 1);
+  return matching_rbrace_at(kinds, lbrace) + 1;
+}
+
+fn rust_block_lbrace_after_condition(kinds: IntArray, index: Int) -> Int {
+  let mut scan: Int = index;
+  let mut paren_depth: Int = 0;
+  let mut bracket_depth: Int = 0;
+  while scan < kinds.len {
+    if kinds[scan] == token_lparen() {
+      paren_depth = paren_depth + 1;
+    }
+    if kinds[scan] == token_rparen() && paren_depth > 0 {
+      paren_depth = paren_depth - 1;
+    }
+    if kinds[scan] == token_lbracket() {
+      bracket_depth = bracket_depth + 1;
+    }
+    if kinds[scan] == token_rbracket() && bracket_depth > 0 {
+      bracket_depth = bracket_depth - 1;
+    }
+    if paren_depth == 0 && bracket_depth == 0 && kinds[scan] == token_lbrace() {
+      return scan;
+    }
+    if paren_depth == 0 && bracket_depth == 0 && kinds[scan] == token_semicolon() {
+      return kinds.len;
+    }
+    scan = scan + 1;
+  }
+  return kinds.len;
+}
+
+fn rust_assign_stmt_at(kinds: IntArray, index: Int) -> Bool {
+  if index + 2 >= kinds.len || kinds[index] != token_ident() || kinds[index + 1] != token_eq() {
+    return false;
+  }
+  if index > 0 && kinds[index - 1] == token_dot() {
+    return false;
+  }
+  if index > 0
+    && kinds[index - 1] != token_lbrace()
+    && kinds[index - 1] != token_rbrace()
+    && kinds[index - 1] != token_semicolon() {
+    return false;
+  }
+  return true;
+}
+
+fn append_rust_assign_stmt_at(out: String, kinds: IntArray, texts: StringArray, index: Int, indent: String) -> String {
+  let mut next: String = string_concat(out, indent);
+  next = string_concat(next, "Assign name=");
+  next = string_concat(next, texts[index]);
+  next = string_concat(next, "\n");
+  if index + 3 < kinds.len && rust_expr_supported_stmt_at(kinds, index + 2) {
+    let child_indent: String = string_concat(indent, "  ");
+    next = append_rust_expr_stmt_at(next, kinds, texts, index + 2, child_indent);
+  }
+  return next;
+}
+
+fn append_rust_let_stmt_at(out: String, kinds: IntArray, texts: StringArray, index: Int, indent: String) -> String {
+  let mut scan: Int = index + 1;
+  let mut mutable: Bool = false;
+  if scan < kinds.len && kinds[scan] == token_mut() {
+    mutable = true;
+    scan = scan + 1;
+  }
+  let name: String = texts[scan];
+  scan = scan + 1;
+  let mut ty: String = "";
+  if scan + 1 < kinds.len && kinds[scan] == token_colon() {
+    ty = texts[scan + 1];
+    scan = scan + 2;
+  }
+  while scan < kinds.len && kinds[scan] != token_semicolon() && kinds[scan] != token_eq() {
+    scan = scan + 1;
+  }
+  let mut next: String = out;
+  if scan < kinds.len && kinds[scan] == token_eq() {
+    next = string_concat(next, indent);
+    next = string_concat(next, "Let name=");
+    next = string_concat(next, name);
+    if ty != "" {
+      next = string_concat(next, " type=");
+      next = string_concat(next, ty);
+    }
+    if mutable {
+      next = string_concat(next, " mutable=true");
+    }
+    next = string_concat(next, "\n");
+    if scan + 2 < kinds.len && rust_expr_supported_stmt_at(kinds, scan + 1) {
+      let child_indent: String = string_concat(indent, "  ");
+      next = append_rust_expr_stmt_at(next, kinds, texts, scan + 1, child_indent);
+    }
+  }
+  return next;
+}
+
+fn append_rust_return_stmt_at(out: String, kinds: IntArray, texts: StringArray, index: Int, indent: String) -> String {
+  let mut next: String = out;
+  if index + 1 < kinds.len && kinds[index + 1] == token_semicolon() {
+    next = string_concat(next, indent);
+    next = string_concat(next, "Return\n");
+    return next;
+  }
+  if index + 1 < kinds.len {
+    next = string_concat(next, indent);
+    next = string_concat(next, "Return\n");
+    if index + 2 < kinds.len && rust_expr_supported_stmt_at(kinds, index + 1) {
+      let child_indent: String = string_concat(indent, "  ");
+      next = append_rust_expr_stmt_at(next, kinds, texts, index + 1, child_indent);
+    }
+  }
+  return next;
+}
+
+fn append_rust_expr_statement_at(out: String, kinds: IntArray, texts: StringArray, index: Int, indent: String) -> String {
+  let mut next: String = string_concat(out, indent);
+  next = string_concat(next, "ExprStmt\n");
+  let child_indent: String = string_concat(indent, "  ");
+  return append_rust_expr_stmt_at(next, kinds, texts, index, child_indent);
+}
+
+fn rust_expr_supported_stmt_at(kinds: IntArray, index: Int) -> Bool {
+  let end: Int = stmt_expr_end_at(kinds, index);
+  if end <= index {
+    return false;
+  }
+  if end >= kinds.len || kinds[end] != token_semicolon() {
+    return false;
+  }
+  return rust_expr_supported_range(kinds, index, end);
+}
+
+fn stmt_expr_end_at(kinds: IntArray, index: Int) -> Int {
+  let mut scan: Int = index;
+  while scan < kinds.len && kinds[scan] != token_semicolon() {
+    scan = scan + 1;
+  }
+  return scan;
+}
+
+fn rust_expr_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start >= end {
+    return false;
+  }
+  if start + 1 == end {
+    return simple_expr_token(kinds[start]);
+  }
+  if wrapped_by_parens(kinds, start, end) {
+    return rust_expr_supported_range(kinds, start + 1, end - 1);
+  }
+  if rust_field_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_index_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_array_literal_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_struct_literal_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_call_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  let logical_or: Int = last_operator_in_range(kinds, start, end, token_oror());
+  if logical_or < end {
+    return rust_logic_expr_supported_range(kinds, start, logical_or)
+      && rust_logic_expr_supported_range(kinds, logical_or + 1, end);
+  }
+  let logical_and: Int = last_operator_in_range(kinds, start, end, token_andand());
+  if logical_and < end {
+    return rust_logic_expr_supported_range(kinds, start, logical_and)
+      && rust_logic_expr_supported_range(kinds, logical_and + 1, end);
+  }
+  let comparison: Int = last_comparison_operator_in_range(kinds, start, end);
+  if comparison < end {
+    return rust_binary_operand_supported_range(kinds, start, comparison)
+      && rust_binary_operand_supported_range(kinds, comparison + 1, end);
+  }
+  let additive: Int = last_additive_operator_in_range(kinds, start, end);
+  if additive < end {
+    return rust_binary_operand_supported_range(kinds, start, additive)
+      && rust_binary_operand_supported_range(kinds, additive + 1, end);
+  }
+  let multiplicative: Int = last_multiplicative_operator_in_range(kinds, start, end);
+  if multiplicative < end {
+    return rust_binary_operand_supported_range(kinds, start, multiplicative)
+      && rust_binary_operand_supported_range(kinds, multiplicative + 1, end);
+  }
+  if rust_unary_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  return false;
+}
+
+fn rust_binary_operand_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start >= end {
+    return false;
+  }
+  if start + 1 == end {
+    return binary_expr_token(kinds[start]);
+  }
+  if wrapped_by_parens(kinds, start, end) {
+    return rust_binary_expr_supported_range(kinds, start + 1, end - 1);
+  }
+  if rust_field_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_index_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_array_literal_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_struct_literal_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_call_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  if kinds[start] == token_minus() {
+    return rust_neg_operand_supported_range(kinds, start + 1, end);
+  }
+  return rust_binary_expr_supported_range(kinds, start, end);
+}
+
+fn rust_logic_expr_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start >= end {
+    return false;
+  }
+  if start + 1 == end {
+    return logic_expr_token(kinds[start]);
+  }
+  if wrapped_by_parens(kinds, start, end) {
+    return rust_logic_expr_supported_range(kinds, start + 1, end - 1);
+  }
+  if rust_field_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_index_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_array_literal_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_struct_literal_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_call_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  let logical_or: Int = last_operator_in_range(kinds, start, end, token_oror());
+  if logical_or < end {
+    return rust_logic_expr_supported_range(kinds, start, logical_or)
+      && rust_logic_expr_supported_range(kinds, logical_or + 1, end);
+  }
+  let logical_and: Int = last_operator_in_range(kinds, start, end, token_andand());
+  if logical_and < end {
+    return rust_logic_expr_supported_range(kinds, start, logical_and)
+      && rust_logic_expr_supported_range(kinds, logical_and + 1, end);
+  }
+  let comparison: Int = last_comparison_operator_in_range(kinds, start, end);
+  if comparison < end {
+    return rust_binary_expr_supported_range(kinds, start, comparison)
+      && rust_binary_expr_supported_range(kinds, comparison + 1, end);
+  }
+  if rust_unary_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  return rust_binary_expr_supported_range(kinds, start, end);
+}
+
+fn rust_unary_expr_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start + 1 >= end {
+    return false;
+  }
+  if kinds[start] == token_bang() {
+    return rust_not_operand_supported_range(kinds, start + 1, end);
+  }
+  if kinds[start] == token_minus() {
+    return rust_neg_operand_supported_range(kinds, start + 1, end);
+  }
+  return false;
+}
+
+fn rust_not_operand_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start >= end {
+    return false;
+  }
+  if start + 1 == end {
+    return logic_expr_token(kinds[start]);
+  }
+  if wrapped_by_parens(kinds, start, end) {
+    return rust_not_operand_supported_range(kinds, start + 1, end - 1);
+  }
+  if rust_field_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_index_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_array_literal_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_struct_literal_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_call_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  let logical_or: Int = last_operator_in_range(kinds, start, end, token_oror());
+  if logical_or < end {
+    return rust_logic_expr_supported_range(kinds, start, logical_or)
+      && rust_logic_expr_supported_range(kinds, logical_or + 1, end);
+  }
+  let logical_and: Int = last_operator_in_range(kinds, start, end, token_andand());
+  if logical_and < end {
+    return rust_logic_expr_supported_range(kinds, start, logical_and)
+      && rust_logic_expr_supported_range(kinds, logical_and + 1, end);
+  }
+  let comparison: Int = last_comparison_operator_in_range(kinds, start, end);
+  if comparison < end {
+    return rust_binary_expr_supported_range(kinds, start, comparison)
+      && rust_binary_expr_supported_range(kinds, comparison + 1, end);
+  }
+  return rust_unary_expr_supported_range(kinds, start, end);
+}
+
+fn rust_neg_operand_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start >= end {
+    return false;
+  }
+  if start + 1 == end {
+    return binary_expr_token(kinds[start]);
+  }
+  if wrapped_by_parens(kinds, start, end) {
+    return rust_binary_expr_supported_range(kinds, start + 1, end - 1);
+  }
+  if rust_field_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_index_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_array_literal_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_call_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  return rust_binary_expr_supported_range(kinds, start, end);
+}
+
+fn rust_binary_expr_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start >= end {
+    return false;
+  }
+  if start + 1 == end {
+    return binary_expr_token(kinds[start]);
+  }
+  if wrapped_by_parens(kinds, start, end) {
+    return rust_binary_expr_supported_range(kinds, start + 1, end - 1);
+  }
+  if rust_field_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_index_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_array_literal_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_struct_literal_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_call_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  let additive: Int = last_additive_operator_in_range(kinds, start, end);
+  if additive < end {
+    return rust_binary_expr_supported_range(kinds, start, additive)
+      && rust_binary_expr_supported_range(kinds, additive + 1, end);
+  }
+  let multiplicative: Int = last_multiplicative_operator_in_range(kinds, start, end);
+  if multiplicative < end {
+    return rust_binary_expr_supported_range(kinds, start, multiplicative)
+      && rust_binary_expr_supported_range(kinds, multiplicative + 1, end);
+  }
+  return false;
+}
+
+fn rust_field_expr_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  let dot: Int = last_field_dot_in_range(kinds, start, end);
+  if dot >= end {
+    return false;
+  }
+  if dot + 1 >= end || kinds[dot + 1] != token_ident() || dot + 2 != end {
+    return false;
+  }
+  return rust_suffix_base_supported_range(kinds, start, dot);
+}
+
+fn rust_index_expr_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start + 4 > end {
+    return false;
+  }
+  if kinds[end - 1] != token_rbracket() {
+    return false;
+  }
+  let lbracket: Int = last_lbracket_in_range(kinds, start, end);
+  if lbracket >= end {
+    return false;
+  }
+  if matching_rbracket_at(kinds, lbracket) != end - 1 {
+    return false;
+  }
+  if !rust_index_base_supported_range(kinds, start, lbracket) {
+    return false;
+  }
+  return rust_expr_supported_range(kinds, lbracket + 1, end - 1);
+}
+
+fn rust_index_base_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  return rust_suffix_base_supported_range(kinds, start, end);
+}
+
+fn rust_suffix_base_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start >= end {
+    return false;
+  }
+  if start + 1 == end {
+    return kinds[start] == token_ident();
+  }
+  if wrapped_by_parens(kinds, start, end) {
+    return rust_expr_supported_range(kinds, start + 1, end - 1);
+  }
+  if rust_field_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_index_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_array_literal_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_struct_literal_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_call_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  return false;
+}
+
+fn rust_array_literal_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start + 2 > end {
+    return false;
+  }
+  if kinds[start] != token_lbracket() || kinds[end - 1] != token_rbracket() {
+    return false;
+  }
+  if matching_rbracket_at(kinds, start) != end - 1 {
+    return false;
+  }
+  return rust_array_elements_supported_range(kinds, start + 1, end - 1);
+}
+
+fn rust_array_elements_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start == end {
+    return true;
+  }
+  let mut element_start: Int = start;
+  let mut scan: Int = start;
+  let mut depth: Int = 0;
+  while scan < end {
+    if kinds[scan] == token_lparen() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_lbracket() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_lbrace() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rparen() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_rbracket() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_rbrace() && depth > 0 {
+      depth = depth - 1;
+    }
+    if depth == 0 && kinds[scan] == token_comma() {
+      if element_start == scan {
+        return false;
+      }
+      if !rust_expr_supported_range(kinds, element_start, scan) {
+        return false;
+      }
+      element_start = scan + 1;
+    }
+    scan = scan + 1;
+  }
+  if element_start == end {
+    return true;
+  }
+  return rust_expr_supported_range(kinds, element_start, end);
+}
+
+fn rust_struct_literal_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start + 3 > end {
+    return false;
+  }
+  if kinds[start] != token_ident() || kinds[start + 1] != token_lbrace() || kinds[end - 1] != token_rbrace() {
+    return false;
+  }
+  if matching_rbrace_at(kinds, start + 1) != end - 1 {
+    return false;
+  }
+  return rust_struct_fields_supported_range(kinds, start + 2, end - 1);
+}
+
+fn rust_struct_fields_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start == end {
+    return true;
+  }
+  let mut field_start: Int = start;
+  let mut scan: Int = start;
+  let mut depth: Int = 0;
+  while scan < end {
+    if kinds[scan] == token_lparen() || kinds[scan] == token_lbracket() || kinds[scan] == token_lbrace() {
+      depth = depth + 1;
+    }
+    if (kinds[scan] == token_rparen() || kinds[scan] == token_rbracket() || kinds[scan] == token_rbrace()) && depth > 0 {
+      depth = depth - 1;
+    }
+    if depth == 0 && kinds[scan] == token_comma() {
+      if field_start == scan {
+        return false;
+      }
+      if !rust_struct_field_supported_range(kinds, field_start, scan) {
+        return false;
+      }
+      field_start = scan + 1;
+    }
+    scan = scan + 1;
+  }
+  if field_start == end {
+    return true;
+  }
+  return rust_struct_field_supported_range(kinds, field_start, end);
+}
+
+fn rust_struct_field_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start + 3 > end {
+    return false;
+  }
+  if kinds[start] != token_ident() || kinds[start + 1] != token_colon() {
+    return false;
+  }
+  return rust_expr_supported_range(kinds, start + 2, end);
+}
+
+fn rust_call_expr_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start + 3 > end {
+    return false;
+  }
+  let lparen: Int = rust_call_lparen_in_range(kinds, start, end);
+  if lparen >= end || kinds[end - 1] != token_rparen() {
+    return false;
+  }
+  if !rust_call_callee_supported_range(kinds, start, lparen) {
+    return false;
+  }
+  if matching_rparen_at(kinds, lparen) != end - 1 {
+    return false;
+  }
+  return rust_call_args_supported_range(kinds, lparen + 1, end - 1);
+}
+
+fn rust_call_lparen_in_range(kinds: IntArray, start: Int, end: Int) -> Int {
+  let mut scan: Int = start;
+  while scan < end {
+    if kinds[scan] == token_lparen() {
+      return scan;
+    }
+    if kinds[scan] != token_ident() && kinds[scan] != token_dot() {
+      return end;
+    }
+    scan = scan + 1;
+  }
+  return end;
+}
+
+fn rust_call_callee_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start >= end || kinds[start] != token_ident() {
+    return false;
+  }
+  let mut scan: Int = start + 1;
+  while scan < end {
+    if scan + 1 >= end || kinds[scan] != token_dot() || kinds[scan + 1] != token_ident() {
+      return false;
+    }
+    scan = scan + 2;
+  }
+  return true;
+}
+
+fn rust_call_args_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start == end {
+    return true;
+  }
+  let mut arg_start: Int = start;
+  let mut scan: Int = start;
+  let mut depth: Int = 0;
+  while scan < end {
+    if kinds[scan] == token_lparen() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_lbracket() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_lbrace() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rparen() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_rbracket() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_rbrace() && depth > 0 {
+      depth = depth - 1;
+    }
+    if depth == 0 && kinds[scan] == token_comma() {
+      if !rust_expr_supported_range(kinds, arg_start, scan) {
+        return false;
+      }
+      arg_start = scan + 1;
+    }
+    scan = scan + 1;
+  }
+  return rust_expr_supported_range(kinds, arg_start, end);
+}
+
+fn range_contains_call_shape(kinds: IntArray, start: Int, end: Int) -> Bool {
+  let mut scan: Int = start;
+  while scan + 1 < end {
+    if kinds[scan] == token_ident() && kinds[scan + 1] == token_lparen() {
+      return true;
+    }
+    scan = scan + 1;
+  }
+  return false;
+}
+
+fn range_contains_struct_shape(kinds: IntArray, start: Int, end: Int) -> Bool {
+  let mut scan: Int = start;
+  while scan + 1 < end {
+    if kinds[scan] == token_ident() && kinds[scan + 1] == token_lbrace() {
+      return true;
+    }
+    scan = scan + 1;
+  }
+  return false;
+}
+
+fn simple_expr_token(kind: Int) -> Bool {
+  return kind == token_ident() || kind == token_int() || kind == token_string() || kind == token_bool();
+}
+
+fn binary_expr_token(kind: Int) -> Bool {
+  return kind == token_ident() || kind == token_int();
+}
+
+fn logic_expr_token(kind: Int) -> Bool {
+  return kind == token_ident() || kind == token_bool();
+}
+
+fn append_rust_expr_stmt_at(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  index: Int,
+  indent: String
+) -> String {
+  return append_rust_expr_range(out, kinds, texts, index, stmt_expr_end_at(kinds, index), indent);
+}
+
+fn append_rust_expr_range(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  start: Int,
+  end: Int,
+  indent: String
+) -> String {
+  if wrapped_by_parens(kinds, start, end) {
+    return append_rust_expr_range(out, kinds, texts, start + 1, end - 1, indent);
+  }
+  if rust_field_expr_supported_range(kinds, start, end) {
+    return append_rust_field_expr_range(out, kinds, texts, start, end, indent);
+  }
+  if rust_index_expr_supported_range(kinds, start, end) {
+    return append_rust_index_expr_range(out, kinds, texts, start, end, indent);
+  }
+  if rust_array_literal_supported_range(kinds, start, end) {
+    return append_rust_array_literal_range(out, kinds, texts, start, end, indent);
+  }
+  if rust_struct_literal_supported_range(kinds, start, end) {
+    return append_rust_struct_literal_range(out, kinds, texts, start, end, indent);
+  }
+  if rust_call_expr_supported_range(kinds, start, end) {
+    return append_rust_call_expr_range(out, kinds, texts, start, end, indent);
+  }
+  let logical_or: Int = last_operator_in_range(kinds, start, end, token_oror());
+  if logical_or < end {
+    let mut next: String = string_concat(out, indent);
+    next = append_rust_binary_op_header(next, kinds[logical_or]);
+    let child_indent: String = string_concat(indent, "  ");
+    next = append_rust_expr_range(next, kinds, texts, start, logical_or, child_indent);
+    next = append_rust_expr_range(next, kinds, texts, logical_or + 1, end, child_indent);
+    return next;
+  }
+  let logical_and: Int = last_operator_in_range(kinds, start, end, token_andand());
+  if logical_and < end {
+    let mut next: String = string_concat(out, indent);
+    next = append_rust_binary_op_header(next, kinds[logical_and]);
+    let child_indent: String = string_concat(indent, "  ");
+    next = append_rust_expr_range(next, kinds, texts, start, logical_and, child_indent);
+    next = append_rust_expr_range(next, kinds, texts, logical_and + 1, end, child_indent);
+    return next;
+  }
+  let comparison: Int = last_comparison_operator_in_range(kinds, start, end);
+  if comparison < end {
+    let mut next: String = string_concat(out, indent);
+    next = append_rust_binary_op_header(next, kinds[comparison]);
+    let child_indent: String = string_concat(indent, "  ");
+    next = append_rust_expr_range(next, kinds, texts, start, comparison, child_indent);
+    next = append_rust_expr_range(next, kinds, texts, comparison + 1, end, child_indent);
+    return next;
+  }
+  let additive: Int = last_additive_operator_in_range(kinds, start, end);
+  if additive < end {
+    let mut next: String = string_concat(out, indent);
+    next = append_rust_binary_op_header(next, kinds[additive]);
+    let child_indent: String = string_concat(indent, "  ");
+    next = append_rust_expr_range(next, kinds, texts, start, additive, child_indent);
+    next = append_rust_expr_range(next, kinds, texts, additive + 1, end, child_indent);
+    return next;
+  }
+  let multiplicative: Int = last_multiplicative_operator_in_range(kinds, start, end);
+  if multiplicative < end {
+    let mut next: String = string_concat(out, indent);
+    next = append_rust_binary_op_header(next, kinds[multiplicative]);
+    let child_indent: String = string_concat(indent, "  ");
+    next = append_rust_expr_range(next, kinds, texts, start, multiplicative, child_indent);
+    next = append_rust_expr_range(next, kinds, texts, multiplicative + 1, end, child_indent);
+    return next;
+  }
+  if kinds[start] == token_bang() {
+    let mut next: String = string_concat(out, indent);
+    next = string_concat(next, "Unary op=not\n");
+    let child_indent: String = string_concat(indent, "  ");
+    next = append_rust_expr_range(next, kinds, texts, start + 1, end, child_indent);
+    return next;
+  }
+  if kinds[start] == token_minus() {
+    let mut next: String = string_concat(out, indent);
+    next = string_concat(next, "Unary op=neg\n");
+    let child_indent: String = string_concat(indent, "  ");
+    next = append_rust_expr_range(next, kinds, texts, start + 1, end, child_indent);
+    return next;
+  }
+  return append_rust_simple_expr_at(out, kinds, texts, start, indent);
+}
+
+fn append_rust_field_expr_range(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  start: Int,
+  end: Int,
+  indent: String
+) -> String {
+  let dot: Int = last_field_dot_in_range(kinds, start, end);
+  let mut next: String = string_concat(out, indent);
+  next = string_concat(next, "FieldAccess field=");
+  next = string_concat(next, texts[dot + 1]);
+  next = string_concat(next, "\n");
+  let child_indent: String = string_concat(indent, "  ");
+  return append_rust_expr_range(next, kinds, texts, start, dot, child_indent);
+}
+
+fn append_rust_index_expr_range(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  start: Int,
+  end: Int,
+  indent: String
+) -> String {
+  let lbracket: Int = last_lbracket_in_range(kinds, start, end);
+  let mut next: String = string_concat(out, indent);
+  next = string_concat(next, "Index\n");
+  next = string_concat(next, indent);
+  next = string_concat(next, "  Base\n");
+  let nested_indent: String = string_concat(indent, "    ");
+  next = append_rust_expr_range(next, kinds, texts, start, lbracket, nested_indent);
+  next = string_concat(next, indent);
+  next = string_concat(next, "  Index\n");
+  return append_rust_expr_range(next, kinds, texts, lbracket + 1, end - 1, nested_indent);
+}
+
+fn append_rust_array_literal_range(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  start: Int,
+  end: Int,
+  indent: String
+) -> String {
+  let mut next: String = string_concat(out, indent);
+  next = string_concat(next, "ArrayLiteral\n");
+  let child_indent: String = string_concat(indent, "  ");
+  return append_rust_array_elements_range(next, kinds, texts, start + 1, end - 1, child_indent);
+}
+
+fn append_rust_array_elements_range(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  start: Int,
+  end: Int,
+  indent: String
+) -> String {
+  let mut next: String = out;
+  let mut element_start: Int = start;
+  let mut scan: Int = start;
+  let mut depth: Int = 0;
+  while scan < end {
+    if kinds[scan] == token_lparen() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_lbracket() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_lbrace() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rparen() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_rbracket() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_rbrace() && depth > 0 {
+      depth = depth - 1;
+    }
+    if depth == 0 && kinds[scan] == token_comma() {
+      if element_start < scan {
+        next = append_rust_expr_range(next, kinds, texts, element_start, scan, indent);
+      }
+      element_start = scan + 1;
+    }
+    scan = scan + 1;
+  }
+  if element_start < end {
+    next = append_rust_expr_range(next, kinds, texts, element_start, end, indent);
+  }
+  return next;
+}
+
+fn append_rust_struct_literal_range(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  start: Int,
+  end: Int,
+  indent: String
+) -> String {
+  let mut next: String = string_concat(out, indent);
+  next = string_concat(next, "StructLiteral type=");
+  next = string_concat(next, texts[start]);
+  next = string_concat(next, "\n");
+  return append_rust_struct_fields_range(next, kinds, texts, start + 2, end - 1, indent);
+}
+
+fn append_rust_struct_fields_range(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  start: Int,
+  end: Int,
+  indent: String
+) -> String {
+  let mut next: String = out;
+  let mut field_start: Int = start;
+  let mut scan: Int = start;
+  let mut depth: Int = 0;
+  while scan < end {
+    if kinds[scan] == token_lparen() || kinds[scan] == token_lbracket() || kinds[scan] == token_lbrace() {
+      depth = depth + 1;
+    }
+    if (kinds[scan] == token_rparen() || kinds[scan] == token_rbracket() || kinds[scan] == token_rbrace()) && depth > 0 {
+      depth = depth - 1;
+    }
+    if depth == 0 && kinds[scan] == token_comma() {
+      if field_start < scan {
+        next = append_rust_struct_field_range(next, kinds, texts, field_start, scan, indent);
+      }
+      field_start = scan + 1;
+    }
+    scan = scan + 1;
+  }
+  if field_start < end {
+    next = append_rust_struct_field_range(next, kinds, texts, field_start, end, indent);
+  }
+  return next;
+}
+
+fn append_rust_struct_field_range(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  start: Int,
+  end: Int,
+  indent: String
+) -> String {
+  let mut next: String = string_concat(out, indent);
+  next = string_concat(next, "  FieldInit name=");
+  next = string_concat(next, texts[start]);
+  next = string_concat(next, "\n");
+  let value_indent: String = string_concat(indent, "    ");
+  return append_rust_expr_range(next, kinds, texts, start + 2, end, value_indent);
+}
+
+fn append_rust_call_expr_range(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  start: Int,
+  end: Int,
+  indent: String
+) -> String {
+  let lparen: Int = rust_call_lparen_in_range(kinds, start, end);
+  let mut next: String = string_concat(out, indent);
+  next = string_concat(next, "Call callee=");
+  next = string_concat(next, rust_call_callee_text_range(kinds, texts, start, lparen));
+  next = string_concat(next, "\n");
+  let child_indent: String = string_concat(indent, "  ");
+  return append_rust_call_args_range(next, kinds, texts, lparen + 1, end - 1, child_indent);
+}
+
+fn rust_call_callee_text_range(kinds: IntArray, texts: StringArray, start: Int, end: Int) -> String {
+  let mut out: String = "";
+  let mut scan: Int = start;
+  while scan < end {
+    if kinds[scan] == token_ident() {
+      if out != "" {
+        out = string_concat(out, ".");
+      }
+      out = string_concat(out, texts[scan]);
+    }
+    scan = scan + 1;
+  }
+  return out;
+}
+
+fn append_rust_call_args_range(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  start: Int,
+  end: Int,
+  indent: String
+) -> String {
+  let mut next: String = out;
+  let mut arg_start: Int = start;
+  let mut scan: Int = start;
+  let mut depth: Int = 0;
+  while scan < end {
+    if kinds[scan] == token_lparen() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_lbracket() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_lbrace() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rparen() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_rbracket() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_rbrace() && depth > 0 {
+      depth = depth - 1;
+    }
+    if depth == 0 && kinds[scan] == token_comma() {
+      next = append_rust_expr_range(next, kinds, texts, arg_start, scan, indent);
+      arg_start = scan + 1;
+    }
+    scan = scan + 1;
+  }
+  if arg_start < end {
+    next = append_rust_expr_range(next, kinds, texts, arg_start, end, indent);
+  }
+  return next;
+}
+
+fn append_rust_binary_op_header(out: String, operator: Int) -> String {
+  let mut next: String = string_concat(out, "Binary op=");
+  if operator == token_plus() {
+    next = string_concat(next, "add");
+  }
+  if operator == token_minus() {
+    next = string_concat(next, "sub");
+  }
+  if operator == token_star() {
+    next = string_concat(next, "mul");
+  }
+  if operator == token_slash() {
+    next = string_concat(next, "div");
+  }
+  if operator == token_eqeq() {
+    next = string_concat(next, "eq");
+  }
+  if operator == token_bangeq() {
+    next = string_concat(next, "not_eq");
+  }
+  if operator == token_lt() {
+    next = string_concat(next, "lt");
+  }
+  if operator == token_lte() {
+    next = string_concat(next, "lte");
+  }
+  if operator == token_gt() {
+    next = string_concat(next, "gt");
+  }
+  if operator == token_gte() {
+    next = string_concat(next, "gte");
+  }
+  if operator == token_andand() {
+    next = string_concat(next, "and");
+  }
+  if operator == token_oror() {
+    next = string_concat(next, "or");
+  }
+  next = string_concat(next, "\n");
+  return next;
+}
+
+fn last_comparison_operator_in_range(kinds: IntArray, start: Int, end: Int) -> Int {
+  let mut scan: Int = end;
+  let mut depth: Int = 0;
+  while scan > start {
+    scan = scan - 1;
+    if kinds[scan] == token_rparen() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rbracket() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rbrace() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_lparen() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_lbracket() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_lbrace() && depth > 0 {
+      depth = depth - 1;
+    }
+    if depth == 0 && comparison_operator(kinds[scan]) {
+      return scan;
+    }
+  }
+  return end;
+}
+
+fn comparison_operator(kind: Int) -> Bool {
+  return kind == token_eqeq()
+    || kind == token_bangeq()
+    || kind == token_lt()
+    || kind == token_lte()
+    || kind == token_gt()
+    || kind == token_gte();
+}
+
+fn last_additive_operator_in_range(kinds: IntArray, start: Int, end: Int) -> Int {
+  return last_operator_pair_in_range(kinds, start, end, token_plus(), token_minus());
+}
+
+fn last_multiplicative_operator_in_range(kinds: IntArray, start: Int, end: Int) -> Int {
+  return last_operator_pair_in_range(kinds, start, end, token_star(), token_slash());
+}
+
+fn last_operator_pair_in_range(kinds: IntArray, start: Int, end: Int, first: Int, second: Int) -> Int {
+  let mut scan: Int = end;
+  let mut depth: Int = 0;
+  while scan > start {
+    scan = scan - 1;
+    if kinds[scan] == token_rparen() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rbracket() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rbrace() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_lparen() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_lbracket() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_lbrace() && depth > 0 {
+      depth = depth - 1;
+    }
+    if depth == 0 && (kinds[scan] == first || kinds[scan] == second) && operator_is_binary_at(kinds, start, scan) {
+      return scan;
+    }
+  }
+  return end;
+}
+
+fn operator_is_binary_at(kinds: IntArray, start: Int, index: Int) -> Bool {
+  if index <= start {
+    return false;
+  }
+  let previous: Int = kinds[index - 1];
+  if previous == token_plus()
+    || previous == token_minus()
+    || previous == token_star()
+    || previous == token_slash()
+    || previous == token_eq()
+    || previous == token_eqeq()
+    || previous == token_bangeq()
+    || previous == token_lt()
+    || previous == token_lte()
+    || previous == token_gt()
+    || previous == token_gte()
+    || previous == token_andand()
+    || previous == token_oror()
+    || previous == token_lparen()
+    || previous == token_lbracket()
+    || previous == token_lbrace()
+    || previous == token_comma()
+    || previous == token_colon()
+    || previous == token_arrow() {
+    return false;
+  }
+  return true;
+}
+
+fn last_operator_in_range(kinds: IntArray, start: Int, end: Int, operator: Int) -> Int {
+  let mut scan: Int = end;
+  let mut depth: Int = 0;
+  while scan > start {
+    scan = scan - 1;
+    if kinds[scan] == token_rparen() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rbracket() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rbrace() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_lparen() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_lbracket() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_lbrace() && depth > 0 {
+      depth = depth - 1;
+    }
+    if depth == 0 && kinds[scan] == operator {
+      return scan;
+    }
+  }
+  return end;
+}
+
+fn last_field_dot_in_range(kinds: IntArray, start: Int, end: Int) -> Int {
+  let mut scan: Int = end;
+  let mut depth: Int = 0;
+  while scan > start {
+    scan = scan - 1;
+    if kinds[scan] == token_rparen() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rbracket() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rbrace() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_lparen() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_lbracket() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_lbrace() && depth > 0 {
+      depth = depth - 1;
+    }
+    if depth == 0 && kinds[scan] == token_dot() {
+      return scan;
+    }
+  }
+  return end;
+}
+
+fn last_lbracket_in_range(kinds: IntArray, start: Int, end: Int) -> Int {
+  let mut scan: Int = end;
+  let mut depth: Int = 0;
+  while scan > start {
+    scan = scan - 1;
+    if kinds[scan] == token_rbracket() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_lbracket() {
+      if depth > 0 {
+        depth = depth - 1;
+      }
+      if depth == 0 {
+        return scan;
+      }
+    }
+  }
+  return end;
+}
+
+fn wrapped_by_parens(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start + 2 > end {
+    return false;
+  }
+  if kinds[start] != token_lparen() || kinds[end - 1] != token_rparen() {
+    return false;
+  }
+  let mut scan: Int = start;
+  let mut depth: Int = 0;
+  while scan < end {
+    if kinds[scan] == token_lparen() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rparen() {
+      depth = depth - 1;
+      if depth == 0 && scan + 1 < end {
+        return false;
+      }
+    }
+    scan = scan + 1;
+  }
+  return depth == 0;
+}
+
+fn matching_rparen_at(kinds: IntArray, lparen: Int) -> Int {
+  let mut scan: Int = lparen;
+  let mut depth: Int = 0;
+  while scan < kinds.len {
+    if kinds[scan] == token_lparen() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rparen() {
+      depth = depth - 1;
+      if depth == 0 {
+        return scan;
+      }
+    }
+    scan = scan + 1;
+  }
+  return kinds.len;
+}
+
+fn matching_rbracket_at(kinds: IntArray, lbracket: Int) -> Int {
+  let mut scan: Int = lbracket;
+  let mut depth: Int = 0;
+  while scan < kinds.len {
+    if kinds[scan] == token_lbracket() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rbracket() {
+      depth = depth - 1;
+      if depth == 0 {
+        return scan;
+      }
+    }
+    scan = scan + 1;
+  }
+  return kinds.len;
+}
+
+fn matching_rbrace_at(kinds: IntArray, lbrace: Int) -> Int {
+  let mut scan: Int = lbrace;
+  let mut depth: Int = 0;
+  while scan < kinds.len {
+    if kinds[scan] == token_lbrace() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rbrace() {
+      depth = depth - 1;
+      if depth == 0 {
+        return scan;
+      }
+    }
+    scan = scan + 1;
+  }
+  return kinds.len;
+}
+
+fn append_rust_simple_expr_at(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  index: Int,
+  indent: String
+) -> String {
+  let mut next: String = out;
+  next = string_concat(next, indent);
+  if kinds[index] == token_int() {
+    next = string_concat(next, "Int ");
+  }
+  if kinds[index] == token_string() {
+    next = string_concat(next, "String ");
+  }
+  if kinds[index] == token_bool() {
+    next = string_concat(next, "Bool ");
+  }
+  if kinds[index] == token_ident() {
+    next = string_concat(next, "Name ");
+  }
+  next = string_concat(next, texts[index]);
+  next = string_concat(next, "\n");
+  return next;
+}
+
+fn append_param_lines_at(out: String, kinds: IntArray, texts: StringArray, index: Int) -> String {
+  let mut scan: Int = index + 1;
+  while scan < kinds.len && kinds[scan] != token_lparen() {
+    scan = scan + 1;
+  }
+  if scan < kinds.len {
+    scan = scan + 1;
+  }
+  let mut next: String = out;
+  while scan + 2 < kinds.len && kinds[scan] != token_rparen() {
+    if kinds[scan] == token_ident() && kinds[scan + 1] == token_colon() {
+      next = string_concat(next, "    param name=");
+      next = string_concat(next, texts[scan]);
+      next = string_concat(next, " type=");
+      next = string_concat(next, texts[scan + 2]);
+      next = string_concat(next, "\n");
+      scan = scan + 2;
+    }
+    scan = scan + 1;
+  }
+  return next;
+}
+
+fn return_type_text_at(kinds: IntArray, texts: StringArray, index: Int) -> String {
+  let return_type: String = explicit_return_type_text_at(kinds, texts, index);
+  if return_type != "" {
+    return return_type;
+  }
+  return "Unit";
+}
+
+fn explicit_return_type_text_at(kinds: IntArray, texts: StringArray, index: Int) -> String {
+  let mut scan: Int = index + 1;
+  while scan + 1 < kinds.len && kinds[scan] != token_lbrace() {
+    if kinds[scan] == token_arrow() {
+      return texts[scan + 1];
+    }
+    scan = scan + 1;
+  }
+  return "";
+}
+
+fn bool_text(value: Bool) -> String {
+  if value {
+    return "true";
+  }
+  return "false";
+}
+
+fn import_has_alias_at(kinds: IntArray, index: Int) -> Bool {
+  let mut scan: Int = index + 1;
+  while scan < kinds.len && kinds[scan] != token_semicolon() {
+    if kinds[scan] == token_as() {
+      return true;
+    }
+    scan = scan + 1;
+  }
+  return false;
+}
+
+fn import_alias_text_at(kinds: IntArray, texts: StringArray, index: Int) -> String {
+  let mut scan: Int = index + 1;
+  while scan + 1 < kinds.len && kinds[scan] != token_semicolon() {
+    if kinds[scan] == token_as() {
+      return texts[scan + 1];
+    }
+    scan = scan + 1;
+  }
+  return "";
+}
+
+fn path_text_at(kinds: IntArray, texts: StringArray, index: Int) -> String {
+  let mut scan: Int = index + 1;
+  let mut out: String = "";
+  let mut first: Bool = true;
+  while scan < kinds.len && kinds[scan] != token_semicolon() && kinds[scan] != token_as() {
+    if kinds[scan] == token_ident() {
+      if first {
+        out = texts[scan];
+        first = false;
+      } else {
+        out = string_concat(out, ".");
+        out = string_concat(out, texts[scan]);
+      }
+    }
+    scan = scan + 1;
+  }
+  return out;
+}
+
+fn ident_text_after(texts: StringArray, index: Int) -> String {
+  if index + 1 < texts.len {
+    return texts[index + 1];
+  }
+  return "unknown";
+}
+
+fn count_import_path_segments_at(kinds: IntArray, index: Int) -> Int {
+  let mut scan: Int = index + 1;
+  let mut count: Int = 0;
+  while scan < kinds.len && kinds[scan] != token_semicolon() && kinds[scan] != token_as() {
+    if kinds[scan] == token_ident() {
+      count = count + 1;
+    }
+    scan = scan + 1;
+  }
+  return count;
+}
+
+fn count_top_level_import_aliases(kinds: IntArray) -> Int {
+  let mut index: Int = 0;
+  let mut depth: Int = 0;
+  let mut count: Int = 0;
+  while index < kinds.len {
+    let kind: Int = kinds[index];
+    if depth == 0 && kind == token_import() {
+      let mut scan: Int = index + 1;
+      while scan < kinds.len && kinds[scan] != token_semicolon() {
+        if kinds[scan] == token_as() {
+          count = count + 1;
+        }
+        scan = scan + 1;
+      }
+    }
+    if kind == token_lbrace() {
+      depth = depth + 1;
+    }
+    if kind == token_rbrace() && depth > 0 {
+      depth = depth - 1;
+    }
+    index = index + 1;
+  }
+  return count;
+}
+
+fn count_top_level_import_path_segments(kinds: IntArray) -> Int {
+  let mut index: Int = 0;
+  let mut depth: Int = 0;
+  let mut count: Int = 0;
+  while index < kinds.len {
+    let kind: Int = kinds[index];
+    if depth == 0 && kind == token_import() {
+      let mut scan: Int = index + 1;
+      while scan < kinds.len && kinds[scan] != token_semicolon() && kinds[scan] != token_as() {
+        if kinds[scan] == token_ident() {
+          count = count + 1;
+        }
+        scan = scan + 1;
+      }
+    }
+    if kind == token_lbrace() {
+      depth = depth + 1;
+    }
+    if kind == token_rbrace() && depth > 0 {
+      depth = depth - 1;
+    }
+    index = index + 1;
+  }
+  return count;
+}
+
+fn count_top_level_export_target(kinds: IntArray, target: Int) -> Int {
+  let mut index: Int = 0;
+  let mut depth: Int = 0;
+  let mut count: Int = 0;
+  while index + 1 < kinds.len {
+    let kind: Int = kinds[index];
+    if depth == 0 && kind == token_export() && kinds[index + 1] == target {
+      count = count + 1;
+    }
+    if kind == token_lbrace() {
+      depth = depth + 1;
+    }
+    if kind == token_rbrace() && depth > 0 {
+      depth = depth - 1;
+    }
+    index = index + 1;
+  }
+  return count;
+}
+
+fn count_top_level_token(kinds: IntArray, token: Int) -> Int {
+  let mut index: Int = 0;
+  let mut depth: Int = 0;
+  let mut count: Int = 0;
+  while index < kinds.len {
+    let kind: Int = kinds[index];
+    if depth == 0 && kind == token {
+      count = count + 1;
+    }
+    if kind == token_lbrace() {
+      depth = depth + 1;
+    }
+    if kind == token_rbrace() && depth > 0 {
+      depth = depth - 1;
+    }
+    index = index + 1;
+  }
+  return count;
+}
+
 fn lex_kinds(source: String) -> IntArray {
   let mut kinds: IntArray = int_array_empty();
   let mut index: Int = 0;
@@ -58,6 +2582,13 @@ fn lex_kinds(source: String) -> IntArray {
     let mut handled: Bool = false;
     if !handled && ascii_is_whitespace(byte) {
       index = index + 1;
+      handled = true;
+    }
+    if !handled && byte == 47 && index + 1 < len && string_byte_at(source, index + 1) == 47 {
+      index = index + 2;
+      while index < len && string_byte_at(source, index) != 10 {
+        index = index + 1;
+      }
       handled = true;
     }
     if !handled && is_ident_start(byte) {
@@ -81,7 +2612,11 @@ fn lex_kinds(source: String) -> IntArray {
     if !handled && byte == 34 {
       index = index + 1;
       while index < len && string_byte_at(source, index) != 34 {
-        index = index + 1;
+        if string_byte_at(source, index) == 92 && index + 1 < len {
+          index = index + 2;
+        } else {
+          index = index + 1;
+        }
       }
       if index < len {
         index = index + 1;
@@ -95,6 +2630,67 @@ fn lex_kinds(source: String) -> IntArray {
     }
   }
   return int_array_push(kinds, token_eof());
+}
+
+fn lex_texts(source: String) -> StringArray {
+  let mut texts: StringArray = string_array_empty();
+  let mut index: Int = 0;
+  let len: Int = string_len(source);
+  while index < len {
+    let byte: Int = string_byte_at(source, index);
+    let mut handled: Bool = false;
+    if !handled && ascii_is_whitespace(byte) {
+      index = index + 1;
+      handled = true;
+    }
+    if !handled && byte == 47 && index + 1 < len && string_byte_at(source, index + 1) == 47 {
+      index = index + 2;
+      while index < len && string_byte_at(source, index) != 10 {
+        index = index + 1;
+      }
+      handled = true;
+    }
+    if !handled && is_ident_start(byte) {
+      let start: Int = index;
+      index = index + 1;
+      while index < len && is_ident_continue(string_byte_at(source, index)) {
+        index = index + 1;
+      }
+      texts = string_array_push(texts, string_byte_slice(source, start, index - start));
+      handled = true;
+    }
+    if !handled && ascii_is_digit(byte) {
+      let start: Int = index;
+      index = index + 1;
+      while index < len && ascii_is_digit(string_byte_at(source, index)) {
+        index = index + 1;
+      }
+      texts = string_array_push(texts, string_byte_slice(source, start, index - start));
+      handled = true;
+    }
+    if !handled && byte == 34 {
+      let start: Int = index;
+      index = index + 1;
+      while index < len && string_byte_at(source, index) != 34 {
+        if string_byte_at(source, index) == 92 && index + 1 < len {
+          index = index + 2;
+        } else {
+          index = index + 1;
+        }
+      }
+      if index < len {
+        index = index + 1;
+      }
+      texts = string_array_push(texts, string_byte_slice(source, start, index - start));
+      handled = true;
+    }
+    if !handled {
+      let width: Int = symbol_width(source, index);
+      texts = string_array_push(texts, string_byte_slice(source, index, width));
+      index = index + width;
+    }
+  }
+  return string_array_push(texts, "");
 }
 
 fn symbol_width(source: String, index: Int) -> Int {
@@ -115,6 +2711,12 @@ fn symbol_width(source: String, index: Int) -> Int {
   if byte == 124 && index + 1 < len && string_byte_at(source, index + 1) == 124 {
     return 2;
   }
+  if byte == 60 && index + 1 < len && string_byte_at(source, index + 1) == 61 {
+    return 2;
+  }
+  if byte == 62 && index + 1 < len && string_byte_at(source, index + 1) == 61 {
+    return 2;
+  }
   return 1;
 }
 
@@ -133,6 +2735,9 @@ fn keyword_or_ident(text: String) -> Int {
   if text == "import" {
     return token_import();
   }
+  if text == "as" {
+    return token_as();
+  }
   if text == "export" {
     return token_export();
   }
@@ -147,6 +2752,12 @@ fn keyword_or_ident(text: String) -> Int {
   }
   if text == "return" {
     return token_return();
+  }
+  if text == "break" {
+    return token_break();
+  }
+  if text == "continue" {
+    return token_continue();
   }
   if text == "if" {
     return token_if();
@@ -226,15 +2837,27 @@ fn symbol_kind(source: String, index: Int) -> Int {
     return token_bang();
   }
   if byte == 38 {
-    return token_andand();
+    if index + 1 < string_len(source) && string_byte_at(source, index + 1) == 38 {
+      return token_andand();
+    }
+    return token_unknown();
   }
   if byte == 124 {
-    return token_oror();
+    if index + 1 < string_len(source) && string_byte_at(source, index + 1) == 124 {
+      return token_oror();
+    }
+    return token_unknown();
   }
   if byte == 60 {
+    if index + 1 < string_len(source) && string_byte_at(source, index + 1) == 61 {
+      return token_lte();
+    }
     return token_lt();
   }
   if byte == 62 {
+    if index + 1 < string_len(source) && string_byte_at(source, index + 1) == 61 {
+      return token_gte();
+    }
     return token_gt();
   }
   if byte == 43 {
@@ -256,17 +2879,20 @@ fn token_string() -> Int { return 3; }
 fn token_bool() -> Int { return 4; }
 fn token_module() -> Int { return 10; }
 fn token_import() -> Int { return 11; }
-fn token_export() -> Int { return 12; }
-fn token_fn() -> Int { return 13; }
-fn token_let() -> Int { return 14; }
-fn token_mut() -> Int { return 15; }
-fn token_return() -> Int { return 16; }
-fn token_if() -> Int { return 17; }
-fn token_else() -> Int { return 18; }
-fn token_while() -> Int { return 19; }
-fn token_match() -> Int { return 20; }
-fn token_struct() -> Int { return 21; }
-fn token_enum() -> Int { return 22; }
+fn token_as() -> Int { return 12; }
+fn token_export() -> Int { return 13; }
+fn token_fn() -> Int { return 14; }
+fn token_let() -> Int { return 15; }
+fn token_mut() -> Int { return 16; }
+fn token_return() -> Int { return 17; }
+fn token_break() -> Int { return 18; }
+fn token_continue() -> Int { return 19; }
+fn token_if() -> Int { return 20; }
+fn token_else() -> Int { return 21; }
+fn token_while() -> Int { return 22; }
+fn token_match() -> Int { return 23; }
+fn token_struct() -> Int { return 24; }
+fn token_enum() -> Int { return 25; }
 fn token_lparen() -> Int { return 30; }
 fn token_rparen() -> Int { return 31; }
 fn token_lbrace() -> Int { return 32; }
@@ -285,9 +2911,11 @@ fn token_bangeq() -> Int { return 44; }
 fn token_andand() -> Int { return 45; }
 fn token_oror() -> Int { return 46; }
 fn token_lt() -> Int { return 47; }
-fn token_gt() -> Int { return 48; }
-fn token_plus() -> Int { return 49; }
-fn token_minus() -> Int { return 50; }
-fn token_star() -> Int { return 51; }
-fn token_slash() -> Int { return 52; }
+fn token_lte() -> Int { return 48; }
+fn token_gt() -> Int { return 49; }
+fn token_gte() -> Int { return 50; }
+fn token_plus() -> Int { return 51; }
+fn token_minus() -> Int { return 52; }
+fn token_star() -> Int { return 53; }
+fn token_slash() -> Int { return 54; }
 fn token_unknown() -> Int { return 99; }

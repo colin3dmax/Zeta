@@ -702,6 +702,7 @@ textarea {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 14px;
   line-height: 1.55;
+  cursor: text;
 }
 
 .terminal-line {
@@ -902,6 +903,7 @@ textarea {
 }
 
 .terminal-completion button {
+  cursor: pointer;
   border-color: #fff;
   background: #111;
   color: #fff;
