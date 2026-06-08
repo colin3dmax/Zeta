@@ -1498,7 +1498,7 @@ module stage2.rust_control_flow_boundaries;
 import stage1.frontend;
 
 fn main() -> String {
-  let source: String = "fn main() -> Int { let text: String = \"if fake { break; } while fake { continue; }\"; // if comment { break; }\n if true { return 1; } let mut value: Int = 0; while check(outer()) { value = value + 1; } return value; }";
+  let source: String = "fn main() -> Int { let text: String = \"if fake { break; } while fake { continue; }\"; // if comment { break; }\n if true == false { return 1; } let mut value: Int = 0; while \"x\" != \"y\" { value = value + 1; } while check(outer()) { value = value + 1; } return value; }";
   return stage1.frontend.ast_dump_rust_item_dump(source);
 }
 "#;
@@ -1516,7 +1516,7 @@ fn main() -> String {
 
     assert_eq!(
         value.to_string(),
-        "Module\n  Function name=main exported=false\n    Return type=Int\n    Let name=text type=String\n      String \"if fake { break; } while fake { continue; }\"\n    If\n      Condition\n        Bool true\n      Then\n        Return\n          Int 1\n    Let name=value type=Int mutable=true\n      Int 0\n    While\n      Condition\n        Call callee=check\n          Call callee=outer\n      Body\n        Assign name=value\n          Binary op=add\n            Name value\n            Int 1\n    Return\n      Name value\n"
+        "Module\n  Function name=main exported=false\n    Return type=Int\n    Let name=text type=String\n      String \"if fake { break; } while fake { continue; }\"\n    If\n      Condition\n        Binary op=eq\n          Bool true\n          Bool false\n      Then\n        Return\n          Int 1\n    Let name=value type=Int mutable=true\n      Int 0\n    While\n      Condition\n        Binary op=not_eq\n          String \"x\"\n          String \"y\"\n      Body\n        Assign name=value\n          Binary op=add\n            Name value\n            Int 1\n    While\n      Condition\n        Call callee=check\n          Call callee=outer\n      Body\n        Assign name=value\n          Binary op=add\n            Name value\n            Int 1\n    Return\n      Name value\n"
     );
 }
 
@@ -1582,7 +1582,7 @@ module stage2.rust_match_boundaries;
 import stage1.frontend;
 
 fn main() -> String {
-  let source: String = "fn main() -> Int { let text: String = \"match fake { _ -> { return 1; } }\"; // match comment { 0 -> { return 2; } }\n match value { 0 -> { if true { return 1; } }, _ -> { return 0; } } match check(outer()) { _ -> { return 9; } } return 3; }";
+  let source: String = "fn main() -> Int { let text: String = \"match fake { _ -> { return 1; } }\"; // match comment { 0 -> { return 2; } }\n match value { 0 -> { if true == false { return 1; } }, _ -> { return 0; } } match \"x\" != \"y\" { _ -> { return 8; } } match check(outer()) { _ -> { return 9; } } return 3; }";
   return stage1.frontend.ast_dump_rust_item_dump(source);
 }
 "#;
@@ -1600,7 +1600,7 @@ fn main() -> String {
 
     assert_eq!(
         value.to_string(),
-        "Module\n  Function name=main exported=false\n    Return type=Int\n    Let name=text type=String\n      String \"match fake { _ -> { return 1; } }\"\n    Match\n      Value\n        Name value\n      Arm pattern=int:0\n        If\n          Condition\n            Bool true\n          Then\n            Return\n              Int 1\n      Arm pattern=_\n        Return\n          Int 0\n    Match\n      Value\n        Call callee=check\n          Call callee=outer\n      Arm pattern=_\n        Return\n          Int 9\n    Return\n      Int 3\n"
+        "Module\n  Function name=main exported=false\n    Return type=Int\n    Let name=text type=String\n      String \"match fake { _ -> { return 1; } }\"\n    Match\n      Value\n        Name value\n      Arm pattern=int:0\n        If\n          Condition\n            Binary op=eq\n              Bool true\n              Bool false\n          Then\n            Return\n              Int 1\n      Arm pattern=_\n        Return\n          Int 0\n    Match\n      Value\n        Binary op=not_eq\n          String \"x\"\n          String \"y\"\n      Arm pattern=_\n        Return\n          Int 8\n    Match\n      Value\n        Call callee=check\n          Call callee=outer\n      Arm pattern=_\n        Return\n          Int 9\n    Return\n      Int 3\n"
     );
 }
 
@@ -1872,7 +1872,7 @@ module stage2.rust_comparison_boundaries;
 import stage1.frontend;
 
 fn main() -> String {
-  let source: String = "fn main() -> Bool { let bools: Bool = true == false; let chain: Bool = 1 < 2 < 3; let path: Bool = math.check(ready); return math.check(path); }";
+  let source: String = "fn main() -> Bool { let bools: Bool = true == false; let strings: Bool = \"a\" != \"b\"; let grouped: Bool = (true) == (false); let bool_order: Bool = true < false; let string_order: Bool = \"a\" < \"b\"; let chain: Bool = 1 < 2 < 3; let path: Bool = math.check(ready); return math.check(path); }";
   return stage1.frontend.ast_dump_rust_item_dump(source);
 }
 "#;
@@ -1890,7 +1890,7 @@ fn main() -> String {
 
     assert_eq!(
         value.to_string(),
-        "Module\n  Function name=main exported=false\n    Return type=Bool\n    Let name=bools type=Bool\n    Let name=chain type=Bool\n    Let name=path type=Bool\n      Call callee=math.check\n        Name ready\n    Return\n      Call callee=math.check\n        Name path\n"
+        "Module\n  Function name=main exported=false\n    Return type=Bool\n    Let name=bools type=Bool\n      Binary op=eq\n        Bool true\n        Bool false\n    Let name=strings type=Bool\n      Binary op=not_eq\n        String \"a\"\n        String \"b\"\n    Let name=grouped type=Bool\n      Binary op=eq\n        Bool true\n        Bool false\n    Let name=bool_order type=Bool\n    Let name=string_order type=Bool\n    Let name=chain type=Bool\n    Let name=path type=Bool\n      Call callee=math.check\n        Name ready\n    Return\n      Call callee=math.check\n        Name path\n"
     );
 }
 
@@ -1927,7 +1927,7 @@ module stage2.rust_logic_boundaries;
 import stage1.frontend;
 
 fn main() -> String {
-  let source: String = "fn main() -> Bool { let nested: Bool = outer(check(a && b)); let mixed: Bool = true == false; let ints: Bool = 1 && 2; let strings: Bool = \"x\" || ready; return outer(check(a && b)); }";
+  let source: String = "fn main() -> Bool { let nested: Bool = outer(check(a && b)); let mixed: Bool = true == false; let text: Bool = \"x\" == \"x\"; let ints: Bool = 1 && 2; let strings: Bool = \"x\" || ready; return outer(check(a && b)); }";
   return stage1.frontend.ast_dump_rust_item_dump(source);
 }
 "#;
@@ -1945,7 +1945,7 @@ fn main() -> String {
 
     assert_eq!(
         value.to_string(),
-        "Module\n  Function name=main exported=false\n    Return type=Bool\n    Let name=nested type=Bool\n      Call callee=outer\n        Call callee=check\n          Binary op=and\n            Name a\n            Name b\n    Let name=mixed type=Bool\n    Let name=ints type=Bool\n    Let name=strings type=Bool\n    Return\n      Call callee=outer\n        Call callee=check\n          Binary op=and\n            Name a\n            Name b\n"
+        "Module\n  Function name=main exported=false\n    Return type=Bool\n    Let name=nested type=Bool\n      Call callee=outer\n        Call callee=check\n          Binary op=and\n            Name a\n            Name b\n    Let name=mixed type=Bool\n      Binary op=eq\n        Bool true\n        Bool false\n    Let name=text type=Bool\n      Binary op=eq\n        String \"x\"\n        String \"x\"\n    Let name=ints type=Bool\n    Let name=strings type=Bool\n    Return\n      Call callee=outer\n        Call callee=check\n          Binary op=and\n            Name a\n            Name b\n"
     );
 }
 
@@ -2095,7 +2095,7 @@ module stage2.rust_call_container_dump;
 import stage1.frontend;
 
 fn main() -> String {
-  let source: String = "fn main() -> User { let values: IntArray = [1, next(), Result.Ok(2), User { id: 3 }]; let item: Int = items[index_of(value)]; let user: User = User { id: next(), active: check(Result.Ok(1)), child: User { id: 1, active: true } }; let passed: Bool = check(User { id: 1, active: true }, value); return User { id: items[ready_index()], child: User { id: make_id() } }; }";
+  let source: String = "fn main() -> User { let values: IntArray = [1, next(), Result.Ok(2), User { id: 3 }, true == false]; let item: Int = items[index_of(value)]; let user: User = User { id: next(), active: check(Result.Ok(1)), child: User { id: 1, active: true }, ready: \"x\" != \"y\" }; let passed: Bool = check(User { id: 1, active: true }, value, true == false); return User { id: items[ready_index()], child: User { id: make_id() }, active: \"x\" == \"x\" }; }";
   return stage1.frontend.ast_dump_rust_item_dump(source);
 }
 "#;
@@ -2113,7 +2113,7 @@ fn main() -> String {
 
     assert_eq!(
         value.to_string(),
-        "Module\n  Function name=main exported=false\n    Return type=User\n    Let name=values type=IntArray\n      ArrayLiteral\n        Int 1\n        Call callee=next\n        Call callee=Result.Ok\n          Int 2\n        StructLiteral type=User\n          FieldInit name=id\n            Int 3\n    Let name=item type=Int\n      Index\n        Base\n          Name items\n        Index\n          Call callee=index_of\n            Name value\n    Let name=user type=User\n      StructLiteral type=User\n        FieldInit name=id\n          Call callee=next\n        FieldInit name=active\n          Call callee=check\n            Call callee=Result.Ok\n              Int 1\n        FieldInit name=child\n          StructLiteral type=User\n            FieldInit name=id\n              Int 1\n            FieldInit name=active\n              Bool true\n    Let name=passed type=Bool\n      Call callee=check\n        StructLiteral type=User\n          FieldInit name=id\n            Int 1\n          FieldInit name=active\n            Bool true\n        Name value\n    Return\n      StructLiteral type=User\n        FieldInit name=id\n          Index\n            Base\n              Name items\n            Index\n              Call callee=ready_index\n        FieldInit name=child\n          StructLiteral type=User\n            FieldInit name=id\n              Call callee=make_id\n"
+        "Module\n  Function name=main exported=false\n    Return type=User\n    Let name=values type=IntArray\n      ArrayLiteral\n        Int 1\n        Call callee=next\n        Call callee=Result.Ok\n          Int 2\n        StructLiteral type=User\n          FieldInit name=id\n            Int 3\n        Binary op=eq\n          Bool true\n          Bool false\n    Let name=item type=Int\n      Index\n        Base\n          Name items\n        Index\n          Call callee=index_of\n            Name value\n    Let name=user type=User\n      StructLiteral type=User\n        FieldInit name=id\n          Call callee=next\n        FieldInit name=active\n          Call callee=check\n            Call callee=Result.Ok\n              Int 1\n        FieldInit name=child\n          StructLiteral type=User\n            FieldInit name=id\n              Int 1\n            FieldInit name=active\n              Bool true\n        FieldInit name=ready\n          Binary op=not_eq\n            String \"x\"\n            String \"y\"\n    Let name=passed type=Bool\n      Call callee=check\n        StructLiteral type=User\n          FieldInit name=id\n            Int 1\n          FieldInit name=active\n            Bool true\n        Name value\n        Binary op=eq\n          Bool true\n          Bool false\n    Return\n      StructLiteral type=User\n        FieldInit name=id\n          Index\n            Base\n              Name items\n            Index\n              Call callee=ready_index\n        FieldInit name=child\n          StructLiteral type=User\n            FieldInit name=id\n              Call callee=make_id\n        FieldInit name=active\n          Binary op=eq\n            String \"x\"\n            String \"x\"\n"
     );
 }
 

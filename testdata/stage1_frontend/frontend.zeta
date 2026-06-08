@@ -1203,8 +1203,7 @@ fn rust_expr_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
   }
   let comparison: Int = last_comparison_operator_in_range(kinds, start, end);
   if comparison < end {
-    return rust_binary_operand_supported_range(kinds, start, comparison)
-      && rust_binary_operand_supported_range(kinds, comparison + 1, end);
+    return rust_comparison_operands_supported_range(kinds, start, comparison, end);
   }
   let additive: Int = last_additive_operator_in_range(kinds, start, end);
   if additive < end {
@@ -1220,6 +1219,46 @@ fn rust_expr_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
     return true;
   }
   return false;
+}
+
+fn rust_comparison_operands_supported_range(kinds: IntArray, start: Int, operator: Int, end: Int) -> Bool {
+  if equality_operator(kinds[operator]) {
+    return rust_equality_operand_supported_range(kinds, start, operator)
+      && rust_equality_operand_supported_range(kinds, operator + 1, end);
+  }
+  return rust_binary_operand_supported_range(kinds, start, operator)
+    && rust_binary_operand_supported_range(kinds, operator + 1, end);
+}
+
+fn rust_equality_operand_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start >= end {
+    return false;
+  }
+  if start + 1 == end {
+    return simple_expr_token(kinds[start]);
+  }
+  if wrapped_by_parens(kinds, start, end) {
+    return rust_equality_operand_supported_range(kinds, start + 1, end - 1);
+  }
+  if rust_field_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_index_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_array_literal_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_struct_literal_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_call_expr_supported_range(kinds, start, end) {
+    return true;
+  }
+  if kinds[start] == token_minus() {
+    return rust_neg_operand_supported_range(kinds, start + 1, end);
+  }
+  return rust_binary_expr_supported_range(kinds, start, end);
 }
 
 fn rust_binary_operand_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
@@ -2119,6 +2158,10 @@ fn comparison_operator(kind: Int) -> Bool {
     || kind == token_lte()
     || kind == token_gt()
     || kind == token_gte();
+}
+
+fn equality_operator(kind: Int) -> Bool {
+  return kind == token_eqeq() || kind == token_bangeq();
 }
 
 fn last_additive_operator_in_range(kinds: IntArray, start: Int, end: Int) -> Int {
