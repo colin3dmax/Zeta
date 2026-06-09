@@ -467,6 +467,8 @@ impl Parser {
                 BinaryOp::Mul
             } else if self.consume_symbol(Symbol::Slash).is_some() {
                 BinaryOp::Div
+            } else if self.consume_symbol(Symbol::Percent).is_some() {
+                BinaryOp::Mod
             } else {
                 break;
             };

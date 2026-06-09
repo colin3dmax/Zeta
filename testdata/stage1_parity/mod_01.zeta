@@ -1,0 +1,9 @@
+module probe.mod;
+fn main() -> Int {
+  let a: Int = x % y;
+  let b: Int = p % q + r;
+  let c: Int = u * v % w;
+  let d: Int = (m + n) % k;
+  let e: Bool = a % 2 == 0;
+  return 10 % 3;
+}

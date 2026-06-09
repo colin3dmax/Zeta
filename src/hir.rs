@@ -234,6 +234,7 @@ fn binary_op_text(op: BinaryOp) -> &'static str {
         BinaryOp::Sub => "sub",
         BinaryOp::Mul => "mul",
         BinaryOp::Div => "div",
+        BinaryOp::Mod => "mod",
         BinaryOp::And => "and",
         BinaryOp::Or => "or",
         BinaryOp::Eq => "eq",

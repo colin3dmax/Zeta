@@ -857,7 +857,7 @@ fn eval_binary(op: BinaryOp, left: Value, right: Value) -> Result<Value, Diagnos
                 _ => unreachable!(),
             }
         }
-        BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+        BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
             let (Value::Int(left), Value::Int(right)) = (left, right) else {
                 return Err(runtime_error(
                     "RUNTIME_BINARY_OPERAND",
@@ -873,6 +873,13 @@ fn eval_binary(op: BinaryOp, left: Value, right: Value) -> Result<Value, Diagnos
                         Err(runtime_error("RUNTIME_DIVIDE_BY_ZERO", "division by zero"))
                     } else {
                         Ok(Value::Int(left / right))
+                    }
+                }
+                BinaryOp::Mod => {
+                    if right == 0 {
+                        Err(runtime_error("RUNTIME_DIVIDE_BY_ZERO", "modulo by zero"))
+                    } else {
+                        Ok(Value::Int(left % right))
                     }
                 }
                 _ => unreachable!(),

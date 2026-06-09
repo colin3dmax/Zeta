@@ -65,6 +65,7 @@ pub enum Symbol {
     Minus,
     Star,
     Slash,
+    Percent,
 }
 
 pub fn lex(source: &str) -> Result<Vec<Token>, Vec<Diagnostic>> {
@@ -264,6 +265,7 @@ impl<'a> Lexer<'a> {
             '+' => Some(TokenKind::Symbol(Symbol::Plus)),
             '*' => Some(TokenKind::Symbol(Symbol::Star)),
             '/' => Some(TokenKind::Symbol(Symbol::Slash)),
+            '%' => Some(TokenKind::Symbol(Symbol::Percent)),
             '-' if self.peek_char() == Some('>') => {
                 self.bump_char();
                 Some(TokenKind::Symbol(Symbol::Arrow))

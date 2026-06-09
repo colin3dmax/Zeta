@@ -734,6 +734,7 @@ pub fn binary_op_text(op: BinaryOp) -> &'static str {
         BinaryOp::Sub => "sub",
         BinaryOp::Mul => "mul",
         BinaryOp::Div => "div",
+        BinaryOp::Mod => "mod",
         BinaryOp::And => "and",
         BinaryOp::Or => "or",
         BinaryOp::Eq => "eq",
@@ -1199,7 +1200,7 @@ impl<'a> MirVerifier<'a> {
         let left_ty = self.verify_expr(left, locals);
         let right_ty = self.verify_expr(right, locals);
         match op {
-            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
                 self.expect_named(&left_ty, "Int", "MIR_BINARY_TYPE", "left operand");
                 self.expect_named(&right_ty, "Int", "MIR_BINARY_TYPE", "right operand");
                 MirType::named("Int")

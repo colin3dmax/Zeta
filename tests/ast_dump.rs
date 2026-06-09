@@ -142,6 +142,22 @@ fn main() {
 }
 
 #[test]
+fn dumps_modulo_with_precedence() {
+    let dump = zeta::dump_ast(
+        r#"
+fn main() -> Int {
+  return a % b + c;
+}
+"#,
+    )
+    .expect("source should parse");
+
+    // `%` binds tighter than `+`: add(mod(a, b), c)
+    assert!(dump.contains("Binary op=mod"));
+    assert!(dump.contains("Binary op=add"));
+}
+
+#[test]
 fn repl_parses_interactive_lines() {
     let binary = env!("CARGO_BIN_EXE_zeta");
     let mut child = std::process::Command::new(binary)

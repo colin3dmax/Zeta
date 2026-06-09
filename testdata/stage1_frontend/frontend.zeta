@@ -2171,6 +2171,9 @@ fn append_rust_binary_op_header(out: String, operator: Int) -> String {
   if operator == token_slash() {
     next = string_concat(next, "div");
   }
+  if operator == token_percent() {
+    next = string_concat(next, "mod");
+  }
   if operator == token_eqeq() {
     next = string_concat(next, "eq");
   }
@@ -2247,7 +2250,37 @@ fn last_additive_operator_in_range(kinds: IntArray, start: Int, end: Int) -> Int
 }
 
 fn last_multiplicative_operator_in_range(kinds: IntArray, start: Int, end: Int) -> Int {
-  return last_operator_pair_in_range(kinds, start, end, token_star(), token_slash());
+  return last_operator_triple_in_range(kinds, start, end, token_star(), token_slash(), token_percent());
+}
+
+fn last_operator_triple_in_range(kinds: IntArray, start: Int, end: Int, first: Int, second: Int, third: Int) -> Int {
+  let mut scan: Int = end;
+  let mut depth: Int = 0;
+  while scan > start {
+    scan = scan - 1;
+    if kinds[scan] == token_rparen() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rbracket() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rbrace() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_lparen() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_lbracket() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_lbrace() && depth > 0 {
+      depth = depth - 1;
+    }
+    if depth == 0 && (kinds[scan] == first || kinds[scan] == second || kinds[scan] == third) && operator_is_binary_at(kinds, start, scan) {
+      return scan;
+    }
+  }
+  return end;
 }
 
 fn last_operator_pair_in_range(kinds: IntArray, start: Int, end: Int, first: Int, second: Int) -> Int {
@@ -2289,6 +2322,7 @@ fn operator_is_binary_at(kinds: IntArray, start: Int, index: Int) -> Bool {
     || previous == token_minus()
     || previous == token_star()
     || previous == token_slash()
+    || previous == token_percent()
     || previous == token_eq()
     || previous == token_eqeq()
     || previous == token_bangeq()
@@ -3030,6 +3064,9 @@ fn symbol_kind(source: String, index: Int) -> Int {
   if byte == 47 {
     return token_slash();
   }
+  if byte == 37 {
+    return token_percent();
+  }
   return token_unknown();
 }
 
@@ -3079,4 +3116,5 @@ fn token_plus() -> Int { return 51; }
 fn token_minus() -> Int { return 52; }
 fn token_star() -> Int { return 53; }
 fn token_slash() -> Int { return 54; }
+fn token_percent() -> Int { return 55; }
 fn token_unknown() -> Int { return 99; }

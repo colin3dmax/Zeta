@@ -35,6 +35,14 @@ fn run_executes_complex_assignment_targets() {
 }
 
 #[test]
+fn run_executes_modulo() {
+    // 17 % 5 + 100 % 7 = 2 + 2 = 4
+    let value =
+        zeta::run_source(include_str!("../testdata/run_mod.zeta")).expect("program should run");
+    assert_eq!(value.to_string(), "4");
+}
+
+#[test]
 fn run_executes_function_call() {
     let value =
         zeta::run_source(include_str!("../testdata/run_call.zeta")).expect("program should run");
