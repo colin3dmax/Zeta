@@ -850,6 +850,11 @@ fn append_rust_if_stmt_at(
   next = append_rust_block_stmt_lines_range(next, kinds, texts, lbrace + 1, rbrace, condition_indent);
   let else_index: Int = rbrace + 1;
   if else_index < kinds.len && kinds[else_index] == token_else() {
+    if else_index + 1 < kinds.len && kinds[else_index + 1] == token_if() {
+      next = string_concat(next, indent);
+      next = string_concat(next, "  Else\n");
+      return append_rust_if_stmt_at(next, kinds, texts, else_index + 1, condition_indent);
+    }
     let else_lbrace: Int = rust_block_lbrace_after_condition(kinds, else_index + 1);
     let else_rbrace: Int = matching_rbrace_at(kinds, else_lbrace);
     if else_lbrace < kinds.len && else_rbrace < kinds.len {
@@ -886,6 +891,9 @@ fn rust_if_stmt_end_at(kinds: IntArray, index: Int) -> Int {
   let rbrace: Int = matching_rbrace_at(kinds, lbrace);
   let else_index: Int = rbrace + 1;
   if else_index < kinds.len && kinds[else_index] == token_else() {
+    if else_index + 1 < kinds.len && kinds[else_index + 1] == token_if() {
+      return rust_if_stmt_end_at(kinds, else_index + 1);
+    }
     let else_lbrace: Int = rust_block_lbrace_after_condition(kinds, else_index + 1);
     let else_rbrace: Int = matching_rbrace_at(kinds, else_lbrace);
     if else_rbrace < kinds.len {

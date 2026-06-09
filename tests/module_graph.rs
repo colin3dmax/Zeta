@@ -1498,7 +1498,7 @@ module stage2.rust_control_flow_boundaries;
 import stage1.frontend;
 
 fn main() -> String {
-  let source: String = "fn main() -> Int { let text: String = \"if fake { break; } while fake { continue; }\"; // if comment { break; }\n if true == false { return 1; } let mut value: Int = 0; while \"x\" != \"y\" { value = value + 1; } while check(outer()) { value = value + 1; } return value; }";
+  let source: String = "fn main() -> Int { let text: String = \"if fake { break; } while fake { continue; }\"; // if comment { break; }\n if true == false { return 1; } else if value == 0 { return 2; } else { return 3; } let mut value: Int = 0; while \"x\" != \"y\" { value = value + 1; } while check(outer()) { value = value + 1; } return value; }";
   return stage1.frontend.ast_dump_rust_item_dump(source);
 }
 "#;
@@ -1516,7 +1516,7 @@ fn main() -> String {
 
     assert_eq!(
         value.to_string(),
-        "Module\n  Function name=main exported=false\n    Return type=Int\n    Let name=text type=String\n      String \"if fake { break; } while fake { continue; }\"\n    If\n      Condition\n        Binary op=eq\n          Bool true\n          Bool false\n      Then\n        Return\n          Int 1\n    Let name=value type=Int mutable=true\n      Int 0\n    While\n      Condition\n        Binary op=not_eq\n          String \"x\"\n          String \"y\"\n      Body\n        Assign name=value\n          Binary op=add\n            Name value\n            Int 1\n    While\n      Condition\n        Call callee=check\n          Call callee=outer\n      Body\n        Assign name=value\n          Binary op=add\n            Name value\n            Int 1\n    Return\n      Name value\n"
+        "Module\n  Function name=main exported=false\n    Return type=Int\n    Let name=text type=String\n      String \"if fake { break; } while fake { continue; }\"\n    If\n      Condition\n        Binary op=eq\n          Bool true\n          Bool false\n      Then\n        Return\n          Int 1\n      Else\n        If\n          Condition\n            Binary op=eq\n              Name value\n              Int 0\n          Then\n            Return\n              Int 2\n          Else\n            Return\n              Int 3\n    Let name=value type=Int mutable=true\n      Int 0\n    While\n      Condition\n        Binary op=not_eq\n          String \"x\"\n          String \"y\"\n      Body\n        Assign name=value\n          Binary op=add\n            Name value\n            Int 1\n    While\n      Condition\n        Call callee=check\n          Call callee=outer\n      Body\n        Assign name=value\n          Binary op=add\n            Name value\n            Int 1\n    Return\n      Name value\n"
     );
 }
 
@@ -1640,7 +1640,7 @@ module stage2.rust_nested_expr_stmt_dump;
 import stage1.frontend;
 
 fn main() -> String {
-  let source: String = "fn main() -> Int { while ready { tick(); if done { finish(); } else { retry(); } } match value { 0 -> { handle_zero(); }, _ -> { handle_other(); }, } return 0; }";
+  let source: String = "fn main() -> Int { while ready { tick(); if done { finish(); } else if retrying { retry(); } else { stop(); } } match value { 0 -> { handle_zero(); }, _ -> { if done { handle_done(); } else if retrying { handle_retry(); } else { handle_other(); } }, } return 0; }";
   return stage1.frontend.ast_dump_rust_item_dump(source);
 }
 "#;
@@ -1658,7 +1658,7 @@ fn main() -> String {
 
     assert_eq!(
         value.to_string(),
-        "Module\n  Function name=main exported=false\n    Return type=Int\n    While\n      Condition\n        Name ready\n      Body\n        ExprStmt\n          Call callee=tick\n        If\n          Condition\n            Name done\n          Then\n            ExprStmt\n              Call callee=finish\n          Else\n            ExprStmt\n              Call callee=retry\n    Match\n      Value\n        Name value\n      Arm pattern=int:0\n        ExprStmt\n          Call callee=handle_zero\n      Arm pattern=_\n        ExprStmt\n          Call callee=handle_other\n    Return\n      Int 0\n"
+        "Module\n  Function name=main exported=false\n    Return type=Int\n    While\n      Condition\n        Name ready\n      Body\n        ExprStmt\n          Call callee=tick\n        If\n          Condition\n            Name done\n          Then\n            ExprStmt\n              Call callee=finish\n          Else\n            If\n              Condition\n                Name retrying\n              Then\n                ExprStmt\n                  Call callee=retry\n              Else\n                ExprStmt\n                  Call callee=stop\n    Match\n      Value\n        Name value\n      Arm pattern=int:0\n        ExprStmt\n          Call callee=handle_zero\n      Arm pattern=_\n        If\n          Condition\n            Name done\n          Then\n            ExprStmt\n              Call callee=handle_done\n          Else\n            If\n              Condition\n                Name retrying\n              Then\n                ExprStmt\n                  Call callee=handle_retry\n              Else\n                ExprStmt\n                  Call callee=handle_other\n    Return\n      Int 0\n"
     );
 }
 
