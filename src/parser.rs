@@ -495,6 +495,15 @@ impl Parser {
                 span,
             });
         }
+        if let Some(start) = self.consume_symbol(Symbol::Minus) {
+            let expr = self.parse_unary()?;
+            let span = Span::new(start.start, expr.span().end);
+            return Ok(Expr::Unary {
+                op: UnaryOp::Neg,
+                expr: Box::new(expr),
+                span,
+            });
+        }
         self.parse_call()
     }
 

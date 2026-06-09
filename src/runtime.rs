@@ -823,7 +823,15 @@ fn eval_binary(op: BinaryOp, left: Value, right: Value) -> Result<Value, Diagnos
 fn eval_unary(op: UnaryOp, value: Value) -> Result<Value, Diagnostic> {
     match op {
         UnaryOp::Not => Ok(Value::Bool(!expect_bool(value, "RUNTIME_UNARY_OPERAND")?)),
+        UnaryOp::Neg => Ok(Value::Int(-expect_int(value, "RUNTIME_UNARY_OPERAND")?)),
     }
+}
+
+fn expect_int(value: Value, code: &'static str) -> Result<i64, Diagnostic> {
+    let Value::Int(value) = value else {
+        return Err(runtime_error(code, "operand must evaluate to Int"));
+    };
+    Ok(value)
 }
 
 fn expect_bool(value: Value, code: &'static str) -> Result<bool, Diagnostic> {

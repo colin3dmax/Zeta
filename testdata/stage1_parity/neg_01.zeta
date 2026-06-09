@@ -1,0 +1,9 @@
+module probe.neg;
+fn main() -> Int {
+  let a: Int = -x;
+  let b: Int = -(p + q);
+  let c: Int = m - -n;
+  let d: Int = -a * -b;
+  let e: Bool = -a < -b;
+  return -a;
+}

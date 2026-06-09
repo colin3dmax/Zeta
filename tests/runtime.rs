@@ -13,6 +13,13 @@ fn run_executes_if_return() {
 }
 
 #[test]
+fn run_executes_unary_negation() {
+    let value =
+        zeta::run_source(include_str!("../testdata/run_neg.zeta")).expect("program should run");
+    assert_eq!(value.to_string(), "5");
+}
+
+#[test]
 fn run_executes_function_call() {
     let value =
         zeta::run_source(include_str!("../testdata/run_call.zeta")).expect("program should run");

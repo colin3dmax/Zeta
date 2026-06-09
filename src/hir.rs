@@ -241,6 +241,7 @@ fn binary_op_text(op: BinaryOp) -> &'static str {
 fn unary_op_text(op: UnaryOp) -> &'static str {
     match op {
         UnaryOp::Not => "not",
+        UnaryOp::Neg => "neg",
     }
 }
 

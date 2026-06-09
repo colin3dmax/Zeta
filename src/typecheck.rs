@@ -801,6 +801,16 @@ fn infer_expr(
                     );
                     Type::Bool
                 }
+                UnaryOp::Neg => {
+                    expect_type(
+                        &expr_type,
+                        &Type::Int,
+                        "TYPE_UNARY_OPERAND",
+                        expr.span(),
+                        diagnostics,
+                    );
+                    Type::Int
+                }
             }
         }
         Expr::Call {

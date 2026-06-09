@@ -92,6 +92,21 @@ fn main() -> Bool {
 }
 
 #[test]
+fn dumps_unary_negation() {
+    let dump = zeta::dump_ast(
+        r#"
+fn main() -> Int {
+  return -value - -1;
+}
+"#,
+    )
+    .expect("source should parse");
+
+    assert!(dump.contains("Unary op=neg"));
+    assert!(dump.contains("Binary op=sub"));
+}
+
+#[test]
 fn repl_parses_interactive_lines() {
     let binary = env!("CARGO_BIN_EXE_zeta");
     let mut child = std::process::Command::new(binary)

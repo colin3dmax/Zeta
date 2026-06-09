@@ -1,0 +1,5 @@
+fn main() -> Int {
+  let x: Int = 5;
+  let neg: Int = -x;
+  return neg + 10;
+}

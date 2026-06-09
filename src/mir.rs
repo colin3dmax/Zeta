@@ -699,6 +699,7 @@ pub fn binary_op_text(op: BinaryOp) -> &'static str {
 pub fn unary_op_text(op: UnaryOp) -> &'static str {
     match op {
         UnaryOp::Not => "not",
+        UnaryOp::Neg => "neg",
     }
 }
 
@@ -1015,6 +1016,11 @@ impl<'a> MirVerifier<'a> {
                 UnaryOp::Not => {
                     self.expect_bool(expr, locals, "MIR_UNARY_TYPE", "not operand");
                     MirType::named("Bool")
+                }
+                UnaryOp::Neg => {
+                    let ty = self.verify_expr(expr, locals);
+                    self.expect_named(&ty, "Int", "MIR_UNARY_TYPE", "neg operand");
+                    MirType::named("Int")
                 }
             },
             MirExpr::Call { callee, args } => self.verify_call(callee, args, locals),

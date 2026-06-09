@@ -283,6 +283,18 @@ fn main() {
 }
 
 #[test]
+fn check_rejects_non_int_neg_operand() {
+    let source = r#"
+fn main() {
+  let bad: Int = -true;
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("neg Bool should fail");
+    assert_eq!(diagnostics[0].code, "TYPE_UNARY_OPERAND");
+    assert_eq!(diagnostics[0].span, span_of(source, "true"));
+}
+
+#[test]
 fn check_rejects_match_pattern_type_mismatch() {
     let source = r#"
 fn main() {

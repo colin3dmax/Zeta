@@ -216,6 +216,7 @@ pub enum BinaryOp {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
     Not,
+    Neg,
 }
 
 impl Module {
@@ -501,6 +502,7 @@ impl UnaryOp {
     fn as_str(self) -> &'static str {
         match self {
             UnaryOp::Not => "not",
+            UnaryOp::Neg => "neg",
         }
     }
 }
