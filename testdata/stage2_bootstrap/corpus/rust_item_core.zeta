@@ -1,0 +1,24 @@
+module demo.app;
+import demo.math;
+import demo.text.format as fmt;
+export import demo.extra.tools;
+
+export struct User {
+  id: Int,
+  active: Bool,
+}
+
+enum Result {
+  Ok(Int),
+  Err(String),
+  None,
+}
+
+export fn add(a: Int, b: Int) -> Int {
+  let sum: Int = a + b;
+  return sum;
+}
+
+fn ping() {
+  return;
+}

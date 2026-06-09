@@ -1,0 +1,25 @@
+Module
+  ModuleDecl name=demo.app
+  Import path=demo.math
+  Import path=demo.text.format alias=fmt
+  Import path=demo.extra.tools exported=true
+  Struct name=User exported=true
+    Field name=id type=Int
+    Field name=active type=Bool
+  Enum name=Result exported=false
+    Variant name=Ok payload=Int
+    Variant name=Err payload=String
+    Variant name=None
+  Function name=add exported=true
+    Param name=a type=Int
+    Param name=b type=Int
+    Return type=Int
+    Let name=sum type=Int
+      Binary op=add
+        Name a
+        Name b
+    Return
+      Name sum
+  Function name=ping exported=false
+    Return type=Unit
+    Return

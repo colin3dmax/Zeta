@@ -2424,6 +2424,46 @@ fn main() -> String {
     );
 }
 
+#[test]
+fn stage2_bootstrap_golden_rust_item_core() {
+    let source = include_str!("../testdata/stage2_bootstrap/corpus/rust_item_core.zeta");
+    let expected = include_str!("../testdata/stage2_bootstrap/golden/rust_item_core.rust_ast");
+    assert_eq!(run_stage2_stage1_rust_item_dump(source), expected);
+}
+
+fn run_stage2_stage1_rust_item_dump(source: &str) -> String {
+    let escaped = zeta_string_literal_content(source);
+    let stage2_app = format!(
+        r#"
+module stage2.golden;
+import stage1.frontend;
+
+fn main() -> String {{
+  let source: String = "{escaped}";
+  return stage1.frontend.ast_dump_rust_item_dump(source);
+}}
+"#
+    );
+
+    let value = zeta::module_graph::run_sources(&[
+        source_file(
+            "testdata/stage1_frontend/frontend.zeta",
+            include_str!("../testdata/stage1_frontend/frontend.zeta"),
+        ),
+        source_file("testdata/stage2_bootstrap/golden_runner.zeta", &stage2_app),
+    ])
+    .expect("Stage2 bootstrap Rust item golden harness should run");
+
+    value.to_string()
+}
+
+fn zeta_string_literal_content(source: &str) -> String {
+    source
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
 fn source_file(path: &str, source: &str) -> zeta::module_graph::SourceFile {
     zeta::module_graph::SourceFile {
         path: path.to_string(),
