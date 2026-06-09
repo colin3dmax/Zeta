@@ -594,12 +594,10 @@ fn append_rust_fn_dump(
   next = string_concat(next, bool_text(exported));
   next = string_concat(next, "\n");
   next = append_rust_param_lines_at(next, kinds, texts, index);
-  let return_type: String = explicit_return_type_text_at(kinds, texts, index);
-  if return_type != "" {
-    next = string_concat(next, "    Return type=");
-    next = string_concat(next, return_type);
-    next = string_concat(next, "\n");
-  }
+  let return_type: String = return_type_text_at(kinds, texts, index);
+  next = string_concat(next, "    Return type=");
+  next = string_concat(next, return_type);
+  next = string_concat(next, "\n");
   next = append_rust_body_lines_at(next, kinds, texts, index);
   return next;
 }

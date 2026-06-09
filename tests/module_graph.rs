@@ -1319,7 +1319,7 @@ fn main() -> String {
 
     assert_eq!(
         value.to_string(),
-        "Module\n  ModuleDecl name=demo.app\n  Import path=demo.math\n  Import path=demo.text.format alias=fmt\n  Import path=demo.extra.tools exported=true\n  Struct name=User exported=true\n    Field name=id type=Int\n    Field name=name type=String\n  Enum name=Result exported=false\n    Variant name=Ok payload=Int\n    Variant name=Err payload=String\n    Variant name=None\n  Function name=add exported=true\n    Param name=a type=Int\n    Param name=b type=String\n    Return type=Bool\n    Return\n      Bool true\n  Function name=ping exported=false\n    Return\n"
+        "Module\n  ModuleDecl name=demo.app\n  Import path=demo.math\n  Import path=demo.text.format alias=fmt\n  Import path=demo.extra.tools exported=true\n  Struct name=User exported=true\n    Field name=id type=Int\n    Field name=name type=String\n  Enum name=Result exported=false\n    Variant name=Ok payload=Int\n    Variant name=Err payload=String\n    Variant name=None\n  Function name=add exported=true\n    Param name=a type=Int\n    Param name=b type=String\n    Return type=Bool\n    Return\n      Bool true\n  Function name=ping exported=false\n    Return type=Unit\n    Return\n"
     );
 }
 
@@ -1371,7 +1371,7 @@ fn main() -> String {
 
     assert_eq!(
         value.to_string(),
-        "Module\n  Function name=main exported=false\n    Return type=Int\n    Let name=answer type=Int\n      Int 42\n    Let name=text type=String\n      String \"ready\"\n    Let name=ok type=Bool\n      Bool true\n    Let name=alias type=Int\n      Name answer\n    Let name=count type=Int mutable=true\n      Int 1\n    Let name=inferred\n      Int 7\n    Return\n      Name alias\n  Function name=ping exported=false\n    Return\n"
+        "Module\n  Function name=main exported=false\n    Return type=Int\n    Let name=answer type=Int\n      Int 42\n    Let name=text type=String\n      String \"ready\"\n    Let name=ok type=Bool\n      Bool true\n    Let name=alias type=Int\n      Name answer\n    Let name=count type=Int mutable=true\n      Int 1\n    Let name=inferred\n      Int 7\n    Return\n      Name alias\n  Function name=ping exported=false\n    Return type=Unit\n    Return\n"
     );
 }
 
