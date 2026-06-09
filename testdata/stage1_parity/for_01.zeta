@@ -1,0 +1,33 @@
+module probe.for01;
+fn main() -> Int {
+  let mut sum: Int = 0;
+  for n in [10, 20, 30] {
+    sum = sum + n;
+  }
+  let nums: IntArray = [1, 2, 3, 4];
+  for x in nums {
+    if x == 2 {
+      continue;
+    }
+    if x == 4 {
+      break;
+    }
+    sum = sum + x;
+  }
+  for row in grid {
+    for cell in row {
+      sum = sum + cell;
+    }
+  }
+  for item in items {
+    let doubled: Int = item * 2;
+    sum = sum + doubled;
+    total = total + 1;
+  }
+  for flag in [true, false] {
+    if flag {
+      return sum;
+    }
+  }
+  return sum;
+}

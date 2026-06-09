@@ -162,6 +162,7 @@ fn validate_stmt_types(
                 validate_stmt_types(else_body, structs, enums, diagnostics);
             }
             Stmt::While { body, .. } => validate_stmt_types(body, structs, enums, diagnostics),
+            Stmt::ForIn { body, .. } => validate_stmt_types(body, structs, enums, diagnostics),
             Stmt::Match { arms, .. } => {
                 for arm in arms {
                     validate_stmt_types(&arm.body, structs, enums, diagnostics);
@@ -511,6 +512,46 @@ fn check_stmts(
                     diagnostics,
                 );
                 let mut loop_locals = locals.clone();
+                check_stmts(
+                    body,
+                    &mut loop_locals,
+                    functions,
+                    structs,
+                    enums,
+                    return_type,
+                    function_name,
+                    loop_depth + 1,
+                    diagnostics,
+                );
+            }
+            Stmt::ForIn {
+                binding,
+                iterable,
+                body,
+                ..
+            } => {
+                let iterable_type =
+                    infer_expr(iterable, locals, functions, structs, enums, diagnostics);
+                let element_type = match iterable_type {
+                    Type::Array(element_type) => *element_type,
+                    Type::Error => Type::Error,
+                    _ => {
+                        diagnostics.push(Diagnostic::new(
+                            "TYPE_FOR_ITERABLE",
+                            "for-in requires an array value",
+                            iterable.span(),
+                        ));
+                        Type::Error
+                    }
+                };
+                let mut loop_locals = locals.clone();
+                loop_locals.insert(
+                    binding.clone(),
+                    Binding {
+                        ty: element_type,
+                        mutable: false,
+                    },
+                );
                 check_stmts(
                     body,
                     &mut loop_locals,

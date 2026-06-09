@@ -97,6 +97,12 @@ pub enum Stmt {
         condition: Expr,
         body: Vec<Stmt>,
     },
+    ForIn {
+        binding: String,
+        binding_span: Span,
+        iterable: Expr,
+        body: Vec<Stmt>,
+    },
     Match {
         value: Expr,
         arms: Vec<MatchArm>,
@@ -359,6 +365,20 @@ impl Stmt {
                 out.push_str(&format!("{pad}While\n"));
                 out.push_str(&format!("{pad}  Condition\n"));
                 condition.dump(indent + 2, out);
+                out.push_str(&format!("{pad}  Body\n"));
+                for stmt in body {
+                    stmt.dump(indent + 2, out);
+                }
+            }
+            Stmt::ForIn {
+                binding,
+                iterable,
+                body,
+                ..
+            } => {
+                out.push_str(&format!("{pad}For binding={binding}\n"));
+                out.push_str(&format!("{pad}  Iterable\n"));
+                iterable.dump(indent + 2, out);
                 out.push_str(&format!("{pad}  Body\n"));
                 for stmt in body {
                     stmt.dump(indent + 2, out);

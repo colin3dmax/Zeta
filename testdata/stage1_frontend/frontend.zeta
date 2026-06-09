@@ -742,6 +742,10 @@ fn append_rust_block_stmt_lines_range(
       next = append_rust_while_stmt_at(next, kinds, texts, scan, indent);
       scan = rust_while_stmt_end_at(kinds, scan) - 1;
     }
+    if rust_for_stmt_supported_at(kinds, scan) {
+      next = append_rust_for_stmt_at(next, kinds, texts, scan, indent);
+      scan = rust_for_stmt_end_at(kinds, scan) - 1;
+    }
     if rust_match_stmt_supported_at(kinds, scan) {
       next = append_rust_match_stmt_at(next, kinds, texts, scan, indent);
       scan = rust_match_stmt_end_at(kinds, scan) - 1;
@@ -776,6 +780,7 @@ fn rust_expr_stmt_supported_at(kinds: IntArray, index: Int, block_start: Int) ->
     || kinds[index] == token_continue()
     || kinds[index] == token_if()
     || kinds[index] == token_while()
+    || kinds[index] == token_for()
     || kinds[index] == token_match() {
     return false;
   }
@@ -817,6 +822,53 @@ fn rust_while_stmt_supported_at(kinds: IntArray, index: Int) -> Bool {
     return false;
   }
   return rust_expr_supported_range(kinds, index + 1, lbrace);
+}
+
+fn rust_for_stmt_supported_at(kinds: IntArray, index: Int) -> Bool {
+  if index >= kinds.len || kinds[index] != token_for() {
+    return false;
+  }
+  if index + 2 >= kinds.len {
+    return false;
+  }
+  if kinds[index + 1] != token_ident() {
+    return false;
+  }
+  if kinds[index + 2] != token_in() {
+    return false;
+  }
+  let lbrace: Int = rust_block_lbrace_after_condition(kinds, index + 3);
+  if lbrace >= kinds.len || matching_rbrace_at(kinds, lbrace) >= kinds.len {
+    return false;
+  }
+  return rust_expr_supported_range(kinds, index + 3, lbrace);
+}
+
+fn append_rust_for_stmt_at(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  index: Int,
+  indent: String
+) -> String {
+  let lbrace: Int = rust_block_lbrace_after_condition(kinds, index + 3);
+  let rbrace: Int = matching_rbrace_at(kinds, lbrace);
+  let mut next: String = string_concat(out, indent);
+  next = string_concat(next, "For binding=");
+  next = string_concat(next, texts[index + 1]);
+  next = string_concat(next, "\n");
+  next = string_concat(next, indent);
+  next = string_concat(next, "  Iterable\n");
+  let child_indent: String = string_concat(indent, "    ");
+  next = append_rust_expr_range(next, kinds, texts, index + 3, lbrace, child_indent);
+  next = string_concat(next, indent);
+  next = string_concat(next, "  Body\n");
+  return append_rust_block_stmt_lines_range(next, kinds, texts, lbrace + 1, rbrace, child_indent);
+}
+
+fn rust_for_stmt_end_at(kinds: IntArray, index: Int) -> Int {
+  let lbrace: Int = rust_block_lbrace_after_condition(kinds, index + 3);
+  return matching_rbrace_at(kinds, lbrace) + 1;
 }
 
 fn rust_match_stmt_supported_at(kinds: IntArray, index: Int) -> Bool {
@@ -3056,6 +3108,12 @@ fn keyword_or_ident(text: String) -> Int {
   if text == "while" {
     return token_while();
   }
+  if text == "for" {
+    return token_for();
+  }
+  if text == "in" {
+    return token_in();
+  }
   if text == "match" {
     return token_match();
   }
@@ -3199,6 +3257,8 @@ fn token_while() -> Int { return 22; }
 fn token_match() -> Int { return 23; }
 fn token_struct() -> Int { return 24; }
 fn token_enum() -> Int { return 25; }
+fn token_for() -> Int { return 26; }
+fn token_in() -> Int { return 27; }
 fn token_lparen() -> Int { return 30; }
 fn token_rparen() -> Int { return 31; }
 fn token_lbrace() -> Int { return 32; }

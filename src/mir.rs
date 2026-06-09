@@ -49,6 +49,11 @@ pub enum MirStmt {
         condition: MirExpr,
         body: Vec<MirStmt>,
     },
+    ForIn {
+        binding: String,
+        iterable: MirExpr,
+        body: Vec<MirStmt>,
+    },
     Match {
         value: MirExpr,
         arms: Vec<MirMatchArm>,
@@ -306,6 +311,19 @@ fn lower_stmt(
                 .map(|stmt| lower_stmt(stmt, enum_variants))
                 .collect(),
         },
+        Stmt::ForIn {
+            binding,
+            iterable,
+            body,
+            ..
+        } => MirStmt::ForIn {
+            binding: binding.clone(),
+            iterable: lower_expr(iterable, enum_variants),
+            body: body
+                .iter()
+                .map(|stmt| lower_stmt(stmt, enum_variants))
+                .collect(),
+        },
         Stmt::Match { value, arms } => MirStmt::Match {
             value: lower_expr(value, enum_variants),
             arms: arms
@@ -540,6 +558,18 @@ impl DumpCtx {
                     self.dump_stmt(stmt, indent + 1, out);
                 }
                 out.push_str(&format!("{pad}end_loop\n"));
+            }
+            MirStmt::ForIn {
+                binding,
+                iterable,
+                body,
+            } => {
+                let iterable_temp = self.dump_expr(iterable, indent, out);
+                out.push_str(&format!("{pad}for {binding} in {iterable_temp}\n"));
+                for stmt in body {
+                    self.dump_stmt(stmt, indent + 1, out);
+                }
+                out.push_str(&format!("{pad}end_for\n"));
             }
             MirStmt::Match { value, arms } => {
                 let value_temp = self.dump_expr(value, indent, out);
@@ -953,6 +983,28 @@ impl<'a> MirVerifier<'a> {
             MirStmt::While { condition, body } => {
                 self.expect_bool(condition, locals, "MIR_WHILE_CONDITION", "while condition");
                 let mut body_locals = locals.clone();
+                self.verify_stmts(body, &mut body_locals, expected_return, loop_depth + 1);
+                false
+            }
+            MirStmt::ForIn {
+                binding,
+                iterable,
+                body,
+            } => {
+                let iterable_ty = self.verify_expr(iterable, locals);
+                let element_ty = match iterable_ty {
+                    MirType::Array(element_ty) => *element_ty,
+                    MirType::Unknown => MirType::Unknown,
+                    other => {
+                        self.error(
+                            "MIR_FOR_ITERABLE",
+                            format!("for-in expects array, found `{}`", other.display()),
+                        );
+                        MirType::Unknown
+                    }
+                };
+                let mut body_locals = locals.clone();
+                body_locals.insert(binding.clone(), element_ty);
                 self.verify_stmts(body, &mut body_locals, expected_return, loop_depth + 1);
                 false
             }

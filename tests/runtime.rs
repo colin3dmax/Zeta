@@ -51,6 +51,14 @@ fn run_executes_compound_assignment() {
 }
 
 #[test]
+fn run_executes_for_in_loop() {
+    let value =
+        zeta::run_source(include_str!("../testdata/run_for.zeta")).expect("program should run");
+    // 10+20+30=60; then -1 (skip 2) -3 -4, break at 5 => 52.
+    assert_eq!(value.to_string(), "52");
+}
+
+#[test]
 fn run_executes_function_call() {
     let value =
         zeta::run_source(include_str!("../testdata/run_call.zeta")).expect("program should run");

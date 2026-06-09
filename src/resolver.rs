@@ -342,6 +342,35 @@ fn check_stmts(
                     diagnostics,
                 );
             }
+            Stmt::ForIn {
+                binding,
+                iterable,
+                body,
+                ..
+            } => {
+                check_expr(
+                    iterable,
+                    locals,
+                    functions,
+                    top_level_names,
+                    enum_variants,
+                    ambiguous_external_functions,
+                    function_name,
+                    diagnostics,
+                );
+                let mut loop_locals = locals.clone();
+                loop_locals.insert(binding.clone(), Binding { mutable: false });
+                check_stmts(
+                    body,
+                    &mut loop_locals,
+                    functions,
+                    top_level_names,
+                    enum_variants,
+                    ambiguous_external_functions,
+                    function_name,
+                    diagnostics,
+                );
+            }
             Stmt::Match { value, arms } => {
                 check_expr(
                     value,

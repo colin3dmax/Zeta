@@ -123,6 +123,28 @@ fn main() -> Int {
 }
 
 #[test]
+fn dumps_for_in_loop() {
+    let dump = zeta::dump_ast(
+        r#"
+fn main() -> Int {
+  let mut sum: Int = 0;
+  for n in [10, 20, 30] {
+    sum = sum + n;
+  }
+  return sum;
+}
+"#,
+    )
+    .expect("source should parse");
+
+    assert!(dump.contains("For binding=n\n"));
+    assert!(dump.contains("  Iterable\n"));
+    assert!(dump.contains("  Body\n"));
+    // iterable array literal then body assignment appear under the for node.
+    assert!(dump.contains("ArrayLiteral\n"));
+}
+
+#[test]
 fn dumps_complex_assignment_targets() {
     let dump = zeta::dump_ast(
         r#"

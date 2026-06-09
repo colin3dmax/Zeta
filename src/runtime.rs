@@ -251,6 +251,51 @@ impl MirRuntime {
                 }
                 Ok(Control::Continue)
             }
+            MirStmt::ForIn {
+                binding,
+                iterable,
+                body,
+            } => {
+                let iterable = self.eval_expr(iterable, locals)?;
+                let Value::Array(elements) = iterable else {
+                    return Err(runtime_error(
+                        "RUNTIME_FOR_ITERABLE",
+                        "for-in iterable must evaluate to an array",
+                    ));
+                };
+                let saved = locals.remove(binding);
+                let mut control = Control::Continue;
+                for element in elements {
+                    self.loop_steps += 1;
+                    if self.loop_steps > LOOP_LIMIT {
+                        if let Some(saved) = saved {
+                            locals.insert(binding.clone(), saved);
+                        } else {
+                            locals.remove(binding);
+                        }
+                        return Err(runtime_error(
+                            "RUNTIME_LOOP_LIMIT",
+                            "loop exceeded the Stage 0 execution step limit",
+                        ));
+                    }
+                    locals.insert(binding.clone(), element);
+                    match self.eval_stmts(body, locals)? {
+                        Control::Continue => {}
+                        Control::BreakLoop => break,
+                        Control::ContinueLoop => continue,
+                        returned @ Control::Return(_) => {
+                            control = returned;
+                            break;
+                        }
+                    }
+                }
+                if let Some(saved) = saved {
+                    locals.insert(binding.clone(), saved);
+                } else {
+                    locals.remove(binding);
+                }
+                Ok(control)
+            }
             MirStmt::Match { value, arms } => {
                 let value = self.eval_expr(value, locals)?;
                 for arm in arms {
@@ -590,6 +635,52 @@ impl Runtime {
                     }
                 }
                 Ok(Control::Continue)
+            }
+            Stmt::ForIn {
+                binding,
+                iterable,
+                body,
+                ..
+            } => {
+                let iterable = self.eval_expr(iterable, locals)?;
+                let Value::Array(elements) = iterable else {
+                    return Err(runtime_error(
+                        "RUNTIME_FOR_ITERABLE",
+                        "for-in iterable must evaluate to an array",
+                    ));
+                };
+                let saved = locals.remove(binding);
+                let mut control = Control::Continue;
+                for element in elements {
+                    self.loop_steps += 1;
+                    if self.loop_steps > LOOP_LIMIT {
+                        if let Some(saved) = saved {
+                            locals.insert(binding.clone(), saved);
+                        } else {
+                            locals.remove(binding);
+                        }
+                        return Err(runtime_error(
+                            "RUNTIME_LOOP_LIMIT",
+                            "loop exceeded the Stage 0 execution step limit",
+                        ));
+                    }
+                    locals.insert(binding.clone(), element);
+                    match self.eval_stmts(body, locals)? {
+                        Control::Continue => {}
+                        Control::BreakLoop => break,
+                        Control::ContinueLoop => continue,
+                        returned @ Control::Return(_) => {
+                            control = returned;
+                            break;
+                        }
+                    }
+                }
+                if let Some(saved) = saved {
+                    locals.insert(binding.clone(), saved);
+                } else {
+                    locals.remove(binding);
+                }
+                Ok(control)
             }
             Stmt::Match { value, arms } => {
                 let value = self.eval_expr(value, locals)?;

@@ -264,6 +264,25 @@ impl Parser {
             return Ok(Stmt::While { condition, body });
         }
 
+        if self.consume_keyword(Keyword::For).is_some() {
+            let (binding, binding_span) =
+                self.expect_ident_span("expected binding name after `for`")?;
+            if self.consume_keyword(Keyword::In).is_none() {
+                return Err(
+                    self.error_here("PARSE_EXPECTED_IN", "expected `in` after for binding")
+                );
+            }
+            let iterable = self.parse_expr_without_struct_literals()?;
+            self.expect_symbol(Symbol::LBrace, "expected `{` after for iterable")?;
+            let body = self.parse_block_body()?;
+            return Ok(Stmt::ForIn {
+                binding,
+                binding_span,
+                iterable,
+                body,
+            });
+        }
+
         if self.consume_keyword(Keyword::Match).is_some() {
             let value = self.parse_expr_without_struct_literals()?;
             self.expect_symbol(Symbol::LBrace, "expected `{` after match value")?;

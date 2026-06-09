@@ -356,6 +356,22 @@ fn rewrite_stmts(
                     is_main_module,
                 );
             }
+            MirStmt::ForIn { iterable, body, .. } => {
+                rewrite_expr(
+                    iterable,
+                    current_module,
+                    imported_targets,
+                    local_functions,
+                    is_main_module,
+                );
+                rewrite_stmts(
+                    body,
+                    current_module,
+                    imported_targets,
+                    local_functions,
+                    is_main_module,
+                );
+            }
             MirStmt::Match { value, arms } => {
                 rewrite_expr(
                     value,

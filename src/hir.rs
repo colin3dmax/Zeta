@@ -127,6 +127,20 @@ fn dump_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
                 dump_stmt(stmt, indent + 2, out);
             }
         }
+        Stmt::ForIn {
+            binding,
+            iterable,
+            body,
+            ..
+        } => {
+            out.push_str(&format!("{pad}for {binding}\n"));
+            out.push_str(&format!("{pad}  iterable\n"));
+            dump_expr(iterable, indent + 2, out);
+            out.push_str(&format!("{pad}  body\n"));
+            for stmt in body {
+                dump_stmt(stmt, indent + 2, out);
+            }
+        }
         Stmt::Match { value, arms } => {
             out.push_str(&format!("{pad}match\n"));
             out.push_str(&format!("{pad}  value\n"));
