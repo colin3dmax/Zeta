@@ -60,6 +60,12 @@ pub enum MirStmt {
         end: MirExpr,
         body: Vec<MirStmt>,
     },
+    ForC {
+        init: Box<MirStmt>,
+        condition: MirExpr,
+        step: Box<MirStmt>,
+        body: Vec<MirStmt>,
+    },
     Match {
         value: MirExpr,
         arms: Vec<MirMatchArm>,
@@ -342,6 +348,20 @@ fn lower_stmt(
                 }
             }
         }
+        Stmt::ForC {
+            init,
+            condition,
+            step,
+            body,
+        } => MirStmt::ForC {
+            init: Box::new(lower_stmt(init, enum_variants)),
+            condition: lower_expr(condition, enum_variants),
+            step: Box::new(lower_stmt(step, enum_variants)),
+            body: body
+                .iter()
+                .map(|stmt| lower_stmt(stmt, enum_variants))
+                .collect(),
+        },
         Stmt::Match { value, arms } => MirStmt::Match {
             value: lower_expr(value, enum_variants),
             arms: arms
@@ -609,6 +629,25 @@ impl DumpCtx {
                     self.dump_stmt(stmt, indent + 1, out);
                 }
                 out.push_str(&format!("{pad}end_for\n"));
+            }
+            MirStmt::ForC {
+                init,
+                condition,
+                step,
+                body,
+            } => {
+                out.push_str(&format!("{pad}for_c\n"));
+                out.push_str(&format!("{pad}  init\n"));
+                self.dump_stmt(init, indent + 2, out);
+                let condition_temp = self.dump_expr(condition, indent + 1, out);
+                out.push_str(&format!("{pad}  break_unless {condition_temp}\n"));
+                out.push_str(&format!("{pad}  body\n"));
+                for stmt in body {
+                    self.dump_stmt(stmt, indent + 2, out);
+                }
+                out.push_str(&format!("{pad}  step\n"));
+                self.dump_stmt(step, indent + 2, out);
+                out.push_str(&format!("{pad}end_for_c\n"));
             }
             MirStmt::Match { value, arms } => {
                 let value_temp = self.dump_expr(value, indent, out);
@@ -1060,6 +1099,20 @@ impl<'a> MirVerifier<'a> {
                 let mut body_locals = locals.clone();
                 body_locals.insert(binding.clone(), MirType::named("Int"));
                 self.verify_stmts(body, &mut body_locals, expected_return, loop_depth + 1);
+                false
+            }
+            MirStmt::ForC {
+                init,
+                condition,
+                step,
+                body,
+            } => {
+                let mut loop_locals = locals.clone();
+                // init declares its binding in loop_locals (scoped to the for).
+                self.verify_stmt(init, &mut loop_locals, expected_return, loop_depth);
+                self.expect_bool(condition, &loop_locals, "MIR_FORC_CONDITION", "for condition");
+                self.verify_stmt(step, &mut loop_locals, expected_return, loop_depth + 1);
+                self.verify_stmts(body, &mut loop_locals, expected_return, loop_depth + 1);
                 false
             }
             MirStmt::Match { value, arms } => {

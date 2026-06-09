@@ -371,6 +371,55 @@ fn check_stmts(
                     diagnostics,
                 );
             }
+            Stmt::ForC {
+                init,
+                condition,
+                step,
+                body,
+            } => {
+                let mut loop_locals = locals.clone();
+                // init (often `let mut i = 0`) declares its binding in loop_locals.
+                check_stmts(
+                    std::slice::from_ref(init.as_ref()),
+                    &mut loop_locals,
+                    functions,
+                    top_level_names,
+                    enum_variants,
+                    ambiguous_external_functions,
+                    function_name,
+                    diagnostics,
+                );
+                check_expr(
+                    condition,
+                    &loop_locals,
+                    functions,
+                    top_level_names,
+                    enum_variants,
+                    ambiguous_external_functions,
+                    function_name,
+                    diagnostics,
+                );
+                check_stmts(
+                    std::slice::from_ref(step.as_ref()),
+                    &mut loop_locals,
+                    functions,
+                    top_level_names,
+                    enum_variants,
+                    ambiguous_external_functions,
+                    function_name,
+                    diagnostics,
+                );
+                check_stmts(
+                    body,
+                    &mut loop_locals,
+                    functions,
+                    top_level_names,
+                    enum_variants,
+                    ambiguous_external_functions,
+                    function_name,
+                    diagnostics,
+                );
+            }
             Stmt::Match { value, arms } => {
                 check_expr(
                     value,

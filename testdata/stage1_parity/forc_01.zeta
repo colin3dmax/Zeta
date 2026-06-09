@@ -1,0 +1,22 @@
+module probe.forc01;
+fn main() -> Int {
+  let mut sum: Int = 0;
+  for (let mut i: Int = 0; i < 5; i = i + 1) {
+    sum = sum + i;
+  }
+  for (let mut j: Int = 0; j < 10; j += 2) {
+    if j == 4 {
+      continue;
+    }
+    if j > 6 {
+      break;
+    }
+    sum = sum + j;
+  }
+  for (let mut a: Int = 0; a < 3 && sum > 0; a = a + 1) {
+    for (let mut b: Int = 0; b < a; b += 1) {
+      sum = sum + b;
+    }
+  }
+  return sum;
+}

@@ -67,6 +67,14 @@ fn run_executes_for_range_loop() {
 }
 
 #[test]
+fn run_executes_for_c_loop() {
+    let value =
+        zeta::run_source(include_str!("../testdata/run_forc.zeta")).expect("program should run");
+    // (0+1+2+3+4) + (0+2+4+6+8) = 10 + 20 = 30; compound-assign step `j += 2`.
+    assert_eq!(value.to_string(), "30");
+}
+
+#[test]
 fn run_executes_function_call() {
     let value =
         zeta::run_source(include_str!("../testdata/run_call.zeta")).expect("program should run");

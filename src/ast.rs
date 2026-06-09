@@ -103,6 +103,12 @@ pub enum Stmt {
         iterable: Expr,
         body: Vec<Stmt>,
     },
+    ForC {
+        init: Box<Stmt>,
+        condition: Expr,
+        step: Box<Stmt>,
+        body: Vec<Stmt>,
+    },
     Match {
         value: Expr,
         arms: Vec<MatchArm>,
@@ -384,6 +390,24 @@ impl Stmt {
                 out.push_str(&format!("{pad}For binding={binding}\n"));
                 out.push_str(&format!("{pad}  Iterable\n"));
                 iterable.dump(indent + 2, out);
+                out.push_str(&format!("{pad}  Body\n"));
+                for stmt in body {
+                    stmt.dump(indent + 2, out);
+                }
+            }
+            Stmt::ForC {
+                init,
+                condition,
+                step,
+                body,
+            } => {
+                out.push_str(&format!("{pad}ForC\n"));
+                out.push_str(&format!("{pad}  Init\n"));
+                init.dump(indent + 2, out);
+                out.push_str(&format!("{pad}  Condition\n"));
+                condition.dump(indent + 2, out);
+                out.push_str(&format!("{pad}  Step\n"));
+                step.dump(indent + 2, out);
                 out.push_str(&format!("{pad}  Body\n"));
                 for stmt in body {
                     stmt.dump(indent + 2, out);

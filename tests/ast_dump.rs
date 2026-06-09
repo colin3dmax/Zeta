@@ -169,6 +169,43 @@ fn main() -> Int {
 }
 
 #[test]
+fn dumps_for_c_loop() {
+    let dump = zeta::dump_ast(
+        r#"
+fn main() -> Int {
+  let mut sum: Int = 0;
+  for (let mut i: Int = 0; i < 5; i += 1) {
+    sum = sum + i;
+  }
+  return sum;
+}
+"#,
+    )
+    .expect("source should parse");
+
+    let expected = "\
+    ForC\n      \
+      Init\n        \
+        Let name=i type=Int mutable=true\n          \
+          Int 0\n      \
+      Condition\n        \
+        Binary op=lt\n          \
+          Name i\n          \
+          Int 5\n      \
+      Step\n        \
+        Assign name=i\n          \
+          Binary op=add\n            \
+            Name i\n            \
+            Int 1\n      \
+      Body\n        \
+        Assign name=sum\n";
+    assert!(
+        dump.contains(expected),
+        "ForC dump did not match; got:\n{dump}"
+    );
+}
+
+#[test]
 fn dumps_complex_assignment_targets() {
     let dump = zeta::dump_ast(
         r#"

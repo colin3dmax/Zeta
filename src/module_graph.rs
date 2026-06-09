@@ -397,6 +397,41 @@ fn rewrite_stmts(
                     is_main_module,
                 );
             }
+            MirStmt::ForC {
+                init,
+                condition,
+                step,
+                body,
+            } => {
+                rewrite_stmts(
+                    std::slice::from_mut(init.as_mut()),
+                    current_module,
+                    imported_targets,
+                    local_functions,
+                    is_main_module,
+                );
+                rewrite_expr(
+                    condition,
+                    current_module,
+                    imported_targets,
+                    local_functions,
+                    is_main_module,
+                );
+                rewrite_stmts(
+                    std::slice::from_mut(step.as_mut()),
+                    current_module,
+                    imported_targets,
+                    local_functions,
+                    is_main_module,
+                );
+                rewrite_stmts(
+                    body,
+                    current_module,
+                    imported_targets,
+                    local_functions,
+                    is_main_module,
+                );
+            }
             MirStmt::Match { value, arms } => {
                 rewrite_expr(
                     value,

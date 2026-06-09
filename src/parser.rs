@@ -265,6 +265,9 @@ impl Parser {
         }
 
         if self.consume_keyword(Keyword::For).is_some() {
+            if self.check_symbol(Symbol::LParen) {
+                return self.parse_for_c();
+            }
             let (binding, binding_span) =
                 self.expect_ident_span("expected binding name after `for`")?;
             if self.consume_keyword(Keyword::In).is_none() {
@@ -346,6 +349,48 @@ impl Parser {
         }
         self.expect_symbol(Symbol::Semicolon, "expected `;` after expression statement")?;
         Ok(Stmt::Expr(expr))
+    }
+
+    fn parse_for_c(&mut self) -> Result<Stmt, Diagnostic> {
+        self.expect_symbol(Symbol::LParen, "expected `(` after for")?;
+        let init = self.parse_stmt()?;
+        let condition = self.parse_expr()?;
+        self.expect_symbol(Symbol::Semicolon, "expected `;` after for condition")?;
+        let step = self.parse_assign_no_semicolon()?;
+        self.expect_symbol(Symbol::RParen, "expected `)` after for step")?;
+        self.expect_symbol(Symbol::LBrace, "expected `{` after for header")?;
+        let body = self.parse_block_body()?;
+        Ok(Stmt::ForC {
+            init: Box::new(init),
+            condition,
+            step: Box::new(step),
+            body,
+        })
+    }
+
+    /// Parse an assignment statement without consuming a trailing `;`,
+    /// used for the C-style for step which is followed by `)`.
+    fn parse_assign_no_semicolon(&mut self) -> Result<Stmt, Diagnostic> {
+        let target = self.parse_expr()?;
+        if self.consume_symbol(Symbol::Eq).is_some() {
+            let value = self.parse_expr()?;
+            return Ok(Stmt::Assign { target, value });
+        }
+        if let Some(op) = self.consume_compound_assign_op() {
+            let rhs = self.parse_expr()?;
+            let span = Span::new(target.span().start, rhs.span().end);
+            let value = Expr::Binary {
+                op,
+                left: Box::new(target.clone()),
+                right: Box::new(rhs),
+                span,
+            };
+            return Ok(Stmt::Assign { target, value });
+        }
+        Err(self.error_here(
+            "PARSE_EXPECTED_ASSIGN",
+            "expected assignment in for step",
+        ))
     }
 
     fn consume_compound_assign_op(&mut self) -> Option<BinaryOp> {

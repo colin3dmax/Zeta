@@ -164,6 +164,13 @@ fn validate_stmt_types(
             }
             Stmt::While { body, .. } => validate_stmt_types(body, structs, enums, diagnostics),
             Stmt::ForIn { body, .. } => validate_stmt_types(body, structs, enums, diagnostics),
+            Stmt::ForC {
+                init, step, body, ..
+            } => {
+                validate_stmt_types(std::slice::from_ref(init.as_ref()), structs, enums, diagnostics);
+                validate_stmt_types(std::slice::from_ref(step.as_ref()), structs, enums, diagnostics);
+                validate_stmt_types(body, structs, enums, diagnostics);
+            }
             Stmt::Match { arms, .. } => {
                 for arm in arms {
                     validate_stmt_types(&arm.body, structs, enums, diagnostics);
@@ -553,6 +560,57 @@ fn check_stmts(
                         ty: element_type,
                         mutable: false,
                     },
+                );
+                check_stmts(
+                    body,
+                    &mut loop_locals,
+                    functions,
+                    structs,
+                    enums,
+                    return_type,
+                    function_name,
+                    loop_depth + 1,
+                    diagnostics,
+                );
+            }
+            Stmt::ForC {
+                init,
+                condition,
+                step,
+                body,
+            } => {
+                let mut loop_locals = locals.clone();
+                // init declares its binding in loop_locals (scoped to the for).
+                check_stmts(
+                    std::slice::from_ref(init.as_ref()),
+                    &mut loop_locals,
+                    functions,
+                    structs,
+                    enums,
+                    return_type,
+                    function_name,
+                    loop_depth,
+                    diagnostics,
+                );
+                let condition_type =
+                    infer_expr(condition, &loop_locals, functions, structs, enums, diagnostics);
+                expect_type(
+                    &condition_type,
+                    &Type::Bool,
+                    "TYPE_FORC_CONDITION",
+                    condition.span(),
+                    diagnostics,
+                );
+                check_stmts(
+                    std::slice::from_ref(step.as_ref()),
+                    &mut loop_locals,
+                    functions,
+                    structs,
+                    enums,
+                    return_type,
+                    function_name,
+                    loop_depth + 1,
+                    diagnostics,
                 );
                 check_stmts(
                     body,

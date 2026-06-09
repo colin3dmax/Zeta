@@ -742,6 +742,10 @@ fn append_rust_block_stmt_lines_range(
       next = append_rust_while_stmt_at(next, kinds, texts, scan, indent);
       scan = rust_while_stmt_end_at(kinds, scan) - 1;
     }
+    if rust_for_c_stmt_supported_at(kinds, scan) {
+      next = append_rust_for_c_stmt_at(next, kinds, texts, scan, indent);
+      scan = rust_for_c_stmt_end_at(kinds, scan) - 1;
+    }
     if rust_for_stmt_supported_at(kinds, scan) {
       next = append_rust_for_stmt_at(next, kinds, texts, scan, indent);
       scan = rust_for_stmt_end_at(kinds, scan) - 1;
@@ -884,6 +888,174 @@ fn append_rust_for_stmt_at(
 
 fn rust_for_stmt_end_at(kinds: IntArray, index: Int) -> Int {
   let lbrace: Int = rust_block_lbrace_after_condition(kinds, index + 3);
+  return matching_rbrace_at(kinds, lbrace) + 1;
+}
+
+// C 风格三段式 for:`for ( init ; cond ; step ) { body }`。
+fn rust_for_c_stmt_supported_at(kinds: IntArray, index: Int) -> Bool {
+  if index + 1 >= kinds.len || kinds[index] != token_for() {
+    return false;
+  }
+  if kinds[index + 1] != token_lparen() {
+    return false;
+  }
+  let rparen: Int = matching_rparen_at(kinds, index + 1);
+  if rparen >= kinds.len {
+    return false;
+  }
+  let semi1: Int = top_level_semicolon_in_range(kinds, index + 2, rparen);
+  if semi1 >= rparen {
+    return false;
+  }
+  let semi2: Int = top_level_semicolon_in_range(kinds, semi1 + 1, rparen);
+  if semi2 >= rparen {
+    return false;
+  }
+  let lbrace: Int = rparen + 1;
+  if lbrace >= kinds.len || kinds[lbrace] != token_lbrace() {
+    return false;
+  }
+  if matching_rbrace_at(kinds, lbrace) >= kinds.len {
+    return false;
+  }
+  // init 是 let 语句;cond 是表达式;step 是赋值。
+  if kinds[index + 2] != token_let() {
+    return false;
+  }
+  if !rust_expr_supported_range(kinds, semi1 + 1, semi2) {
+    return false;
+  }
+  return rust_for_c_step_supported_range(kinds, semi2 + 1, rparen);
+}
+
+fn rust_for_c_step_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start >= end {
+    return false;
+  }
+  let eq: Int = last_operator_in_range(kinds, start, end, token_eq());
+  if eq < end {
+    return rust_assign_target_supported_range(kinds, start, eq);
+  }
+  let opeq: Int = compound_assign_op_in_range(kinds, start, end);
+  if opeq < end {
+    return rust_assign_target_supported_range(kinds, start, opeq);
+  }
+  return false;
+}
+
+fn top_level_semicolon_in_range(kinds: IntArray, start: Int, end: Int) -> Int {
+  let mut scan: Int = start;
+  let mut depth: Int = 0;
+  while scan < end {
+    if kinds[scan] == token_lparen() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_lbracket() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_lbrace() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rparen() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_rbracket() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_rbrace() && depth > 0 {
+      depth = depth - 1;
+    }
+    if depth == 0 && kinds[scan] == token_semicolon() {
+      return scan;
+    }
+    scan = scan + 1;
+  }
+  return end;
+}
+
+fn compound_assign_op_in_range(kinds: IntArray, start: Int, end: Int) -> Int {
+  let mut scan: Int = start;
+  let mut depth: Int = 0;
+  while scan < end {
+    if kinds[scan] == token_lparen() || kinds[scan] == token_lbracket() || kinds[scan] == token_lbrace() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rparen() || kinds[scan] == token_rbracket() || kinds[scan] == token_rbrace() {
+      depth = depth - 1;
+    }
+    if depth == 0 && is_compound_assign_op(kinds[scan]) {
+      return scan;
+    }
+    scan = scan + 1;
+  }
+  return end;
+}
+
+fn append_rust_for_c_stmt_at(
+  out: String,
+  kinds: IntArray,
+  texts: StringArray,
+  index: Int,
+  indent: String
+) -> String {
+  let rparen: Int = matching_rparen_at(kinds, index + 1);
+  let semi1: Int = top_level_semicolon_in_range(kinds, index + 2, rparen);
+  let semi2: Int = top_level_semicolon_in_range(kinds, semi1 + 1, rparen);
+  let lbrace: Int = rparen + 1;
+  let rbrace: Int = matching_rbrace_at(kinds, lbrace);
+  let child_indent: String = string_concat(indent, "    ");
+  let mut next: String = string_concat(out, indent);
+  next = string_concat(next, "ForC\n");
+  next = string_concat(next, indent);
+  next = string_concat(next, "  Init\n");
+  // init 是 `let mut i = 0;`,let 助手扫描到 ; 为止。
+  next = append_rust_let_stmt_at(next, kinds, texts, index + 2, child_indent);
+  next = string_concat(next, indent);
+  next = string_concat(next, "  Condition\n");
+  next = append_rust_expr_range(next, kinds, texts, semi1 + 1, semi2, child_indent);
+  next = string_concat(next, indent);
+  next = string_concat(next, "  Step\n");
+  next = append_rust_for_c_step_at(next, kinds, texts, semi2 + 1, rparen, child_indent);
+  next = string_concat(next, indent);
+  next = string_concat(next, "  Body\n");
+  return append_rust_block_stmt_lines_range(next, kinds, texts, lbrace + 1, rbrace, child_indent);
+}
+
+// step 是无结尾分号的赋值,显式传入 [start, end)。
+fn append_rust_for_c_step_at(out: String, kinds: IntArray, texts: StringArray, start: Int, end: Int, indent: String) -> String {
+  let eq: Int = last_operator_in_range(kinds, start, end, token_eq());
+  if eq >= end {
+    return append_rust_compound_assign_stmt_at(out, kinds, texts, start, indent, end);
+  }
+  if start + 1 == eq {
+    let mut next: String = string_concat(out, indent);
+    next = string_concat(next, "Assign name=");
+    next = string_concat(next, texts[start]);
+    next = string_concat(next, "\n");
+    if eq + 1 < end && rust_expr_supported_range(kinds, eq + 1, end) {
+      let child_indent: String = string_concat(indent, "  ");
+      next = append_rust_expr_range(next, kinds, texts, eq + 1, end, child_indent);
+    }
+    return next;
+  }
+  let mut next: String = string_concat(out, indent);
+  next = string_concat(next, "Assign\n");
+  next = string_concat(next, indent);
+  next = string_concat(next, "  Target\n");
+  let target_indent: String = string_concat(indent, "    ");
+  next = append_rust_expr_range(next, kinds, texts, start, eq, target_indent);
+  if eq + 1 < end && rust_expr_supported_range(kinds, eq + 1, end) {
+    next = string_concat(next, indent);
+    next = string_concat(next, "  Value\n");
+    let value_indent: String = string_concat(indent, "    ");
+    next = append_rust_expr_range(next, kinds, texts, eq + 1, end, value_indent);
+  }
+  return next;
+}
+
+fn rust_for_c_stmt_end_at(kinds: IntArray, index: Int) -> Int {
+  let rparen: Int = matching_rparen_at(kinds, index + 1);
+  let lbrace: Int = rparen + 1;
   return matching_rbrace_at(kinds, lbrace) + 1;
 }
 

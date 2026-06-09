@@ -349,6 +349,50 @@ impl MirRuntime {
                 }
                 Ok(control)
             }
+            MirStmt::ForC {
+                init,
+                condition,
+                step,
+                body,
+            } => {
+                // init runs once; its binding stays in locals (typecheck guarantees
+                // it isn't referenced outside the for).
+                match self.eval_stmt(init, locals)? {
+                    Control::Continue => {}
+                    other => return Ok(other),
+                }
+                loop {
+                    self.loop_steps += 1;
+                    if self.loop_steps > LOOP_LIMIT {
+                        return Err(runtime_error(
+                            "RUNTIME_LOOP_LIMIT",
+                            "loop exceeded the Stage 0 execution step limit",
+                        ));
+                    }
+                    let condition = self.eval_expr(condition, locals)?;
+                    let Value::Bool(condition) = condition else {
+                        return Err(runtime_error(
+                            "RUNTIME_FORC_CONDITION",
+                            "for condition must evaluate to Bool",
+                        ));
+                    };
+                    if !condition {
+                        break;
+                    }
+                    match self.eval_stmts(body, locals)? {
+                        Control::Continue => {}
+                        Control::BreakLoop => break,
+                        Control::ContinueLoop => {}
+                        returned @ Control::Return(_) => return Ok(returned),
+                    }
+                    match self.eval_stmt(step, locals)? {
+                        Control::Continue => {}
+                        returned @ Control::Return(_) => return Ok(returned),
+                        Control::BreakLoop | Control::ContinueLoop => {}
+                    }
+                }
+                Ok(Control::Continue)
+            }
             MirStmt::Match { value, arms } => {
                 let value = self.eval_expr(value, locals)?;
                 for arm in arms {
@@ -783,6 +827,48 @@ impl Runtime {
                     locals.remove(binding);
                 }
                 Ok(control)
+            }
+            Stmt::ForC {
+                init,
+                condition,
+                step,
+                body,
+            } => {
+                match self.eval_stmt(init, locals)? {
+                    Control::Continue => {}
+                    other => return Ok(other),
+                }
+                loop {
+                    self.loop_steps += 1;
+                    if self.loop_steps > LOOP_LIMIT {
+                        return Err(runtime_error(
+                            "RUNTIME_LOOP_LIMIT",
+                            "loop exceeded the Stage 0 execution step limit",
+                        ));
+                    }
+                    let condition = self.eval_expr(condition, locals)?;
+                    let Value::Bool(condition) = condition else {
+                        return Err(runtime_error(
+                            "RUNTIME_FORC_CONDITION",
+                            "for condition must evaluate to Bool",
+                        ));
+                    };
+                    if !condition {
+                        break;
+                    }
+                    match self.eval_stmts(body, locals)? {
+                        Control::Continue => {}
+                        Control::BreakLoop => break,
+                        Control::ContinueLoop => {}
+                        returned @ Control::Return(_) => return Ok(returned),
+                    }
+                    match self.eval_stmt(step, locals)? {
+                        Control::Continue => {}
+                        returned @ Control::Return(_) => return Ok(returned),
+                        Control::BreakLoop | Control::ContinueLoop => {}
+                    }
+                }
+                Ok(Control::Continue)
             }
             Stmt::Match { value, arms } => {
                 let value = self.eval_expr(value, locals)?;

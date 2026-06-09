@@ -141,6 +141,24 @@ fn dump_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
                 dump_stmt(stmt, indent + 2, out);
             }
         }
+        Stmt::ForC {
+            init,
+            condition,
+            step,
+            body,
+        } => {
+            out.push_str(&format!("{pad}for_c\n"));
+            out.push_str(&format!("{pad}  init\n"));
+            dump_stmt(init, indent + 2, out);
+            out.push_str(&format!("{pad}  condition\n"));
+            dump_expr(condition, indent + 2, out);
+            out.push_str(&format!("{pad}  step\n"));
+            dump_stmt(step, indent + 2, out);
+            out.push_str(&format!("{pad}  body\n"));
+            for stmt in body {
+                dump_stmt(stmt, indent + 2, out);
+            }
+        }
         Stmt::Match { value, arms } => {
             out.push_str(&format!("{pad}match\n"));
             out.push_str(&format!("{pad}  value\n"));
