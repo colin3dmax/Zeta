@@ -1077,15 +1077,22 @@ fn rust_assign_stmt_at(kinds: IntArray, index: Int) -> Bool {
     return false;
   }
   let eq: Int = assignment_eq_in_stmt(kinds, index);
-  if eq >= kinds.len {
-    return false;
+  if eq < kinds.len {
+    return rust_assign_target_supported_range(kinds, index, eq);
   }
-  return rust_assign_target_supported_range(kinds, index, eq);
+  let opeq: Int = compound_assign_op_at(kinds, index);
+  if opeq < kinds.len {
+    return rust_assign_target_supported_range(kinds, index, opeq);
+  }
+  return false;
 }
 
 fn append_rust_assign_stmt_at(out: String, kinds: IntArray, texts: StringArray, index: Int, indent: String) -> String {
   let eq: Int = assignment_eq_in_stmt(kinds, index);
   let end: Int = stmt_expr_end_at(kinds, index);
+  if eq >= kinds.len {
+    return append_rust_compound_assign_stmt_at(out, kinds, texts, index, indent, end);
+  }
   if index + 1 == eq {
     let mut next: String = string_concat(out, indent);
     next = string_concat(next, "Assign name=");
@@ -1110,6 +1117,87 @@ fn append_rust_assign_stmt_at(out: String, kinds: IntArray, texts: StringArray, 
     next = append_rust_expr_range(next, kinds, texts, eq + 1, end, value_indent);
   }
   return next;
+}
+
+// 复合赋值 `a op= b` desugar 成 `a = a op b`:value 是 Binary(op, target 副本, rhs)。
+fn append_rust_compound_assign_stmt_at(out: String, kinds: IntArray, texts: StringArray, index: Int, indent: String, end: Int) -> String {
+  let opeq: Int = compound_assign_op_at(kinds, index);
+  let arith: Int = compound_op_to_arith(kinds[opeq]);
+  if index + 1 == opeq {
+    let mut next: String = string_concat(out, indent);
+    next = string_concat(next, "Assign name=");
+    next = string_concat(next, texts[index]);
+    next = string_concat(next, "\n");
+    let value_indent: String = string_concat(indent, "  ");
+    next = string_concat(next, value_indent);
+    next = append_rust_binary_op_header(next, arith);
+    let operand_indent: String = string_concat(value_indent, "  ");
+    next = append_rust_expr_range(next, kinds, texts, index, opeq, operand_indent);
+    if opeq + 1 < end && rust_expr_supported_range(kinds, opeq + 1, end) {
+      next = append_rust_expr_range(next, kinds, texts, opeq + 1, end, operand_indent);
+    }
+    return next;
+  }
+  let mut next: String = string_concat(out, indent);
+  next = string_concat(next, "Assign\n");
+  next = string_concat(next, indent);
+  next = string_concat(next, "  Target\n");
+  let target_indent: String = string_concat(indent, "    ");
+  next = append_rust_expr_range(next, kinds, texts, index, opeq, target_indent);
+  next = string_concat(next, indent);
+  next = string_concat(next, "  Value\n");
+  let value_indent: String = string_concat(indent, "    ");
+  next = string_concat(next, value_indent);
+  next = append_rust_binary_op_header(next, arith);
+  let operand_indent: String = string_concat(value_indent, "  ");
+  next = append_rust_expr_range(next, kinds, texts, index, opeq, operand_indent);
+  if opeq + 1 < end && rust_expr_supported_range(kinds, opeq + 1, end) {
+    next = append_rust_expr_range(next, kinds, texts, opeq + 1, end, operand_indent);
+  }
+  return next;
+}
+
+fn compound_assign_op_at(kinds: IntArray, index: Int) -> Int {
+  let end: Int = stmt_expr_end_at(kinds, index);
+  let mut scan: Int = index;
+  let mut depth: Int = 0;
+  while scan < end {
+    if kinds[scan] == token_lparen() || kinds[scan] == token_lbracket() || kinds[scan] == token_lbrace() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rparen() || kinds[scan] == token_rbracket() || kinds[scan] == token_rbrace() {
+      depth = depth - 1;
+    }
+    if depth == 0 && is_compound_assign_op(kinds[scan]) {
+      return scan;
+    }
+    scan = scan + 1;
+  }
+  return kinds.len;
+}
+
+fn is_compound_assign_op(kind: Int) -> Bool {
+  return kind == token_plus_eq()
+    || kind == token_minus_eq()
+    || kind == token_star_eq()
+    || kind == token_slash_eq()
+    || kind == token_percent_eq();
+}
+
+fn compound_op_to_arith(kind: Int) -> Int {
+  if kind == token_plus_eq() {
+    return token_plus();
+  }
+  if kind == token_minus_eq() {
+    return token_minus();
+  }
+  if kind == token_star_eq() {
+    return token_star();
+  }
+  if kind == token_slash_eq() {
+    return token_slash();
+  }
+  return token_percent();
 }
 
 fn assignment_eq_in_stmt(kinds: IntArray, index: Int) -> Int {
@@ -2912,6 +3000,11 @@ fn symbol_width(source: String, index: Int) -> Int {
   if byte == 62 && index + 1 < len && string_byte_at(source, index + 1) == 61 {
     return 2;
   }
+  if index + 1 < len && string_byte_at(source, index + 1) == 61 {
+    if byte == 43 || byte == 45 || byte == 42 || byte == 47 || byte == 37 {
+      return 2;
+    }
+  }
   return 1;
 }
 
@@ -3017,6 +3110,9 @@ fn symbol_kind(source: String, index: Int) -> Int {
     if index + 1 < string_len(source) && string_byte_at(source, index + 1) == 62 {
       return token_arrow();
     }
+    if index + 1 < string_len(source) && string_byte_at(source, index + 1) == 61 {
+      return token_minus_eq();
+    }
     return token_minus();
   }
   if byte == 61 {
@@ -3056,15 +3152,27 @@ fn symbol_kind(source: String, index: Int) -> Int {
     return token_gt();
   }
   if byte == 43 {
+    if index + 1 < string_len(source) && string_byte_at(source, index + 1) == 61 {
+      return token_plus_eq();
+    }
     return token_plus();
   }
   if byte == 42 {
+    if index + 1 < string_len(source) && string_byte_at(source, index + 1) == 61 {
+      return token_star_eq();
+    }
     return token_star();
   }
   if byte == 47 {
+    if index + 1 < string_len(source) && string_byte_at(source, index + 1) == 61 {
+      return token_slash_eq();
+    }
     return token_slash();
   }
   if byte == 37 {
+    if index + 1 < string_len(source) && string_byte_at(source, index + 1) == 61 {
+      return token_percent_eq();
+    }
     return token_percent();
   }
   return token_unknown();
@@ -3117,4 +3225,9 @@ fn token_minus() -> Int { return 52; }
 fn token_star() -> Int { return 53; }
 fn token_slash() -> Int { return 54; }
 fn token_percent() -> Int { return 55; }
+fn token_plus_eq() -> Int { return 56; }
+fn token_minus_eq() -> Int { return 57; }
+fn token_star_eq() -> Int { return 58; }
+fn token_slash_eq() -> Int { return 59; }
+fn token_percent_eq() -> Int { return 60; }
 fn token_unknown() -> Int { return 99; }

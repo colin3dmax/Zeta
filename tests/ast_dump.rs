@@ -158,6 +158,24 @@ fn main() -> Int {
 }
 
 #[test]
+fn dumps_compound_assignment_as_desugared_binary() {
+    let dump = zeta::dump_ast(
+        r#"
+fn main() {
+  a += 3;
+}
+"#,
+    )
+    .expect("source should parse");
+
+    // `a += 3` desugars to `a = a + 3`: Assign name=a / Binary op=add / Name a / Int 3
+    assert!(dump.contains("Assign name=a"));
+    assert!(dump.contains("Binary op=add"));
+    assert!(dump.contains("Name a"));
+    assert!(dump.contains("Int 3"));
+}
+
+#[test]
 fn repl_parses_interactive_lines() {
     let binary = env!("CARGO_BIN_EXE_zeta");
     let mut child = std::process::Command::new(binary)

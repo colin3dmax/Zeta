@@ -43,6 +43,14 @@ fn run_executes_modulo() {
 }
 
 #[test]
+fn run_executes_compound_assignment() {
+    // a=5; a+=3 → 8; a*=2 → 16; a-=1 → 15
+    let value = zeta::run_source(include_str!("../testdata/run_compound.zeta"))
+        .expect("program should run");
+    assert_eq!(value.to_string(), "15");
+}
+
+#[test]
 fn run_executes_function_call() {
     let value =
         zeta::run_source(include_str!("../testdata/run_call.zeta")).expect("program should run");

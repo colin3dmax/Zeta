@@ -66,6 +66,11 @@ pub enum Symbol {
     Star,
     Slash,
     Percent,
+    PlusEq,
+    MinusEq,
+    StarEq,
+    SlashEq,
+    PercentEq,
 }
 
 pub fn lex(source: &str) -> Result<Vec<Token>, Vec<Diagnostic>> {
@@ -262,13 +267,33 @@ impl<'a> Lexer<'a> {
                 Some(TokenKind::Symbol(Symbol::Gte))
             }
             '>' => Some(TokenKind::Symbol(Symbol::Gt)),
+            '+' if self.peek_char() == Some('=') => {
+                self.bump_char();
+                Some(TokenKind::Symbol(Symbol::PlusEq))
+            }
             '+' => Some(TokenKind::Symbol(Symbol::Plus)),
+            '*' if self.peek_char() == Some('=') => {
+                self.bump_char();
+                Some(TokenKind::Symbol(Symbol::StarEq))
+            }
             '*' => Some(TokenKind::Symbol(Symbol::Star)),
+            '/' if self.peek_char() == Some('=') => {
+                self.bump_char();
+                Some(TokenKind::Symbol(Symbol::SlashEq))
+            }
             '/' => Some(TokenKind::Symbol(Symbol::Slash)),
+            '%' if self.peek_char() == Some('=') => {
+                self.bump_char();
+                Some(TokenKind::Symbol(Symbol::PercentEq))
+            }
             '%' => Some(TokenKind::Symbol(Symbol::Percent)),
             '-' if self.peek_char() == Some('>') => {
                 self.bump_char();
                 Some(TokenKind::Symbol(Symbol::Arrow))
+            }
+            '-' if self.peek_char() == Some('=') => {
+                self.bump_char();
+                Some(TokenKind::Symbol(Symbol::MinusEq))
             }
             '-' => Some(TokenKind::Symbol(Symbol::Minus)),
             _ => None,

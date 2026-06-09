@@ -1,0 +1,13 @@
+module probe.cae;
+fn main() -> Int {
+  let mut a: Int = 5;
+  a += 3;
+  a -= 1;
+  a *= 2;
+  a /= 4;
+  a %= 3;
+  p.x += 10;
+  grid[i] *= 2;
+  total += a * b + c;
+  return a;
+}

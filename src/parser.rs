@@ -303,8 +303,40 @@ impl Parser {
                 value,
             });
         }
+        if let Some(op) = self.consume_compound_assign_op() {
+            let rhs = self.parse_expr()?;
+            self.expect_symbol(Symbol::Semicolon, "expected `;` after assignment")?;
+            let span = Span::new(expr.span().start, rhs.span().end);
+            // `a += b` desugars to `a = a + b`(左值在 dump/求值中出现两次)。
+            let value = Expr::Binary {
+                op,
+                left: Box::new(expr.clone()),
+                right: Box::new(rhs),
+                span,
+            };
+            return Ok(Stmt::Assign { target: expr, value });
+        }
         self.expect_symbol(Symbol::Semicolon, "expected `;` after expression statement")?;
         Ok(Stmt::Expr(expr))
+    }
+
+    fn consume_compound_assign_op(&mut self) -> Option<BinaryOp> {
+        if self.consume_symbol(Symbol::PlusEq).is_some() {
+            return Some(BinaryOp::Add);
+        }
+        if self.consume_symbol(Symbol::MinusEq).is_some() {
+            return Some(BinaryOp::Sub);
+        }
+        if self.consume_symbol(Symbol::StarEq).is_some() {
+            return Some(BinaryOp::Mul);
+        }
+        if self.consume_symbol(Symbol::SlashEq).is_some() {
+            return Some(BinaryOp::Div);
+        }
+        if self.consume_symbol(Symbol::PercentEq).is_some() {
+            return Some(BinaryOp::Mod);
+        }
+        None
     }
 
     fn parse_match_arm(&mut self) -> Result<MatchArm, Diagnostic> {
