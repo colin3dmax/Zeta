@@ -1440,7 +1440,7 @@ module stage2.rust_assign_boundaries;
 import stage1.frontend;
 
 fn main() -> String {
-  let source: String = "fn main() -> Int { let mut value: Int = 1; user.value = 2; items[0] = 3; if true { value = 4; } value = check(outer()); return value; }";
+  let source: String = "fn main() -> Int { let mut value: Int = 1; user.value = 2; user.profile.value = 3; items[index + 1] = 4; matrix[row][col] = value; items[ready()] = check(); make()[0] = 5; [ready][0] = false; User { active: true }.active = false; if true { value = 4; } value = check(outer()); return value; }";
   return stage1.frontend.ast_dump_rust_item_dump(source);
 }
 "#;
@@ -1458,7 +1458,7 @@ fn main() -> String {
 
     assert_eq!(
         value.to_string(),
-        "Module\n  Function name=main exported=false\n    Return type=Int\n    Let name=value type=Int mutable=true\n      Int 1\n    If\n      Condition\n        Bool true\n      Then\n        Assign name=value\n          Int 4\n    Assign name=value\n      Call callee=check\n        Call callee=outer\n    Return\n      Name value\n"
+        "Module\n  Function name=main exported=false\n    Return type=Int\n    Let name=value type=Int mutable=true\n      Int 1\n    Assign\n      Target\n        FieldAccess field=value\n          Name user\n      Value\n        Int 2\n    Assign\n      Target\n        FieldAccess field=value\n          FieldAccess field=profile\n            Name user\n      Value\n        Int 3\n    Assign\n      Target\n        Index\n          Base\n            Name items\n          Index\n            Binary op=add\n              Name index\n              Int 1\n      Value\n        Int 4\n    Assign\n      Target\n        Index\n          Base\n            Index\n              Base\n                Name matrix\n              Index\n                Name row\n          Index\n            Name col\n      Value\n        Name value\n    Assign\n      Target\n        Index\n          Base\n            Name items\n          Index\n            Call callee=ready\n      Value\n        Call callee=check\n    If\n      Condition\n        Bool true\n      Then\n        Assign name=value\n          Int 4\n    Assign name=value\n      Call callee=check\n        Call callee=outer\n    Return\n      Name value\n"
     );
 }
 

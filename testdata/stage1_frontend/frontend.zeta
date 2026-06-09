@@ -1057,10 +1057,7 @@ fn rust_block_lbrace_after_condition(kinds: IntArray, index: Int) -> Int {
 }
 
 fn rust_assign_stmt_at(kinds: IntArray, index: Int) -> Bool {
-  if index + 2 >= kinds.len || kinds[index] != token_ident() || kinds[index + 1] != token_eq() {
-    return false;
-  }
-  if index > 0 && kinds[index - 1] == token_dot() {
+  if index + 2 >= kinds.len || kinds[index] != token_ident() {
     return false;
   }
   if index > 0
@@ -1069,19 +1066,91 @@ fn rust_assign_stmt_at(kinds: IntArray, index: Int) -> Bool {
     && kinds[index - 1] != token_semicolon() {
     return false;
   }
-  return true;
+  let eq: Int = assignment_eq_in_stmt(kinds, index);
+  if eq >= kinds.len {
+    return false;
+  }
+  return rust_assign_target_supported_range(kinds, index, eq);
 }
 
 fn append_rust_assign_stmt_at(out: String, kinds: IntArray, texts: StringArray, index: Int, indent: String) -> String {
+  let eq: Int = assignment_eq_in_stmt(kinds, index);
+  let end: Int = stmt_expr_end_at(kinds, index);
+  if index + 1 == eq {
+    let mut next: String = string_concat(out, indent);
+    next = string_concat(next, "Assign name=");
+    next = string_concat(next, texts[index]);
+    next = string_concat(next, "\n");
+    if eq + 1 < end && rust_expr_supported_range(kinds, eq + 1, end) {
+      let child_indent: String = string_concat(indent, "  ");
+      next = append_rust_expr_range(next, kinds, texts, eq + 1, end, child_indent);
+    }
+    return next;
+  }
   let mut next: String = string_concat(out, indent);
-  next = string_concat(next, "Assign name=");
-  next = string_concat(next, texts[index]);
-  next = string_concat(next, "\n");
-  if index + 3 < kinds.len && rust_expr_supported_stmt_at(kinds, index + 2) {
-    let child_indent: String = string_concat(indent, "  ");
-    next = append_rust_expr_stmt_at(next, kinds, texts, index + 2, child_indent);
+  next = string_concat(next, "Assign\n");
+  next = string_concat(next, indent);
+  next = string_concat(next, "  Target\n");
+  let child_indent: String = string_concat(indent, "    ");
+  next = append_rust_expr_range(next, kinds, texts, index, eq, child_indent);
+  if eq + 1 < end && rust_expr_supported_range(kinds, eq + 1, end) {
+    next = string_concat(next, indent);
+    next = string_concat(next, "  Value\n");
+    let value_indent: String = string_concat(indent, "    ");
+    next = append_rust_expr_range(next, kinds, texts, eq + 1, end, value_indent);
   }
   return next;
+}
+
+fn assignment_eq_in_stmt(kinds: IntArray, index: Int) -> Int {
+  let end: Int = stmt_expr_end_at(kinds, index);
+  let eq: Int = last_operator_in_range(kinds, index, end, token_eq());
+  if eq >= end || kinds[eq] != token_eq() {
+    return kinds.len;
+  }
+  return eq;
+}
+
+fn rust_assign_target_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start >= end {
+    return false;
+  }
+  if start + 1 == end {
+    return kinds[start] == token_ident();
+  }
+  if rust_assign_field_target_supported_range(kinds, start, end) {
+    return true;
+  }
+  if rust_assign_index_target_supported_range(kinds, start, end) {
+    return true;
+  }
+  return false;
+}
+
+fn rust_assign_field_target_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  let dot: Int = last_field_dot_in_range(kinds, start, end);
+  if dot >= end {
+    return false;
+  }
+  if dot + 1 >= end || kinds[dot + 1] != token_ident() || dot + 2 != end {
+    return false;
+  }
+  return rust_assign_target_supported_range(kinds, start, dot);
+}
+
+fn rust_assign_index_target_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
+  if start + 4 > end || kinds[end - 1] != token_rbracket() {
+    return false;
+  }
+  let lbracket: Int = last_lbracket_in_range(kinds, start, end);
+  if lbracket >= end {
+    return false;
+  }
+  if matching_rbracket_at(kinds, lbracket) != end - 1 {
+    return false;
+  }
+  return rust_assign_target_supported_range(kinds, start, lbracket)
+    && rust_expr_supported_range(kinds, lbracket + 1, end - 1);
 }
 
 fn append_rust_let_stmt_at(out: String, kinds: IntArray, texts: StringArray, index: Int, indent: String) -> String {
