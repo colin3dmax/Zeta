@@ -1843,7 +1843,7 @@ module stage2.rust_comparison_dump;
 import stage1.frontend;
 
 fn main() -> String {
-  let source: String = "fn main() -> Bool { let lt: Bool = 1 + 2 < 4 * 2; let eq: Bool = value == 10; let ne: Bool = value != 0; let lte: Bool = value <= 10; let gt: Bool = value > 1; return value + 1 >= 3; }";
+  let source: String = "fn main() -> Bool { let lt: Bool = 1 + 2 < 4 * 2; let eq: Bool = value == 10; let ne: Bool = value != 0; let not_left: Bool = !ready == false; let not_right: Bool = true != !done; let lte: Bool = value <= 10; let gt: Bool = value > 1; return value + 1 >= 3; }";
   return stage1.frontend.ast_dump_rust_item_dump(source);
 }
 "#;
@@ -1861,7 +1861,7 @@ fn main() -> String {
 
     assert_eq!(
         value.to_string(),
-        "Module\n  Function name=main exported=false\n    Return type=Bool\n    Let name=lt type=Bool\n      Binary op=lt\n        Binary op=add\n          Int 1\n          Int 2\n        Binary op=mul\n          Int 4\n          Int 2\n    Let name=eq type=Bool\n      Binary op=eq\n        Name value\n        Int 10\n    Let name=ne type=Bool\n      Binary op=not_eq\n        Name value\n        Int 0\n    Let name=lte type=Bool\n      Binary op=lte\n        Name value\n        Int 10\n    Let name=gt type=Bool\n      Binary op=gt\n        Name value\n        Int 1\n    Return\n      Binary op=gte\n        Binary op=add\n          Name value\n          Int 1\n        Int 3\n"
+        "Module\n  Function name=main exported=false\n    Return type=Bool\n    Let name=lt type=Bool\n      Binary op=lt\n        Binary op=add\n          Int 1\n          Int 2\n        Binary op=mul\n          Int 4\n          Int 2\n    Let name=eq type=Bool\n      Binary op=eq\n        Name value\n        Int 10\n    Let name=ne type=Bool\n      Binary op=not_eq\n        Name value\n        Int 0\n    Let name=not_left type=Bool\n      Binary op=eq\n        Unary op=not\n          Name ready\n        Bool false\n    Let name=not_right type=Bool\n      Binary op=not_eq\n        Bool true\n        Unary op=not\n          Name done\n    Let name=lte type=Bool\n      Binary op=lte\n        Name value\n        Int 10\n    Let name=gt type=Bool\n      Binary op=gt\n        Name value\n        Int 1\n    Return\n      Binary op=gte\n        Binary op=add\n          Name value\n          Int 1\n        Int 3\n"
     );
 }
 

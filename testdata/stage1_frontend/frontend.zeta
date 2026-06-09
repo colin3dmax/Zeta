@@ -1333,6 +1333,9 @@ fn rust_equality_operand_supported_range(kinds: IntArray, start: Int, end: Int) 
   if kinds[start] == token_minus() {
     return rust_neg_operand_supported_range(kinds, start + 1, end);
   }
+  if kinds[start] == token_bang() {
+    return rust_not_operand_supported_range(kinds, start + 1, end);
+  }
   return rust_binary_expr_supported_range(kinds, start, end);
 }
 
