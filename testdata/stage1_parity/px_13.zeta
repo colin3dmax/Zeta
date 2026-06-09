@@ -1,0 +1,7 @@
+module probe.px;
+fn px13() -> Int {
+  let a: Int = obj.items[i];
+  let b: Int = a.b.c[j].d;
+  let c: Int = box.points[0].x;
+  return a;
+}

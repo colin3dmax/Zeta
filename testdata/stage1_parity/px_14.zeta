@@ -1,0 +1,7 @@
+module probe.px;
+fn px14() -> Int {
+  let a: Int = compute(x)[0];
+  let b: Int = build().result;
+  let c: Int = make(y)[i][j];
+  return a;
+}

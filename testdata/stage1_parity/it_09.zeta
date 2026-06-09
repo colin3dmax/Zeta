@@ -1,0 +1,12 @@
+module it.fns.params;
+fn noargs() {
+}
+fn one(a: Int) -> Int {
+  return a;
+}
+fn many(a: Int, b: String, c: Bool, d: IntArray) -> Bool {
+  return c;
+}
+export fn pub(x: Int) -> Int {
+  return x;
+}

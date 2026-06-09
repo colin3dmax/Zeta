@@ -1,0 +1,7 @@
+module probe.px;
+fn px07() -> Int {
+  let a: Int = obj.field;
+  let b: Int = a.b.c;
+  let c: Int = a.b.c.d.e;
+  return a;
+}

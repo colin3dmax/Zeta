@@ -1,0 +1,4 @@
+module it.modules.deep.nested;
+fn f() -> Int {
+  return 0;
+}

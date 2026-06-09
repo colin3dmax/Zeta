@@ -1,0 +1,9 @@
+module probe.mt02;
+fn label(s: String) -> Int {
+  match s {
+    "yes" -> { return 1; }
+    "no" -> { return 0; }
+    _ -> { return 99; }
+  }
+  return 0;
+}

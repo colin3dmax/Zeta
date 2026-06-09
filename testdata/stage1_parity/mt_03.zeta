@@ -1,0 +1,8 @@
+module probe.mt03;
+fn pick(b: Bool) -> Int {
+  match b {
+    true -> { return 1; }
+    false -> { return 0; }
+  }
+  return 0;
+}

@@ -1,0 +1,7 @@
+module probe.px;
+fn px03() -> Int {
+  let a: Int = obj.method();
+  let b: Int = pkg.mod.func(x);
+  let c: Int = a.b.c.run(1, 2);
+  return a;
+}

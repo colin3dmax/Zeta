@@ -1,0 +1,8 @@
+module probe.ll;
+fn main() -> Bool {
+  r = f(a, b);
+  s = g(h(k));
+  t = obj.field;
+  u = arr[i];
+  return true;
+}

@@ -1,0 +1,8 @@
+module probe.ll;
+fn main() -> Bool {
+  let a = "quote\"inside";
+  let b = "back\\slash";
+  let c = "newline\nhere";
+  let d = "";
+  return true;
+}

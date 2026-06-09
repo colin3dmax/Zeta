@@ -1,0 +1,4 @@
+module it.only.unit;
+fn lone() -> Int {
+  return 7;
+}

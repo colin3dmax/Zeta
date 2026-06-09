@@ -1,0 +1,13 @@
+module it.enums.payload;
+enum Value {
+  Nothing,
+  Number(Int),
+  Text(String),
+  Flag(Bool),
+}
+export enum Wrap {
+  Empty,
+  Items(IntArray),
+}
+fn f() {
+}

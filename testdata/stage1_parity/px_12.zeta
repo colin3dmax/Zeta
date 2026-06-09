@@ -1,0 +1,7 @@
+module probe.px;
+fn px12() -> Int {
+  let a: Int = make(Point { x: 1, y: 2 });
+  let b: Int = use(arr[i], obj.field);
+  let c: Int = wrap([1, 2, 3]);
+  return a;
+}

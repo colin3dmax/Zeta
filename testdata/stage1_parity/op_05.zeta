@@ -1,0 +1,6 @@
+module probe.op;
+fn main() -> Bool {
+  let a: Bool = b || c && d;
+  let e: Bool = f && g || h;
+  return a || e;
+}

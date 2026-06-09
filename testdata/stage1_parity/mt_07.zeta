@@ -1,0 +1,14 @@
+module probe.mt07;
+fn run(x: Int) -> Int {
+  let total: Int = 0;
+  match x {
+    1 -> {
+      let a: Int = 5;
+      total = a + 1;
+    }
+    _ -> {
+      total = x;
+    }
+  }
+  return total;
+}

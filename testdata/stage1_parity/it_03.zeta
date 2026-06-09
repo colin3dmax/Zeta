@@ -1,0 +1,5 @@
+module it.imports;
+import std.io;
+import a.b.c.d;
+fn f() {
+}

@@ -1,0 +1,7 @@
+module probe.px;
+fn px15() -> IntArray {
+  let a: IntArray = [Point { x: 1 }, Point { x: 2 }];
+  let b: Int = f(g(h(i(j()))));
+  let c: Int = m[a][b][c][d];
+  return a;
+}

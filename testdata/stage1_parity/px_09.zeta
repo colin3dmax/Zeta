@@ -1,0 +1,7 @@
+module probe.px;
+fn px09() -> Point {
+  let a: Point = Point { x: 1 };
+  let b: Point = Point { x: 1, y: 2 };
+  let c: Point = Point { x: a + b, y: f(z) };
+  return a;
+}

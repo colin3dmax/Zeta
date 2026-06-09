@@ -1,0 +1,6 @@
+module probe.op;
+fn main() -> Int {
+  let a: Int = b + c + d + e + f;
+  let g: Int = h * i * j * k;
+  return a + g;
+}

@@ -1,0 +1,8 @@
+module probe.ll;
+fn main() -> Bool {
+  x = 1;
+  y = true;
+  z = "s";
+  w = 1000;
+  return true;
+}

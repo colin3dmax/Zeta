@@ -1,0 +1,8 @@
+module probe.ll;
+fn main() -> Bool {
+  let v = "esc\"and\\both\nlines";
+  let e: String = "";
+  msg = "set\"it";
+  log("plain\\path");
+  return true;
+}

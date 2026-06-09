@@ -1,0 +1,7 @@
+module probe.px;
+fn px04() -> Int {
+  let a: Int = f(g(h()));
+  let b: Int = outer(inner(x), y);
+  let c: Int = p(q(r(s())));
+  return a;
+}

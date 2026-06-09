@@ -1,0 +1,6 @@
+module probe.op;
+fn main() -> Int {
+  let a: Int = ((b + c) * (d - e)) / ((f + g) * h);
+  let i: Int = b + (c * (d + (e - f)));
+  return a + i;
+}

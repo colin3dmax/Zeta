@@ -1,0 +1,7 @@
+module probe.px;
+fn px01() -> Int {
+  let a: Int = f();
+  let b: Int = ping();
+  let c: Bool = ready();
+  return a;
+}

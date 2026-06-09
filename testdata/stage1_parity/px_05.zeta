@@ -1,0 +1,8 @@
+module probe.px;
+fn px05() -> Int {
+  let a: Int = arr[0];
+  let b: Int = arr[i];
+  let c: Int = arr[i + 1];
+  let d: Int = arr[f(x)];
+  return a;
+}

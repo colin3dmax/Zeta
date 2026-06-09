@@ -1,0 +1,14 @@
+module probe.cf14;
+fn whileinifelse(a: Bool, n: Int) -> Int {
+  let mut i: Int = 0;
+  if a {
+    while i < n {
+      i = i + 1;
+    }
+  } else {
+    while i > 0 {
+      i = i - 1;
+    }
+  }
+  return i;
+}

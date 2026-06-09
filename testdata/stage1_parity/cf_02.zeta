@@ -1,0 +1,8 @@
+module probe.cf02;
+fn f(a: Int, b: Int) -> Int {
+  if a < b {
+    return a;
+  } else {
+    return b;
+  }
+}

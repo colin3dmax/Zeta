@@ -1,0 +1,57 @@
+Module
+  Function name=main exported=false
+    Return type=Bool
+    Let name=values type=IntArray
+      ArrayLiteral
+        Int 1
+        Binary op=add
+          Name value
+          Int 1
+        Index
+          Base
+            Name items
+          Index
+            Int 0
+    Let name=user type=User
+      StructLiteral type=User
+        FieldInit name=id
+          Call callee=next
+        FieldInit name=active
+          Binary op=or
+            Unary op=not
+              Name failed
+            Name ready
+        FieldInit name=child
+          StructLiteral type=User
+            FieldInit name=id
+              Int 1
+    Let name=passed type=Bool
+      Call callee=check
+        FieldAccess field=id
+          StructLiteral type=User
+            FieldInit name=id
+              Int 1
+        Index
+          Base
+            Name values
+          Index
+            Binary op=add
+              Name index
+              Int 1
+        Binary op=eq
+          Bool true
+          Unary op=not
+            Name done
+    Return
+      Binary op=and
+        Call callee=check
+          Index
+            Base
+              ArrayLiteral
+                Name ready
+            Index
+              Int 0
+          FieldAccess field=id
+            FieldAccess field=child
+              Name user
+        Name passed

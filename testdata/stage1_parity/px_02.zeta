@@ -1,0 +1,7 @@
+module probe.px;
+fn px02() -> Int {
+  let a: Int = add(1, 2);
+  let b: Int = sum(x, y, z);
+  let c: Int = mix(1, y, foo());
+  return a;
+}

@@ -1,0 +1,8 @@
+module probe.ll;
+fn main() -> Bool {
+  let a = 7;
+  let b = false;
+  let c = "untyped";
+  let d = true;
+  return true;
+}

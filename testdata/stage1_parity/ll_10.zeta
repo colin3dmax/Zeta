@@ -1,0 +1,6 @@
+module probe.ll;
+fn main() -> Bool {
+  pkg.mod.call(x, y);
+  obj.method(a);
+  return true;
+}

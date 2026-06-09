@@ -1,0 +1,8 @@
+module probe.ll;
+fn main() -> Bool {
+  let r = obj.a.b.c;
+  let s = arr[i][j];
+  let t = data[k].field;
+  let u = (a + b) * c;
+  return true;
+}

@@ -1,0 +1,7 @@
+module it.aliasing.paths;
+import demo.math as math;
+import a.b as ab;
+export import std.io;
+export import core.fmt as fmt;
+fn f() {
+}

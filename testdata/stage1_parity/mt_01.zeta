@@ -1,0 +1,10 @@
+module probe.mt01;
+fn classify(x: Int) -> Int {
+  match x {
+    0 -> { return 10; }
+    1 -> { return 20; }
+    2 -> { return 30; }
+    _ -> { return 0; }
+  }
+  return x;
+}

@@ -1,0 +1,11 @@
+module probe.cf08;
+fn combo(a: Int, b: Int, c: Bool) -> Bool {
+  if a < b && c {
+    return true;
+  } else {
+    if a == b || a > b {
+      return false;
+    }
+  }
+  return c;
+}

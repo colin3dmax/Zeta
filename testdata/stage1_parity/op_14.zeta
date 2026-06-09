@@ -1,0 +1,8 @@
+module probe.op;
+fn main() -> Bool {
+  let a: Bool = b == c == d;
+  let e: Bool = f < g < h;
+  let i: Int = j - k - m;
+  let n: Int = o / p / q;
+  return a;
+}

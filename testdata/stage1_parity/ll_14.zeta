@@ -1,0 +1,8 @@
+module probe.ll;
+fn main() -> Bool {
+  let mut acc: Int = 0;
+  acc = acc + 1;
+  let done: Bool = acc == 10;
+  done = !done;
+  return true;
+}

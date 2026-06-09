@@ -1,0 +1,8 @@
+module probe.px;
+fn px08() -> IntArray {
+  let a: IntArray = [];
+  let b: IntArray = [7];
+  let c: IntArray = [1, 2, 3, 4];
+  let d: IntArray = [f(x), g(y), h(z)];
+  return b;
+}

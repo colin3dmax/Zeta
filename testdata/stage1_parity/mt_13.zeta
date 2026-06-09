@@ -1,0 +1,14 @@
+module probe.mt13;
+enum Opt { Some(Int), None }
+fn deep(o: Opt, x: Int) -> Int {
+  match o {
+    Opt.Some(v) -> {
+      match x {
+        0 -> { return v; }
+        n -> { return v + n; }
+      }
+    }
+    Opt.None -> { return 0; }
+  }
+  return 0;
+}

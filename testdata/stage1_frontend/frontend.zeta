@@ -594,10 +594,12 @@ fn append_rust_fn_dump(
   next = string_concat(next, bool_text(exported));
   next = string_concat(next, "\n");
   next = append_rust_param_lines_at(next, kinds, texts, index);
-  let return_type: String = return_type_text_at(kinds, texts, index);
-  next = string_concat(next, "    Return type=");
-  next = string_concat(next, return_type);
-  next = string_concat(next, "\n");
+  let return_type: String = explicit_return_type_text_at(kinds, texts, index);
+  if return_type != "" {
+    next = string_concat(next, "    Return type=");
+    next = string_concat(next, return_type);
+    next = string_concat(next, "\n");
+  }
   next = append_rust_body_lines_at(next, kinds, texts, index);
   return next;
 }
@@ -856,9 +858,11 @@ fn append_rust_if_stmt_at(
     let else_lbrace: Int = rust_block_lbrace_after_condition(kinds, else_index + 1);
     let else_rbrace: Int = matching_rbrace_at(kinds, else_lbrace);
     if else_lbrace < kinds.len && else_rbrace < kinds.len {
-      next = string_concat(next, indent);
-      next = string_concat(next, "  Else\n");
-      next = append_rust_block_stmt_lines_range(next, kinds, texts, else_lbrace + 1, else_rbrace, condition_indent);
+      if else_lbrace + 1 < else_rbrace {
+        next = string_concat(next, indent);
+        next = string_concat(next, "  Else\n");
+        next = append_rust_block_stmt_lines_range(next, kinds, texts, else_lbrace + 1, else_rbrace, condition_indent);
+      }
     }
   }
   return next;
@@ -1297,12 +1301,10 @@ fn rust_expr_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
 }
 
 fn rust_comparison_operands_supported_range(kinds: IntArray, start: Int, operator: Int, end: Int) -> Bool {
-  if equality_operator(kinds[operator]) {
-    return rust_equality_operand_supported_range(kinds, start, operator)
-      && rust_equality_operand_supported_range(kinds, operator + 1, end);
-  }
-  return rust_binary_operand_supported_range(kinds, start, operator)
-    && rust_binary_operand_supported_range(kinds, operator + 1, end);
+  // 比较/相等运算符左结合:左操作数可含嵌套比较链(如 b == c == d),
+  // 因此两侧都回落到完整表达式检查,与 append_rust_expr_range 的递归保持一致。
+  return rust_expr_supported_range(kinds, start, operator)
+    && rust_expr_supported_range(kinds, operator + 1, end);
 }
 
 fn rust_equality_operand_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
@@ -2481,6 +2483,9 @@ fn append_rust_simple_expr_at(
   }
   if kinds[index] == token_string() {
     next = string_concat(next, "String ");
+    next = string_concat(next, normalize_string_escapes(texts[index]));
+    next = string_concat(next, "\n");
+    return next;
   }
   if kinds[index] == token_bool() {
     next = string_concat(next, "Bool ");
@@ -2491,6 +2496,31 @@ fn append_rust_simple_expr_at(
   next = string_concat(next, texts[index]);
   next = string_concat(next, "\n");
   return next;
+}
+
+// 复刻 Rust lexer 的字符串转义契约:`\"`、`\n`、`\\` 保留反斜杠(dump 时由 Rust
+// Debug 格式回写),其余 `\<x>` 一律丢掉反斜杠只留字符 x(lexer.rs:200-203)。
+// net 效果是删除非 n/\/" 转义前的反斜杠,使 Stage1 输出与 Rust ast-dump 逐字一致。
+fn normalize_string_escapes(text: String) -> String {
+  let len: Int = string_len(text);
+  let mut out: String = "";
+  let mut i: Int = 0;
+  while i < len {
+    let byte: Int = string_byte_at(text, i);
+    if byte == 92 && i + 1 < len {
+      let nextb: Int = string_byte_at(text, i + 1);
+      if nextb == 110 || nextb == 92 || nextb == 34 {
+        out = string_concat(out, string_byte_slice(text, i, 2));
+      } else {
+        out = string_concat(out, string_byte_slice(text, i + 1, 1));
+      }
+      i = i + 2;
+    } else {
+      out = string_concat(out, string_byte_slice(text, i, 1));
+      i = i + 1;
+    }
+  }
+  return out;
 }
 
 fn append_param_lines_at(out: String, kinds: IntArray, texts: StringArray, index: Int) -> String {

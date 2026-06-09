@@ -1,0 +1,10 @@
+module it.fns.ret;
+fn returns_void(a: Int) {
+  return;
+}
+fn returns_string() -> String {
+  return "x";
+}
+export fn returns_bool() -> Bool {
+  return true;
+}

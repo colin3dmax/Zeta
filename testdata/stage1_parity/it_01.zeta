@@ -1,0 +1,4 @@
+module it.basic;
+fn main() {
+  return;
+}

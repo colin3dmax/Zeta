@@ -1,0 +1,6 @@
+module probe.px;
+fn e2() -> Int {
+  let a: Int = obj.field.sub.run(arr[i], Point { x: 1 });
+  let b: Int = data[f(x)][g(y)].field;
+  return a;
+}

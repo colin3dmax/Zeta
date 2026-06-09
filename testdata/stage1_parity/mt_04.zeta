@@ -1,0 +1,8 @@
+module probe.mt04;
+fn bind(x: Int) -> Int {
+  match x {
+    0 -> { return 0; }
+    n -> { return n; }
+  }
+  return x;
+}

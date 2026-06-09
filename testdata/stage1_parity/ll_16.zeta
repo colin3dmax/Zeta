@@ -1,0 +1,6 @@
+module probe.ll;
+fn main() -> Bool {
+  let a = "tab\tafter";
+  let b = "ret\rcar";
+  return true;
+}

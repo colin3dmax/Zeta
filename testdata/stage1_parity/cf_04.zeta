@@ -1,0 +1,8 @@
+module probe.cf04;
+fn count(n: Int) -> Int {
+  let mut i: Int = 0;
+  while i < n {
+    i = i + 1;
+  }
+  return i;
+}

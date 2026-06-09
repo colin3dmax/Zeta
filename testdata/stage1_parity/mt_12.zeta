@@ -1,0 +1,9 @@
+module probe.mt12;
+fn exprstmt(x: Int) -> Int {
+  match x {
+    1 -> { compute(x); }
+    2 -> { x == 3; }
+    _ -> { helper(x, true); }
+  }
+  return x;
+}

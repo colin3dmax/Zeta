@@ -1,0 +1,7 @@
+module probe.op;
+fn main() -> Bool {
+  let a: Bool = f(b) + g(c) < h(d) * e;
+  let i: Bool = arr[j] == k + m;
+  let n: Bool = obj.x + obj.y > z;
+  return a;
+}

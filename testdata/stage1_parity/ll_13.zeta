@@ -1,0 +1,9 @@
+module probe.ll;
+fn main() -> Bool {
+  let p: Bool = a == b;
+  let q: Bool = a != b;
+  let r: Bool = a <= b;
+  let s: Bool = a >= b;
+  let t: Bool = a > b;
+  return true;
+}

@@ -1,0 +1,16 @@
+module probe.cf03;
+fn classify(n: Int) -> Int {
+  if n < 0 {
+    return 0;
+  } else {
+    if n == 0 {
+      return 1;
+    } else {
+      if n < 10 {
+        return 2;
+      } else {
+        return 3;
+      }
+    }
+  }
+}

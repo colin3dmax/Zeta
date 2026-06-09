@@ -1,0 +1,10 @@
+module probe.mt05;
+enum Color { Red, Green, Blue }
+fn name(c: Color) -> Int {
+  match c {
+    Color.Red -> { return 1; }
+    Color.Green -> { return 2; }
+    Color.Blue -> { return 3; }
+  }
+  return 0;
+}

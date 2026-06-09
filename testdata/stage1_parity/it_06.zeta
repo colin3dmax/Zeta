@@ -1,0 +1,9 @@
+module it.record.types;
+struct Bag {
+  ints: IntArray,
+  strs: StringArray,
+  flags: BoolArray,
+  owner: User,
+}
+fn f() {
+}

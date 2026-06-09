@@ -1,0 +1,18 @@
+module it.combo;
+import std.io;
+import demo.math as math;
+export struct Account {
+  id: Int,
+  label: String,
+}
+enum Status {
+  Open,
+  Closed(Int),
+}
+fn helper(a: Int) -> Int {
+  return a;
+}
+export fn main(name: String) -> Int {
+  let n: Int = helper(1);
+  return n;
+}

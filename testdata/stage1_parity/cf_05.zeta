@@ -1,0 +1,14 @@
+module probe.cf05;
+fn scan(n: Int) -> Int {
+  let mut i: Int = 0;
+  while i < n {
+    if i == 5 {
+      break;
+    }
+    if i < 2 {
+      continue;
+    }
+    i = i + 1;
+  }
+  return i;
+}

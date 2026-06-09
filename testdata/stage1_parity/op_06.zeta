@@ -1,0 +1,8 @@
+module probe.op;
+fn main() -> Bool {
+  let a: Bool = !b;
+  let c: Bool = !b && d;
+  let e: Bool = !b || !c;
+  let f: Bool = !(b && c);
+  return a;
+}

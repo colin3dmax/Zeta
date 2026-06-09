@@ -1,0 +1,8 @@
+module probe.ll;
+fn main() -> Bool {
+  let a: IntArray = [1, 2, 3];
+  let b: StringArray = ["x", "y"];
+  let c: BoolArray = [true, false];
+  let d = [];
+  return true;
+}

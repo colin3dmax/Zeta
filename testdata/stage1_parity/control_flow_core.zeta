@@ -1,0 +1,8 @@
+module probe.control;
+fn main() -> Bool {
+  let s: String = "hi";
+  let c: Bool = a < b;
+  while a < b { break; }
+  match x { 1 -> { return true; }, _ -> { return false; } }
+  return c;
+}

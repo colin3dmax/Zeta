@@ -1,0 +1,10 @@
+module probe.ll;
+fn main() -> Bool {
+  let a: Int = 0;
+  let b: Int = 42;
+  let c: Int = 1000000;
+  let d: Bool = true;
+  let e: Bool = false;
+  let f: String = "hello";
+  return true;
+}

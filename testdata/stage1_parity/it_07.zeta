@@ -1,0 +1,12 @@
+module it.enums.plain;
+enum Color {
+  Red,
+  Green,
+  Blue,
+}
+export enum State {
+  Idle,
+  Running,
+}
+fn f() {
+}

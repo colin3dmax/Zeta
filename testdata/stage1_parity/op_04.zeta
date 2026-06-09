@@ -1,0 +1,6 @@
+module probe.op;
+fn main() -> Bool {
+  let a: Bool = b < c && d > e;
+  let f: Bool = g == h || i != j;
+  return a && f;
+}

@@ -1,0 +1,6 @@
+module probe.px;
+fn e1() -> Box {
+  let a: Box = Box { v: arr[i], w: obj.field, q: f(x) };
+  let b: IntArray = [a.b.c, arr[i][j], f(g(x))];
+  return a;
+}

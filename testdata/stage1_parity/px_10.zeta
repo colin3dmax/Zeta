@@ -1,0 +1,6 @@
+module probe.px;
+fn px10() -> Box {
+  let a: Box = Box { p: Point { x: 1, y: 2 } };
+  let b: Box = Box { p: Point { x: 1 }, label: "hi" };
+  return a;
+}

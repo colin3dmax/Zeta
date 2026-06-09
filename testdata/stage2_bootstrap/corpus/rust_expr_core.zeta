@@ -1,0 +1,6 @@
+fn main() -> Bool {
+  let values: IntArray = [1, value + 1, items[0]];
+  let user: User = User { id: next(), active: !failed || ready, child: User { id: 1 } };
+  let passed: Bool = check(User { id: 1 }.id, values[index + 1], true == !done);
+  return check([ready][0], user.child.id) && passed;
+}

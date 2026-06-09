@@ -1,0 +1,11 @@
+module it.structs;
+struct Point {
+  x: Int,
+}
+export struct User {
+  name: String,
+  age: Int,
+  active: Bool,
+}
+fn f() {
+}

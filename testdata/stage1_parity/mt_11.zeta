@@ -1,0 +1,8 @@
+module probe.mt11;
+fn complex(a: Int, b: Int, items: IntArray) -> Int {
+  match a + b * 2 {
+    0 -> { return items[0]; }
+    _ -> { return a; }
+  }
+  return 0;
+}

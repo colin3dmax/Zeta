@@ -1,0 +1,11 @@
+module probe.cf07;
+fn guarded(a: Bool, n: Int) -> Int {
+  if a {
+    let mut i: Int = 0;
+    while i < n {
+      i = i + 1;
+    }
+    return i;
+  }
+  return 0;
+}

@@ -1,0 +1,19 @@
+module probe.cf15;
+fn mixed(n: Int) -> Int {
+  let mut i: Int = 0;
+  let mut acc: Int = 0;
+  while i < n {
+    if i == 0 {
+      i = i + 1;
+      continue;
+    } else {
+      if i == n {
+        break;
+      } else {
+        acc = acc + i;
+      }
+    }
+    i = i + 1;
+  }
+  return acc;
+}

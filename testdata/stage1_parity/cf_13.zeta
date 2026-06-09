@@ -1,0 +1,13 @@
+module probe.cf13;
+fn condexprs(a: Int, b: Int) -> Bool {
+  if !(a < b) {
+    return false;
+  }
+  while a <= b && !(a == b) {
+    return true;
+  }
+  if a >= b || a != b {
+    return true;
+  }
+  return false;
+}

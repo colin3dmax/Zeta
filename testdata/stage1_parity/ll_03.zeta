@@ -1,0 +1,7 @@
+module probe.ll;
+fn main() -> Bool {
+  let mut a: Int = 5;
+  let mut b: Bool = false;
+  let mut c: String = "m";
+  return true;
+}

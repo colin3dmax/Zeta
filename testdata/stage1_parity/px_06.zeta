@@ -1,0 +1,7 @@
+module probe.px;
+fn px06() -> Int {
+  let a: Int = grid[i][j];
+  let b: Int = cube[x][y][z];
+  let c: Int = m[a + b][c * d];
+  return a;
+}

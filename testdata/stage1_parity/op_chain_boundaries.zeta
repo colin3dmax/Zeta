@@ -1,0 +1,10 @@
+fn main() -> Bool {
+  let bools: Bool = true == false;
+  let strings: Bool = "a" != "b";
+  let grouped: Bool = (true) == (false);
+  let bool_order: Bool = true < false;
+  let string_order: Bool = "a" < "b";
+  let chain: Bool = 1 < 2 < 3;
+  let path: Bool = math.check(ready);
+  return math.check(path);
+}

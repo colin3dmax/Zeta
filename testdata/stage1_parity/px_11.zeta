@@ -1,0 +1,7 @@
+module probe.px;
+fn px11() -> Int {
+  let a: Int = grid[f(i)][g(j)];
+  let b: Int = data[obj.idx];
+  let c: Int = lookup[a.b.c];
+  return a;
+}

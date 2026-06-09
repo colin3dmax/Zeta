@@ -1,0 +1,6 @@
+module probe.cf12;
+fn singlestmt(a: Bool) -> Int {
+  if a { return 1; } else { return 2; }
+  while a { break; }
+  return 0;
+}

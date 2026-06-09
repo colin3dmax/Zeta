@@ -1,0 +1,9 @@
+module probe.mt06;
+enum Shape { Circle(Int), Square(Int) }
+fn area(s: Shape) -> Int {
+  match s {
+    Shape.Circle(r) -> { return r * r; }
+    Shape.Square(w) -> { return w * w; }
+  }
+  return 0;
+}

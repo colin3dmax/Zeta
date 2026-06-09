@@ -1,0 +1,9 @@
+module probe.cf09;
+fn emptyblocks(a: Bool) -> Int {
+  if a {
+  } else {
+  }
+  while a {
+  }
+  return 0;
+}

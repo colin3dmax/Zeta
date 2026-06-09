@@ -21,5 +21,4 @@ Module
     Return
       Name sum
   Function name=ping exported=false
-    Return type=Unit
     Return

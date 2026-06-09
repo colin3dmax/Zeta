@@ -1,0 +1,8 @@
+module probe.ll;
+fn main() -> Bool {
+  total = a + b;
+  flag = p && q;
+  cmp = a < b;
+  neg = !done;
+  return true;
+}

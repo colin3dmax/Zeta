@@ -1,0 +1,8 @@
+module probe.mt14;
+fn fieldmatch(u: User) -> Int {
+  match u.id {
+    1 -> { return u.score; }
+    _ -> { return 0; }
+  }
+  return 0;
+}

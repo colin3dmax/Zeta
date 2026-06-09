@@ -1,0 +1,10 @@
+module probe.mt09;
+fn guarded(x: Int, on: Bool) -> Int {
+  if on {
+    match x {
+      1 -> { return 1; }
+      _ -> { return 0; }
+    }
+  }
+  return 99;
+}

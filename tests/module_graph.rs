@@ -1319,7 +1319,7 @@ fn main() -> String {
 
     assert_eq!(
         value.to_string(),
-        "Module\n  ModuleDecl name=demo.app\n  Import path=demo.math\n  Import path=demo.text.format alias=fmt\n  Import path=demo.extra.tools exported=true\n  Struct name=User exported=true\n    Field name=id type=Int\n    Field name=name type=String\n  Enum name=Result exported=false\n    Variant name=Ok payload=Int\n    Variant name=Err payload=String\n    Variant name=None\n  Function name=add exported=true\n    Param name=a type=Int\n    Param name=b type=String\n    Return type=Bool\n    Return\n      Bool true\n  Function name=ping exported=false\n    Return type=Unit\n    Return\n"
+        "Module\n  ModuleDecl name=demo.app\n  Import path=demo.math\n  Import path=demo.text.format alias=fmt\n  Import path=demo.extra.tools exported=true\n  Struct name=User exported=true\n    Field name=id type=Int\n    Field name=name type=String\n  Enum name=Result exported=false\n    Variant name=Ok payload=Int\n    Variant name=Err payload=String\n    Variant name=None\n  Function name=add exported=true\n    Param name=a type=Int\n    Param name=b type=String\n    Return type=Bool\n    Return\n      Bool true\n  Function name=ping exported=false\n    Return\n"
     );
 }
 
@@ -1371,7 +1371,7 @@ fn main() -> String {
 
     assert_eq!(
         value.to_string(),
-        "Module\n  Function name=main exported=false\n    Return type=Int\n    Let name=answer type=Int\n      Int 42\n    Let name=text type=String\n      String \"ready\"\n    Let name=ok type=Bool\n      Bool true\n    Let name=alias type=Int\n      Name answer\n    Let name=count type=Int mutable=true\n      Int 1\n    Let name=inferred\n      Int 7\n    Return\n      Name alias\n  Function name=ping exported=false\n    Return type=Unit\n    Return\n"
+        "Module\n  Function name=main exported=false\n    Return type=Int\n    Let name=answer type=Int\n      Int 42\n    Let name=text type=String\n      String \"ready\"\n    Let name=ok type=Bool\n      Bool true\n    Let name=alias type=Int\n      Name answer\n    Let name=count type=Int mutable=true\n      Int 1\n    Let name=inferred\n      Int 7\n    Return\n      Name alias\n  Function name=ping exported=false\n    Return\n"
     );
 }
 
@@ -1862,35 +1862,6 @@ fn main() -> String {
     assert_eq!(
         value.to_string(),
         "Module\n  Function name=main exported=false\n    Return type=Bool\n    Let name=lt type=Bool\n      Binary op=lt\n        Binary op=add\n          Int 1\n          Int 2\n        Binary op=mul\n          Int 4\n          Int 2\n    Let name=eq type=Bool\n      Binary op=eq\n        Name value\n        Int 10\n    Let name=ne type=Bool\n      Binary op=not_eq\n        Name value\n        Int 0\n    Let name=not_left type=Bool\n      Binary op=eq\n        Unary op=not\n          Name ready\n        Bool false\n    Let name=not_right type=Bool\n      Binary op=not_eq\n        Bool true\n        Unary op=not\n          Name done\n    Let name=lte type=Bool\n      Binary op=lte\n        Name value\n        Int 10\n    Let name=gt type=Bool\n      Binary op=gt\n        Name value\n        Int 1\n    Return\n      Binary op=gte\n        Binary op=add\n          Name value\n          Int 1\n        Int 3\n"
-    );
-}
-
-#[test]
-fn stage2_bootstrap_harness_rust_comparison_dump_keeps_v10_boundaries() {
-    let stage2_app = r#"
-module stage2.rust_comparison_boundaries;
-import stage1.frontend;
-
-fn main() -> String {
-  let source: String = "fn main() -> Bool { let bools: Bool = true == false; let strings: Bool = \"a\" != \"b\"; let grouped: Bool = (true) == (false); let bool_order: Bool = true < false; let string_order: Bool = \"a\" < \"b\"; let chain: Bool = 1 < 2 < 3; let path: Bool = math.check(ready); return math.check(path); }";
-  return stage1.frontend.ast_dump_rust_item_dump(source);
-}
-"#;
-    let value = zeta::module_graph::run_sources(&[
-        source_file(
-            "testdata/stage1_frontend/frontend.zeta",
-            include_str!("../testdata/stage1_frontend/frontend.zeta"),
-        ),
-        source_file(
-            "testdata/stage2_bootstrap/rust_comparison_boundaries.zeta",
-            stage2_app,
-        ),
-    ])
-    .expect("Stage2 bootstrap Rust comparison boundary harness should run");
-
-    assert_eq!(
-        value.to_string(),
-        "Module\n  Function name=main exported=false\n    Return type=Bool\n    Let name=bools type=Bool\n      Binary op=eq\n        Bool true\n        Bool false\n    Let name=strings type=Bool\n      Binary op=not_eq\n        String \"a\"\n        String \"b\"\n    Let name=grouped type=Bool\n      Binary op=eq\n        Bool true\n        Bool false\n    Let name=bool_order type=Bool\n    Let name=string_order type=Bool\n    Let name=chain type=Bool\n    Let name=path type=Bool\n      Call callee=math.check\n        Name ready\n    Return\n      Call callee=math.check\n        Name path\n"
     );
 }
 
@@ -2428,6 +2399,13 @@ fn main() -> String {
 fn stage2_bootstrap_golden_rust_item_core() {
     let source = include_str!("../testdata/stage2_bootstrap/corpus/rust_item_core.zeta");
     let expected = include_str!("../testdata/stage2_bootstrap/golden/rust_item_core.rust_ast");
+    assert_eq!(run_stage2_stage1_rust_item_dump(source), expected);
+}
+
+#[test]
+fn stage2_bootstrap_golden_rust_expr_core() {
+    let source = include_str!("../testdata/stage2_bootstrap/corpus/rust_expr_core.zeta");
+    let expected = include_str!("../testdata/stage2_bootstrap/golden/rust_expr_core.rust_ast");
     assert_eq!(run_stage2_stage1_rust_item_dump(source), expected);
 }
 

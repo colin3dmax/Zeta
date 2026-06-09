@@ -1,0 +1,10 @@
+module probe.op;
+fn main() -> Bool {
+  let a: Bool = b == c;
+  let d: Bool = e != f;
+  let g: Bool = h < i;
+  let j: Bool = k <= m;
+  let n: Bool = o > p;
+  let q: Bool = r >= s;
+  return a;
+}

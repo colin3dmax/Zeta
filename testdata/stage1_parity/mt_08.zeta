@@ -1,0 +1,13 @@
+module probe.mt08;
+fn nested(x: Int, y: Int) -> Int {
+  match x {
+    0 -> {
+      match y {
+        0 -> { return 0; }
+        _ -> { return y; }
+      }
+    }
+    _ -> { return x; }
+  }
+  return 0;
+}

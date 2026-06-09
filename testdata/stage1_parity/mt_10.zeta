@@ -1,0 +1,10 @@
+module probe.mt10;
+fn loopy(x: Int) -> Int {
+  while x < 10 {
+    match x {
+      0 -> { break; }
+      _ -> { continue; }
+    }
+  }
+  return x;
+}
