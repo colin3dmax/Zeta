@@ -1140,7 +1140,14 @@ fn eval_binary(op: BinaryOp, left: Value, right: Value) -> Result<Value, Diagnos
                 _ => unreachable!(),
             }
         }
-        BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
+        BinaryOp::Add
+        | BinaryOp::Sub
+        | BinaryOp::Mul
+        | BinaryOp::Div
+        | BinaryOp::Mod
+        | BinaryOp::BitAnd
+        | BinaryOp::BitOr
+        | BinaryOp::BitXor => {
             let (Value::Int(left), Value::Int(right)) = (left, right) else {
                 return Err(runtime_error(
                     "RUNTIME_BINARY_OPERAND",
@@ -1151,6 +1158,9 @@ fn eval_binary(op: BinaryOp, left: Value, right: Value) -> Result<Value, Diagnos
                 BinaryOp::Add => Ok(Value::Int(left + right)),
                 BinaryOp::Sub => Ok(Value::Int(left - right)),
                 BinaryOp::Mul => Ok(Value::Int(left * right)),
+                BinaryOp::BitAnd => Ok(Value::Int(left & right)),
+                BinaryOp::BitOr => Ok(Value::Int(left | right)),
+                BinaryOp::BitXor => Ok(Value::Int(left ^ right)),
                 BinaryOp::Div => {
                     if right == 0 {
                         Err(runtime_error("RUNTIME_DIVIDE_BY_ZERO", "division by zero"))
@@ -1236,6 +1246,7 @@ fn eval_unary(op: UnaryOp, value: Value) -> Result<Value, Diagnostic> {
     match op {
         UnaryOp::Not => Ok(Value::Bool(!expect_bool(value, "RUNTIME_UNARY_OPERAND")?)),
         UnaryOp::Neg => Ok(Value::Int(-expect_int(value, "RUNTIME_UNARY_OPERAND")?)),
+        UnaryOp::BitNot => Ok(Value::Int(!expect_int(value, "RUNTIME_UNARY_OPERAND")?)),
     }
 }
 

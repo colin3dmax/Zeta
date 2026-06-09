@@ -60,6 +60,10 @@ pub enum Symbol {
     BangEq,
     AndAnd,
     OrOr,
+    Ampersand,
+    Pipe,
+    Caret,
+    Tilde,
     Lt,
     Lte,
     Gt,
@@ -262,10 +266,14 @@ impl<'a> Lexer<'a> {
                 self.bump_char();
                 Some(TokenKind::Symbol(Symbol::AndAnd))
             }
+            '&' => Some(TokenKind::Symbol(Symbol::Ampersand)),
             '|' if self.peek_char() == Some('|') => {
                 self.bump_char();
                 Some(TokenKind::Symbol(Symbol::OrOr))
             }
+            '|' => Some(TokenKind::Symbol(Symbol::Pipe)),
+            '^' => Some(TokenKind::Symbol(Symbol::Caret)),
+            '~' => Some(TokenKind::Symbol(Symbol::Tilde)),
             '<' if self.peek_char() == Some('=') => {
                 self.bump_char();
                 Some(TokenKind::Symbol(Symbol::Lte))

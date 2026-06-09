@@ -43,6 +43,14 @@ fn run_executes_modulo() {
 }
 
 #[test]
+fn run_executes_bitwise() {
+    // 6 & 3 = 2, 6 | 1 = 7, 6 ^ 3 = 5, ~0 = -1 => 2 + 7 + 5 - 1 = 13
+    let value =
+        zeta::run_source(include_str!("../testdata/run_bitwise.zeta")).expect("program should run");
+    assert_eq!(value.to_string(), "13");
+}
+
+#[test]
 fn run_executes_compound_assignment() {
     // a=5; a+=3 → 8; a*=2 → 16; a-=1 → 15
     let value = zeta::run_source(include_str!("../testdata/run_compound.zeta"))

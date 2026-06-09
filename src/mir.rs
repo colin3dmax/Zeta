@@ -843,6 +843,9 @@ pub fn binary_op_text(op: BinaryOp) -> &'static str {
         BinaryOp::Mul => "mul",
         BinaryOp::Div => "div",
         BinaryOp::Mod => "mod",
+        BinaryOp::BitAnd => "bit_and",
+        BinaryOp::BitOr => "bit_or",
+        BinaryOp::BitXor => "bit_xor",
         BinaryOp::And => "and",
         BinaryOp::Or => "or",
         BinaryOp::Eq => "eq",
@@ -858,6 +861,7 @@ pub fn unary_op_text(op: UnaryOp) -> &'static str {
     match op {
         UnaryOp::Not => "not",
         UnaryOp::Neg => "neg",
+        UnaryOp::BitNot => "bit_not",
     }
 }
 
@@ -1249,6 +1253,11 @@ impl<'a> MirVerifier<'a> {
                     self.expect_named(&ty, "Int", "MIR_UNARY_TYPE", "neg operand");
                     MirType::named("Int")
                 }
+                UnaryOp::BitNot => {
+                    let ty = self.verify_expr(expr, locals);
+                    self.expect_named(&ty, "Int", "MIR_UNARY_TYPE", "bit_not operand");
+                    MirType::named("Int")
+                }
             },
             MirExpr::Call { callee, args } => self.verify_call(callee, args, locals),
             MirExpr::EnumVariant {
@@ -1359,7 +1368,14 @@ impl<'a> MirVerifier<'a> {
         let left_ty = self.verify_expr(left, locals);
         let right_ty = self.verify_expr(right, locals);
         match op {
-            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
+            BinaryOp::Add
+            | BinaryOp::Sub
+            | BinaryOp::Mul
+            | BinaryOp::Div
+            | BinaryOp::Mod
+            | BinaryOp::BitAnd
+            | BinaryOp::BitOr
+            | BinaryOp::BitXor => {
                 self.expect_named(&left_ty, "Int", "MIR_BINARY_TYPE", "left operand");
                 self.expect_named(&right_ty, "Int", "MIR_BINARY_TYPE", "right operand");
                 MirType::named("Int")

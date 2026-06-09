@@ -107,6 +107,41 @@ fn main() -> Int {
 }
 
 #[test]
+fn dumps_bitwise_expressions() {
+    let dump = zeta::dump_ast(
+        r#"
+fn main() -> Int {
+  return a & b | c ^ ~d;
+}
+"#,
+    )
+    .expect("source should parse");
+
+    assert!(dump.contains("Binary op=bit_and"));
+    assert!(dump.contains("Binary op=bit_or"));
+    assert!(dump.contains("Binary op=bit_xor"));
+    assert!(dump.contains("Unary op=bit_not"));
+}
+
+#[test]
+fn dumps_bitwise_precedence_left_assoc() {
+    // `a & b | c` 同级左结合 => (a & b) | c。
+    let dump = zeta::dump_ast(
+        r#"
+fn main() -> Int {
+  return a & b | c;
+}
+"#,
+    )
+    .expect("source should parse");
+
+    assert_eq!(
+        dump,
+        "Module\n  Function name=main exported=false\n    Return type=Int\n    Return\n      Binary op=bit_or\n        Binary op=bit_and\n          Name a\n          Name b\n        Name c\n"
+    );
+}
+
+#[test]
 fn dumps_else_if_chain_as_nested_if() {
     let dump = zeta::dump_ast(
         r#"

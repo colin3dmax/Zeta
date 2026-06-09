@@ -220,6 +220,9 @@ pub enum BinaryOp {
     Mul,
     Div,
     Mod,
+    BitAnd,
+    BitOr,
+    BitXor,
     And,
     Or,
     Eq,
@@ -234,6 +237,7 @@ pub enum BinaryOp {
 pub enum UnaryOp {
     Not,
     Neg,
+    BitNot,
 }
 
 impl Module {
@@ -561,6 +565,9 @@ impl BinaryOp {
             BinaryOp::Mul => "mul",
             BinaryOp::Div => "div",
             BinaryOp::Mod => "mod",
+            BinaryOp::BitAnd => "bit_and",
+            BinaryOp::BitOr => "bit_or",
+            BinaryOp::BitXor => "bit_xor",
             BinaryOp::And => "and",
             BinaryOp::Or => "or",
             BinaryOp::Eq => "eq",
@@ -578,6 +585,7 @@ impl UnaryOp {
         match self {
             UnaryOp::Not => "not",
             UnaryOp::Neg => "neg",
+            UnaryOp::BitNot => "bit_not",
         }
     }
 }

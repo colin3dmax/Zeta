@@ -499,12 +499,36 @@ impl Parser {
     }
 
     fn parse_logical_and(&mut self) -> Result<Expr, Diagnostic> {
-        let mut expr = self.parse_comparison()?;
+        let mut expr = self.parse_bitwise()?;
         while self.consume_symbol(Symbol::AndAnd).is_some() {
-            let right = self.parse_comparison()?;
+            let right = self.parse_bitwise()?;
             let span = Span::new(expr.span().start, right.span().end);
             expr = Expr::Binary {
                 op: BinaryOp::And,
+                left: Box::new(expr),
+                right: Box::new(right),
+                span,
+            };
+        }
+        Ok(expr)
+    }
+
+    fn parse_bitwise(&mut self) -> Result<Expr, Diagnostic> {
+        let mut expr = self.parse_comparison()?;
+        loop {
+            let op = if self.consume_symbol(Symbol::Ampersand).is_some() {
+                BinaryOp::BitAnd
+            } else if self.consume_symbol(Symbol::Pipe).is_some() {
+                BinaryOp::BitOr
+            } else if self.consume_symbol(Symbol::Caret).is_some() {
+                BinaryOp::BitXor
+            } else {
+                break;
+            };
+            let right = self.parse_comparison()?;
+            let span = Span::new(expr.span().start, right.span().end);
+            expr = Expr::Binary {
+                op,
                 left: Box::new(expr),
                 right: Box::new(right),
                 span,
@@ -604,6 +628,15 @@ impl Parser {
             let span = Span::new(start.start, expr.span().end);
             return Ok(Expr::Unary {
                 op: UnaryOp::Neg,
+                expr: Box::new(expr),
+                span,
+            });
+        }
+        if let Some(start) = self.consume_symbol(Symbol::Tilde) {
+            let expr = self.parse_unary()?;
+            let span = Span::new(start.start, expr.span().end);
+            return Ok(Expr::Unary {
+                op: UnaryOp::BitNot,
                 expr: Box::new(expr),
                 span,
             });

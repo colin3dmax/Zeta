@@ -2341,7 +2341,9 @@ fn main() -> String {
 }
 
 #[test]
-fn stage2_bootstrap_harness_rejects_single_logical_symbols_in_stage1_summary() {
+fn stage2_bootstrap_harness_lexes_single_bitwise_symbols_in_stage1_summary() {
+    // 单字符 `&`/`|` 现在是合法的位运算 token（不再是 unknown）：
+    // `& | && ||` => 1 个 andand、1 个 oror，单字符 `&`/`|` 不再计入 unknown。
     let stage2_app = r#"
 module stage2.logical_symbols;
 import std.core;
@@ -2365,7 +2367,7 @@ fn main() -> String {
 
     assert_eq!(
         value.to_string(),
-        "lparen=0;rparen=0;lbrace=0;rbrace=0;lbracket=0;rbracket=0;colon=0;semicolon=0;comma=0;dot=0;arrow=0;eq=0;eqeq=0;bang=0;bangeq=0;andand=1;oror=1;lt=0;lte=0;gt=0;gte=0;plus=0;minus=0;star=0;slash=0|ident=0;int=0;string=0;bool=0;unknown=2;eof=1"
+        "lparen=0;rparen=0;lbrace=0;rbrace=0;lbracket=0;rbracket=0;colon=0;semicolon=0;comma=0;dot=0;arrow=0;eq=0;eqeq=0;bang=0;bangeq=0;andand=1;oror=1;lt=0;lte=0;gt=0;gte=0;plus=0;minus=0;star=0;slash=0|ident=0;int=0;string=0;bool=0;unknown=0;eof=1"
     );
 }
 

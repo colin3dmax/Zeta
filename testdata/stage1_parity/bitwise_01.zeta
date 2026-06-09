@@ -1,0 +1,13 @@
+module probe.bitwise;
+fn main() -> Int {
+  let a: Int = b & c;
+  let d: Int = e | f;
+  let g: Int = h ^ i;
+  let j: Int = ~k;
+  let l: Int = a & b | c ^ d;
+  let m: Int = a + b & c * d;
+  let n: Bool = a & b == 0 && c;
+  let o: Int = (a | b) & c;
+  let p: Int = ~a & b;
+  return a & e;
+}

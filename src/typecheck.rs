@@ -854,7 +854,14 @@ fn infer_expr(
             let left_type = infer_expr(left, locals, functions, structs, enums, diagnostics);
             let right_type = infer_expr(right, locals, functions, structs, enums, diagnostics);
             match op {
-                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
+                BinaryOp::Add
+                | BinaryOp::Sub
+                | BinaryOp::Mul
+                | BinaryOp::Div
+                | BinaryOp::Mod
+                | BinaryOp::BitAnd
+                | BinaryOp::BitOr
+                | BinaryOp::BitXor => {
                     expect_type(
                         &left_type,
                         &Type::Int,
@@ -930,7 +937,7 @@ fn infer_expr(
                     );
                     Type::Bool
                 }
-                UnaryOp::Neg => {
+                UnaryOp::Neg | UnaryOp::BitNot => {
                     expect_type(
                         &expr_type,
                         &Type::Int,

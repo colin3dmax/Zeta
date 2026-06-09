@@ -1,0 +1,8 @@
+fn main() -> Int {
+  let a: Int = 6 & 3;
+  let b: Int = 6 | 1;
+  let c: Int = 6 ^ 3;
+  let d: Int = ~0;
+  // a=2, b=7, c=5, d=-1 => 2 + 7 + 5 + (-1) = 13
+  return a + b + c + d;
+}

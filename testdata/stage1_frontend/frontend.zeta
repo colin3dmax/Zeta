@@ -1608,6 +1608,10 @@ fn rust_expr_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
     return rust_logic_expr_supported_range(kinds, start, logical_and)
       && rust_logic_expr_supported_range(kinds, logical_and + 1, end);
   }
+  let bitwise: Int = last_bitwise_operator_in_range(kinds, start, end);
+  if bitwise < end {
+    return rust_bitwise_operands_supported_range(kinds, start, bitwise, end);
+  }
   let comparison: Int = last_comparison_operator_in_range(kinds, start, end);
   if comparison < end {
     return rust_comparison_operands_supported_range(kinds, start, comparison, end);
@@ -1631,6 +1635,13 @@ fn rust_expr_supported_range(kinds: IntArray, start: Int, end: Int) -> Bool {
 fn rust_comparison_operands_supported_range(kinds: IntArray, start: Int, operator: Int, end: Int) -> Bool {
   // 比较/相等运算符左结合:左操作数可含嵌套比较链(如 b == c == d),
   // 因此两侧都回落到完整表达式检查,与 append_rust_expr_range 的递归保持一致。
+  return rust_expr_supported_range(kinds, start, operator)
+    && rust_expr_supported_range(kinds, operator + 1, end);
+}
+
+fn rust_bitwise_operands_supported_range(kinds: IntArray, start: Int, operator: Int, end: Int) -> Bool {
+  // 位运算 & | ^ 左结合且同级:左操作数可含嵌套位运算链,右操作数可含比较/算术。
+  // 两侧都回落到完整表达式检查,与 append_rust_expr_range 的递归保持一致。
   return rust_expr_supported_range(kinds, start, operator)
     && rust_expr_supported_range(kinds, operator + 1, end);
 }
@@ -1735,6 +1746,10 @@ fn rust_logic_expr_supported_range(kinds: IntArray, start: Int, end: Int) -> Boo
     return rust_logic_expr_supported_range(kinds, start, logical_and)
       && rust_logic_expr_supported_range(kinds, logical_and + 1, end);
   }
+  let bitwise: Int = last_bitwise_operator_in_range(kinds, start, end);
+  if bitwise < end {
+    return rust_bitwise_operands_supported_range(kinds, start, bitwise, end);
+  }
   let comparison: Int = last_comparison_operator_in_range(kinds, start, end);
   if comparison < end {
     return rust_comparison_operands_supported_range(kinds, start, comparison, end);
@@ -1753,6 +1768,9 @@ fn rust_unary_expr_supported_range(kinds: IntArray, start: Int, end: Int) -> Boo
     return rust_not_operand_supported_range(kinds, start + 1, end);
   }
   if kinds[start] == token_minus() {
+    return rust_neg_operand_supported_range(kinds, start + 1, end);
+  }
+  if kinds[start] == token_tilde() {
     return rust_neg_operand_supported_range(kinds, start + 1, end);
   }
   return false;
@@ -1792,6 +1810,10 @@ fn rust_not_operand_supported_range(kinds: IntArray, start: Int, end: Int) -> Bo
   if logical_and < end {
     return rust_logic_expr_supported_range(kinds, start, logical_and)
       && rust_logic_expr_supported_range(kinds, logical_and + 1, end);
+  }
+  let bitwise: Int = last_bitwise_operator_in_range(kinds, start, end);
+  if bitwise < end {
+    return rust_bitwise_operands_supported_range(kinds, start, bitwise, end);
   }
   let comparison: Int = last_comparison_operator_in_range(kinds, start, end);
   if comparison < end {
@@ -2206,6 +2228,15 @@ fn append_rust_expr_range(
     next = append_rust_expr_range(next, kinds, texts, logical_and + 1, end, child_indent);
     return next;
   }
+  let bitwise: Int = last_bitwise_operator_in_range(kinds, start, end);
+  if bitwise < end {
+    let mut next: String = string_concat(out, indent);
+    next = append_rust_binary_op_header(next, kinds[bitwise]);
+    let child_indent: String = string_concat(indent, "  ");
+    next = append_rust_expr_range(next, kinds, texts, start, bitwise, child_indent);
+    next = append_rust_expr_range(next, kinds, texts, bitwise + 1, end, child_indent);
+    return next;
+  }
   let comparison: Int = last_comparison_operator_in_range(kinds, start, end);
   if comparison < end {
     let mut next: String = string_concat(out, indent);
@@ -2243,6 +2274,13 @@ fn append_rust_expr_range(
   if kinds[start] == token_minus() {
     let mut next: String = string_concat(out, indent);
     next = string_concat(next, "Unary op=neg\n");
+    let child_indent: String = string_concat(indent, "  ");
+    next = append_rust_expr_range(next, kinds, texts, start + 1, end, child_indent);
+    return next;
+  }
+  if kinds[start] == token_tilde() {
+    let mut next: String = string_concat(out, indent);
+    next = string_concat(next, "Unary op=bit_not\n");
     let child_indent: String = string_concat(indent, "  ");
     next = append_rust_expr_range(next, kinds, texts, start + 1, end, child_indent);
     return next;
@@ -2526,6 +2564,15 @@ fn append_rust_binary_op_header(out: String, operator: Int) -> String {
   if operator == token_oror() {
     next = string_concat(next, "or");
   }
+  if operator == token_amp() {
+    next = string_concat(next, "bit_and");
+  }
+  if operator == token_pipe() {
+    next = string_concat(next, "bit_or");
+  }
+  if operator == token_caret() {
+    next = string_concat(next, "bit_xor");
+  }
   next = string_concat(next, "\n");
   return next;
 }
@@ -2579,6 +2626,10 @@ fn last_additive_operator_in_range(kinds: IntArray, start: Int, end: Int) -> Int
 
 fn last_multiplicative_operator_in_range(kinds: IntArray, start: Int, end: Int) -> Int {
   return last_operator_triple_in_range(kinds, start, end, token_star(), token_slash(), token_percent());
+}
+
+fn last_bitwise_operator_in_range(kinds: IntArray, start: Int, end: Int) -> Int {
+  return last_operator_triple_in_range(kinds, start, end, token_amp(), token_pipe(), token_caret());
 }
 
 fn last_operator_triple_in_range(kinds: IntArray, start: Int, end: Int, first: Int, second: Int, third: Int) -> Int {
@@ -2660,6 +2711,9 @@ fn operator_is_binary_at(kinds: IntArray, start: Int, index: Int) -> Bool {
     || previous == token_gte()
     || previous == token_andand()
     || previous == token_oror()
+    || previous == token_amp()
+    || previous == token_pipe()
+    || previous == token_caret()
     || previous == token_lparen()
     || previous == token_lbracket()
     || previous == token_lbrace()
@@ -3413,13 +3467,19 @@ fn symbol_kind(source: String, index: Int) -> Int {
     if index + 1 < string_len(source) && string_byte_at(source, index + 1) == 38 {
       return token_andand();
     }
-    return token_unknown();
+    return token_amp();
   }
   if byte == 124 {
     if index + 1 < string_len(source) && string_byte_at(source, index + 1) == 124 {
       return token_oror();
     }
-    return token_unknown();
+    return token_pipe();
+  }
+  if byte == 94 {
+    return token_caret();
+  }
+  if byte == 126 {
+    return token_tilde();
   }
   if byte == 60 {
     if index + 1 < string_len(source) && string_byte_at(source, index + 1) == 61 {
@@ -3515,4 +3575,8 @@ fn token_star_eq() -> Int { return 58; }
 fn token_slash_eq() -> Int { return 59; }
 fn token_percent_eq() -> Int { return 60; }
 fn token_dotdot() -> Int { return 61; }
+fn token_amp() -> Int { return 62; }
+fn token_pipe() -> Int { return 63; }
+fn token_caret() -> Int { return 64; }
+fn token_tilde() -> Int { return 65; }
 fn token_unknown() -> Int { return 99; }
