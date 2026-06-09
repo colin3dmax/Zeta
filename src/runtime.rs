@@ -296,6 +296,59 @@ impl MirRuntime {
                 }
                 Ok(control)
             }
+            MirStmt::ForRange {
+                binding,
+                start,
+                end,
+                body,
+            } => {
+                let start_value = self.eval_expr(start, locals)?;
+                let end_value = self.eval_expr(end, locals)?;
+                let (Value::Int(start_value), Value::Int(end_value)) = (start_value, end_value)
+                else {
+                    return Err(runtime_error(
+                        "RUNTIME_FOR_RANGE_BOUND",
+                        "for-in range bounds must evaluate to Int",
+                    ));
+                };
+                let saved = locals.remove(binding);
+                let mut control = Control::Continue;
+                let mut i = start_value;
+                while i < end_value {
+                    self.loop_steps += 1;
+                    if self.loop_steps > LOOP_LIMIT {
+                        if let Some(saved) = saved {
+                            locals.insert(binding.clone(), saved);
+                        } else {
+                            locals.remove(binding);
+                        }
+                        return Err(runtime_error(
+                            "RUNTIME_LOOP_LIMIT",
+                            "loop exceeded the Stage 0 execution step limit",
+                        ));
+                    }
+                    locals.insert(binding.clone(), Value::Int(i));
+                    match self.eval_stmts(body, locals)? {
+                        Control::Continue => {}
+                        Control::BreakLoop => break,
+                        Control::ContinueLoop => {
+                            i += 1;
+                            continue;
+                        }
+                        returned @ Control::Return(_) => {
+                            control = returned;
+                            break;
+                        }
+                    }
+                    i += 1;
+                }
+                if let Some(saved) = saved {
+                    locals.insert(binding.clone(), saved);
+                } else {
+                    locals.remove(binding);
+                }
+                Ok(control)
+            }
             MirStmt::Match { value, arms } => {
                 let value = self.eval_expr(value, locals)?;
                 for arm in arms {
@@ -642,6 +695,55 @@ impl Runtime {
                 body,
                 ..
             } => {
+                if let Expr::Range { start, end, .. } = iterable {
+                    let start_value = self.eval_expr(start, locals)?;
+                    let end_value = self.eval_expr(end, locals)?;
+                    let (Value::Int(start_value), Value::Int(end_value)) =
+                        (start_value, end_value)
+                    else {
+                        return Err(runtime_error(
+                            "RUNTIME_FOR_RANGE_BOUND",
+                            "for-in range bounds must evaluate to Int",
+                        ));
+                    };
+                    let saved = locals.remove(binding);
+                    let mut control = Control::Continue;
+                    let mut i = start_value;
+                    while i < end_value {
+                        self.loop_steps += 1;
+                        if self.loop_steps > LOOP_LIMIT {
+                            if let Some(saved) = saved {
+                                locals.insert(binding.clone(), saved);
+                            } else {
+                                locals.remove(binding);
+                            }
+                            return Err(runtime_error(
+                                "RUNTIME_LOOP_LIMIT",
+                                "loop exceeded the Stage 0 execution step limit",
+                            ));
+                        }
+                        locals.insert(binding.clone(), Value::Int(i));
+                        match self.eval_stmts(body, locals)? {
+                            Control::Continue => {}
+                            Control::BreakLoop => break,
+                            Control::ContinueLoop => {
+                                i += 1;
+                                continue;
+                            }
+                            returned @ Control::Return(_) => {
+                                control = returned;
+                                break;
+                            }
+                        }
+                        i += 1;
+                    }
+                    if let Some(saved) = saved {
+                        locals.insert(binding.clone(), saved);
+                    } else {
+                        locals.remove(binding);
+                    }
+                    return Ok(control);
+                }
                 let iterable = self.eval_expr(iterable, locals)?;
                 let Value::Array(elements) = iterable else {
                     return Err(runtime_error(
@@ -888,6 +990,10 @@ impl Runtime {
                 let index = self.eval_expr(index, locals)?;
                 index_array_value(base, index)
             }
+            Expr::Range { .. } => Err(runtime_error(
+                "RUNTIME_RANGE_EXPR",
+                "range expression is only valid as a for-in iterable",
+            )),
         }
     }
 

@@ -54,6 +54,12 @@ pub enum MirStmt {
         iterable: MirExpr,
         body: Vec<MirStmt>,
     },
+    ForRange {
+        binding: String,
+        start: MirExpr,
+        end: MirExpr,
+        body: Vec<MirStmt>,
+    },
     Match {
         value: MirExpr,
         arms: Vec<MirMatchArm>,
@@ -316,14 +322,26 @@ fn lower_stmt(
             iterable,
             body,
             ..
-        } => MirStmt::ForIn {
-            binding: binding.clone(),
-            iterable: lower_expr(iterable, enum_variants),
-            body: body
+        } => {
+            let lowered_body = body
                 .iter()
                 .map(|stmt| lower_stmt(stmt, enum_variants))
-                .collect(),
-        },
+                .collect();
+            if let Expr::Range { start, end, .. } = iterable {
+                MirStmt::ForRange {
+                    binding: binding.clone(),
+                    start: lower_expr(start, enum_variants),
+                    end: lower_expr(end, enum_variants),
+                    body: lowered_body,
+                }
+            } else {
+                MirStmt::ForIn {
+                    binding: binding.clone(),
+                    iterable: lower_expr(iterable, enum_variants),
+                    body: lowered_body,
+                }
+            }
+        }
         Stmt::Match { value, arms } => MirStmt::Match {
             value: lower_expr(value, enum_variants),
             arms: arms
@@ -469,6 +487,11 @@ fn lower_expr(
             base: Box::new(lower_expr(base, enum_variants)),
             index: Box::new(lower_expr(index, enum_variants)),
         },
+        // Range 只作为 for-in 的 iterable 出现,在 lower_stmt 里被拆成 ForRange 的 start/end,
+        // 不会作为独立表达式 lower。
+        Expr::Range { .. } => {
+            unreachable!("Expr::Range only appears as a for-in iterable and is lowered in lower_stmt")
+        }
     }
 }
 
@@ -566,6 +589,22 @@ impl DumpCtx {
             } => {
                 let iterable_temp = self.dump_expr(iterable, indent, out);
                 out.push_str(&format!("{pad}for {binding} in {iterable_temp}\n"));
+                for stmt in body {
+                    self.dump_stmt(stmt, indent + 1, out);
+                }
+                out.push_str(&format!("{pad}end_for\n"));
+            }
+            MirStmt::ForRange {
+                binding,
+                start,
+                end,
+                body,
+            } => {
+                let start_temp = self.dump_expr(start, indent, out);
+                let end_temp = self.dump_expr(end, indent, out);
+                out.push_str(&format!(
+                    "{pad}for {binding} in {start_temp}..{end_temp}\n"
+                ));
                 for stmt in body {
                     self.dump_stmt(stmt, indent + 1, out);
                 }
@@ -1005,6 +1044,21 @@ impl<'a> MirVerifier<'a> {
                 };
                 let mut body_locals = locals.clone();
                 body_locals.insert(binding.clone(), element_ty);
+                self.verify_stmts(body, &mut body_locals, expected_return, loop_depth + 1);
+                false
+            }
+            MirStmt::ForRange {
+                binding,
+                start,
+                end,
+                body,
+            } => {
+                let start_ty = self.verify_expr(start, locals);
+                self.expect_named(&start_ty, "Int", "MIR_FOR_RANGE_BOUND", "range start");
+                let end_ty = self.verify_expr(end, locals);
+                self.expect_named(&end_ty, "Int", "MIR_FOR_RANGE_BOUND", "range end");
+                let mut body_locals = locals.clone();
+                body_locals.insert(binding.clone(), MirType::named("Int"));
                 self.verify_stmts(body, &mut body_locals, expected_return, loop_depth + 1);
                 false
             }

@@ -272,7 +272,16 @@ impl Parser {
                     self.error_here("PARSE_EXPECTED_IN", "expected `in` after for binding")
                 );
             }
-            let iterable = self.parse_expr_without_struct_literals()?;
+            let mut iterable = self.parse_expr_without_struct_literals()?;
+            if self.consume_symbol(Symbol::DotDot).is_some() {
+                let end = self.parse_expr_without_struct_literals()?;
+                let span = Span::new(iterable.span().start, end.span().end);
+                iterable = Expr::Range {
+                    start: Box::new(iterable),
+                    end: Box::new(end),
+                    span,
+                };
+            }
             self.expect_symbol(Symbol::LBrace, "expected `{` after for iterable")?;
             let body = self.parse_block_body()?;
             return Ok(Stmt::ForIn {

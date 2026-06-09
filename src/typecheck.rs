@@ -9,6 +9,7 @@ enum Type {
     String,
     Bool,
     Array(Box<Type>),
+    Range,
     Named(String),
     Unit,
     Error,
@@ -534,6 +535,7 @@ fn check_stmts(
                     infer_expr(iterable, locals, functions, structs, enums, diagnostics);
                 let element_type = match iterable_type {
                     Type::Array(element_type) => *element_type,
+                    Type::Range => Type::Int,
                     Type::Error => Type::Error,
                     _ => {
                         diagnostics.push(Diagnostic::new(
@@ -688,7 +690,7 @@ fn check_match_exhaustiveness(
                 ));
             }
         }
-        Type::Int | Type::String | Type::Array(_) | Type::Unit | Type::Error => {}
+        Type::Int | Type::String | Type::Array(_) | Type::Range | Type::Unit | Type::Error => {}
     }
 }
 
@@ -1038,6 +1040,25 @@ fn infer_expr(
                 }
             }
         }
+        Expr::Range { start, end, .. } => {
+            let start_type = infer_expr(start, locals, functions, structs, enums, diagnostics);
+            expect_type(
+                &start_type,
+                &Type::Int,
+                "TYPE_RANGE_BOUND",
+                start.span(),
+                diagnostics,
+            );
+            let end_type = infer_expr(end, locals, functions, structs, enums, diagnostics);
+            expect_type(
+                &end_type,
+                &Type::Int,
+                "TYPE_RANGE_BOUND",
+                end.span(),
+                diagnostics,
+            );
+            Type::Range
+        }
         Expr::FieldAccess {
             base,
             field,
@@ -1328,6 +1349,7 @@ impl Type {
                 Type::Bool => "BoolArray".to_string(),
                 other => format!("{}Array", other.display()),
             },
+            Type::Range => "Range".to_string(),
             Type::Named(name) => name.clone(),
             Type::Unit => "Unit".to_string(),
             Type::Error => "<error>".to_string(),

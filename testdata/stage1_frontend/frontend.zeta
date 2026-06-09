@@ -841,6 +841,13 @@ fn rust_for_stmt_supported_at(kinds: IntArray, index: Int) -> Bool {
   if lbrace >= kinds.len || matching_rbrace_at(kinds, lbrace) >= kinds.len {
     return false;
   }
+  let dotdot: Int = top_level_dotdot_in_range(kinds, index + 3, lbrace);
+  if dotdot < lbrace {
+    if !rust_expr_supported_range(kinds, index + 3, dotdot) {
+      return false;
+    }
+    return rust_expr_supported_range(kinds, dotdot + 1, lbrace);
+  }
   return rust_expr_supported_range(kinds, index + 3, lbrace);
 }
 
@@ -860,7 +867,16 @@ fn append_rust_for_stmt_at(
   next = string_concat(next, indent);
   next = string_concat(next, "  Iterable\n");
   let child_indent: String = string_concat(indent, "    ");
-  next = append_rust_expr_range(next, kinds, texts, index + 3, lbrace, child_indent);
+  let dotdot: Int = top_level_dotdot_in_range(kinds, index + 3, lbrace);
+  if dotdot < lbrace {
+    next = string_concat(next, child_indent);
+    next = string_concat(next, "Range\n");
+    let range_indent: String = string_concat(child_indent, "  ");
+    next = append_rust_expr_range(next, kinds, texts, index + 3, dotdot, range_indent);
+    next = append_rust_expr_range(next, kinds, texts, dotdot + 1, lbrace, range_indent);
+  } else {
+    next = append_rust_expr_range(next, kinds, texts, index + 3, lbrace, child_indent);
+  }
   next = string_concat(next, indent);
   next = string_concat(next, "  Body\n");
   return append_rust_block_stmt_lines_range(next, kinds, texts, lbrace + 1, rbrace, child_indent);
@@ -2513,6 +2529,36 @@ fn last_operator_in_range(kinds: IntArray, start: Int, end: Int, operator: Int) 
   return end;
 }
 
+fn top_level_dotdot_in_range(kinds: IntArray, start: Int, end: Int) -> Int {
+  let mut scan: Int = start;
+  let mut depth: Int = 0;
+  while scan < end {
+    if kinds[scan] == token_lparen() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_lbracket() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_lbrace() {
+      depth = depth + 1;
+    }
+    if kinds[scan] == token_rparen() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_rbracket() && depth > 0 {
+      depth = depth - 1;
+    }
+    if kinds[scan] == token_rbrace() && depth > 0 {
+      depth = depth - 1;
+    }
+    if depth == 0 && kinds[scan] == token_dotdot() {
+      return scan;
+    }
+    scan = scan + 1;
+  }
+  return end;
+}
+
 fn last_field_dot_in_range(kinds: IntArray, start: Int, end: Int) -> Int {
   let mut scan: Int = end;
   let mut depth: Int = 0;
@@ -3031,6 +3077,9 @@ fn lex_texts(source: String) -> StringArray {
 fn symbol_width(source: String, index: Int) -> Int {
   let byte: Int = string_byte_at(source, index);
   let len: Int = string_len(source);
+  if byte == 46 && index + 1 < len && string_byte_at(source, index + 1) == 46 {
+    return 2;
+  }
   if byte == 45 && index + 1 < len && string_byte_at(source, index + 1) == 62 {
     return 2;
   }
@@ -3162,6 +3211,9 @@ fn symbol_kind(source: String, index: Int) -> Int {
     return token_comma();
   }
   if byte == 46 {
+    if index + 1 < string_len(source) && string_byte_at(source, index + 1) == 46 {
+      return token_dotdot();
+    }
     return token_dot();
   }
   if byte == 45 {
@@ -3290,4 +3342,5 @@ fn token_minus_eq() -> Int { return 57; }
 fn token_star_eq() -> Int { return 58; }
 fn token_slash_eq() -> Int { return 59; }
 fn token_percent_eq() -> Int { return 60; }
+fn token_dotdot() -> Int { return 61; }
 fn token_unknown() -> Int { return 99; }

@@ -200,6 +200,11 @@ pub enum Expr {
         index: Box<Expr>,
         span: Span,
     },
+    Range {
+        start: Box<Expr>,
+        end: Box<Expr>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -462,7 +467,8 @@ impl Expr {
             | Expr::StructLiteral { span, .. }
             | Expr::FieldAccess { span, .. }
             | Expr::ArrayLiteral { span, .. }
-            | Expr::Index { span, .. } => *span,
+            | Expr::Index { span, .. }
+            | Expr::Range { span, .. } => *span,
         }
     }
 
@@ -513,6 +519,11 @@ impl Expr {
                 base.dump(indent + 2, out);
                 out.push_str(&format!("{pad}  Index\n"));
                 index.dump(indent + 2, out);
+            }
+            Expr::Range { start, end, .. } => {
+                out.push_str(&format!("{pad}Range\n"));
+                start.dump(indent + 1, out);
+                end.dump(indent + 1, out);
             }
         }
     }

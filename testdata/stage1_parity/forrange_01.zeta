@@ -1,0 +1,28 @@
+module probe.forrange01;
+fn main() -> Int {
+  let mut sum: Int = 0;
+  for i in 0..5 {
+    sum = sum + i;
+  }
+  for j in a..b {
+    sum = sum + j;
+  }
+  for k in 1..n + 1 {
+    sum = sum + k;
+  }
+  for outer in 0..3 {
+    for inner in outer..10 {
+      sum = sum + inner;
+    }
+  }
+  for m in 0..100 {
+    if m == 2 {
+      continue;
+    }
+    if m == 7 {
+      break;
+    }
+    sum = sum + m;
+  }
+  return sum;
+}

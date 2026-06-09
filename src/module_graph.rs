@@ -372,6 +372,31 @@ fn rewrite_stmts(
                     is_main_module,
                 );
             }
+            MirStmt::ForRange {
+                start, end, body, ..
+            } => {
+                rewrite_expr(
+                    start,
+                    current_module,
+                    imported_targets,
+                    local_functions,
+                    is_main_module,
+                );
+                rewrite_expr(
+                    end,
+                    current_module,
+                    imported_targets,
+                    local_functions,
+                    is_main_module,
+                );
+                rewrite_stmts(
+                    body,
+                    current_module,
+                    imported_targets,
+                    local_functions,
+                    is_main_module,
+                );
+            }
             MirStmt::Match { value, arms } => {
                 rewrite_expr(
                     value,

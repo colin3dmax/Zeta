@@ -145,6 +145,30 @@ fn main() -> Int {
 }
 
 #[test]
+fn dumps_for_range_loop() {
+    let dump = zeta::dump_ast(
+        r#"
+fn main() -> Int {
+  let mut sum: Int = 0;
+  for i in 0..n + 1 {
+    sum = sum + i;
+  }
+  return sum;
+}
+"#,
+    )
+    .expect("source should parse");
+
+    assert!(dump.contains("For binding=i\n"));
+    assert!(dump.contains("  Iterable\n"));
+    // the iterable is a Range node carrying the start and end expressions.
+    assert!(dump.contains("Range\n"));
+    assert!(dump.contains("Int 0\n"));
+    assert!(dump.contains("Binary op=add\n"));
+    assert!(dump.contains("  Body\n"));
+}
+
+#[test]
 fn dumps_complex_assignment_targets() {
     let dump = zeta::dump_ast(
         r#"

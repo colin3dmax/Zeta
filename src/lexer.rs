@@ -52,6 +52,7 @@ pub enum Symbol {
     Semicolon,
     Comma,
     Dot,
+    DotDot,
     Arrow,
     Eq,
     EqEq,
@@ -164,7 +165,7 @@ impl<'a> Lexer<'a> {
         while matches!(self.peek_char(), Some(c) if c.is_ascii_digit()) {
             self.bump_char();
         }
-        if self.peek_char() == Some('.') {
+        if self.peek_char() == Some('.') && self.peek_next_char() != Some('.') {
             self.bump_char();
             while matches!(self.peek_char(), Some(c) if c.is_ascii_digit()) {
                 self.bump_char();
@@ -242,6 +243,10 @@ impl<'a> Lexer<'a> {
             ':' => Some(TokenKind::Symbol(Symbol::Colon)),
             ';' => Some(TokenKind::Symbol(Symbol::Semicolon)),
             ',' => Some(TokenKind::Symbol(Symbol::Comma)),
+            '.' if self.peek_char() == Some('.') => {
+                self.bump_char();
+                Some(TokenKind::Symbol(Symbol::DotDot))
+            }
             '.' => Some(TokenKind::Symbol(Symbol::Dot)),
             '=' if self.peek_char() == Some('=') => {
                 self.bump_char();

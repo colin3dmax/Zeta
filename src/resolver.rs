@@ -566,6 +566,28 @@ fn check_expr(
                 diagnostics,
             );
         }
+        Expr::Range { start, end, .. } => {
+            check_expr(
+                start,
+                locals,
+                functions,
+                top_level_names,
+                enum_variants,
+                ambiguous_external_functions,
+                function_name,
+                diagnostics,
+            );
+            check_expr(
+                end,
+                locals,
+                functions,
+                top_level_names,
+                enum_variants,
+                ambiguous_external_functions,
+                function_name,
+                diagnostics,
+            );
+        }
         Expr::Int { .. } | Expr::String { .. } | Expr::Bool { .. } => {}
     }
 }

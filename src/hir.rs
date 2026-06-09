@@ -218,6 +218,11 @@ fn dump_expr(expr: &Expr, indent: usize, out: &mut String) {
             dump_expr(base, indent + 1, out);
             dump_expr(index, indent + 1, out);
         }
+        Expr::Range { start, end, .. } => {
+            out.push_str(&format!("{pad}range\n"));
+            dump_expr(start, indent + 1, out);
+            dump_expr(end, indent + 1, out);
+        }
     }
 }
 
