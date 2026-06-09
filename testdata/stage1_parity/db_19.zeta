@@ -1,0 +1,5 @@
+module probe.db19;
+fn f(a: Int, b: Int, c: Int, d: Int, e: Int) -> Bool {
+  let x = a < b != c > d == e < a;
+  return x;
+}

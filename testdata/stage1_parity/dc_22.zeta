@@ -1,0 +1,17 @@
+module probe.dc22;
+fn unary_chain_cond(a: Bool, b: Bool, c: Bool) -> Int {
+  let mut r: Int = 0;
+  while !a && !b || !c {
+    if !(a && b) {
+      if !c {
+        r = r + 1;
+      } else {
+        r = r + 2;
+      }
+    } else {
+      r = r + 3;
+    }
+    a = !a;
+  }
+  return r;
+}

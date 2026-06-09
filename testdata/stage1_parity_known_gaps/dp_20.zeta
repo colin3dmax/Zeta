@@ -1,0 +1,5 @@
+module probe.dp;
+fn main() -> Int {
+  let r: Int = (a.b.c)(x, y);
+  return r;
+}

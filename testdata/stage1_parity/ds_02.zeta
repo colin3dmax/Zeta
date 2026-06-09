@@ -1,0 +1,5 @@
+module probe.ds;
+fn main() -> Int {
+  let v: Int = wrap { rows: [[f(a), b[c], s { x: 1 }], [t { y: g(d) }, e[h][i]]] };
+  return 0;
+}

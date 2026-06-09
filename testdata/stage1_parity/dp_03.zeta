@@ -1,0 +1,5 @@
+module probe.dp;
+fn main() -> Int {
+  let r: Int = make(x)[0][1].field;
+  return r;
+}

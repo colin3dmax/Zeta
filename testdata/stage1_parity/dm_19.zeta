@@ -1,0 +1,16 @@
+module probe.dm19;
+fn f(x: Int) -> Int {
+  match x {
+    0 -> { return 1; },
+    1 -> { return 2; },
+    2 -> {
+      match x {
+        3 -> { return 3; },
+        _ -> { return 4; }
+      }
+      return 5;
+    },
+    _ -> { return 0; }
+  }
+  return x;
+}

@@ -1,0 +1,21 @@
+module probe.dc12;
+enum Opt { Some, None }
+fn arm_ends_in_if(o: Opt, n: Int) -> Int {
+  let mut r: Int = 0;
+  match o {
+    Opt.Some -> {
+      if n > 0 {
+        r = 1;
+      } else {
+        r = 2;
+      }
+    },
+    Opt.None -> {
+      while n > 0 {
+        r = r + 1;
+        n = n - 1;
+      }
+    }
+  }
+  return r;
+}

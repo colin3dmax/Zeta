@@ -1,0 +1,5 @@
+module probe.ds;
+fn main() -> Int {
+  let v: Int = build(a, [s { f: g(h, [i, j], k { l: 1 }) }], make(x)[y].z, t { u: v.w.x });
+  return 0;
+}

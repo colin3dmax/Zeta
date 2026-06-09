@@ -1,0 +1,5 @@
+module probe.db18;
+fn f(a: Int, b: Int, c: Int) -> Bool {
+  let x = a == b < c;
+  return x;
+}

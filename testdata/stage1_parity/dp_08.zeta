@@ -1,0 +1,5 @@
+module probe.dp;
+fn main() -> Int {
+  let r: Int = outer(inner[k].field, other.path(deep[z]));
+  return r;
+}

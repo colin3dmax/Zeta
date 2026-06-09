@@ -1,0 +1,5 @@
+module probe.dp;
+fn main() -> Cell {
+  let r: Cell = Cell { v: a.b[c].d, w: f(g)[h].i };
+  return r;
+}

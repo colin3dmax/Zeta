@@ -1,0 +1,21 @@
+module probe.dc11;
+enum Color { Red, Green, Blue }
+fn match_in_match(c: Color, d: Color) -> Int {
+  let mut r: Int = 0;
+  match c {
+    Color.Red -> {
+      match d {
+        Color.Green -> {
+          r = 1;
+        },
+        _ -> {
+          r = 2;
+        }
+      }
+    },
+    _ -> {
+      r = 3;
+    }
+  }
+  return r;
+}

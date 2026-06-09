@@ -1,0 +1,8 @@
+module probe.db08;
+fn h(x: Int, y: Int) -> Int {
+  return x;
+}
+fn f(a: Int, b: Int, c: Int, d: Int) -> Int {
+  let x = h(a + b * c, h(a, b) + h(c, d) * h(a + b, c - d));
+  return x;
+}

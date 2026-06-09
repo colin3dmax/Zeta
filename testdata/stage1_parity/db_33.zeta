@@ -1,0 +1,4 @@
+module probe.db33;
+fn f(a: Int, b: Int, c: Int, d: Int) -> Int {
+  return a / b / c / d * a / b * c / d;
+}

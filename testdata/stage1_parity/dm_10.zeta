@@ -1,0 +1,15 @@
+module probe.dm10;
+fn f(a: IntArray, i: Int) -> Int {
+  match a[i] {
+    0 -> {
+      let b: IntArray = [a[0], a[i], 3];
+      match b[i] {
+        1 -> { return 11; }
+        _ -> { return b[0]; }
+      }
+      return 5;
+    }
+    _ -> { return 9; }
+  }
+  return 0;
+}

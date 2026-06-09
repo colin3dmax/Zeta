@@ -1,0 +1,5 @@
+module probe.ds;
+fn main() -> Int {
+  let v: Int = w { a: [b, c][i][j], e: [f[g], h[k]], m: [[n], [o]][p][q] };
+  return 0;
+}

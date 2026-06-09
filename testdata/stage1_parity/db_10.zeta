@@ -1,0 +1,5 @@
+module probe.db10;
+fn f(a: IntArray, b: IntArray) -> Int {
+  let x = a[b[a[0]]] + b[a[b[1]]];
+  return x;
+}

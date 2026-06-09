@@ -1,0 +1,16 @@
+module probe.dm16;
+fn f(x: Int) -> Int {
+  match x {
+    0 -> {
+      let p: Point = Point { x: 1, y: 2 };
+      let q: Point = Point { x: 3, y: 4 };
+      return p.x;
+    }
+    1 -> {
+      let r: Box = Box { v: Point { x: 5, y: 6 } };
+      return r.v.x;
+    }
+    _ -> { return 0; }
+  }
+  return x;
+}

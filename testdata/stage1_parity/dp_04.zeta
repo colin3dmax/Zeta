@@ -1,0 +1,5 @@
+module probe.dp;
+fn main() -> Int {
+  let r: Int = grid[i][j][k].cells[m].value;
+  return r;
+}

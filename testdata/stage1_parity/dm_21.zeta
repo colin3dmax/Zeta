@@ -1,0 +1,14 @@
+module probe.dm21;
+fn f(x: Int) -> Int {
+  match x {
+    0 -> { }
+    1 -> {
+      match x {
+        2 -> { }
+        _ -> { return 1; }
+      }
+    }
+    _ -> { return 0; }
+  }
+  return x;
+}

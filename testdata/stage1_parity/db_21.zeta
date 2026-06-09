@@ -1,0 +1,8 @@
+module probe.db21;
+fn make() -> IntArray {
+  return [1, 2, 3];
+}
+fn f() -> Int {
+  let x = make()[0] + make()[1];
+  return x;
+}

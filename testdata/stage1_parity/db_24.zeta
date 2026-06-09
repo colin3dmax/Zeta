@@ -1,0 +1,5 @@
+module probe.db24;
+fn f(a: IntArray, b: IntArray, c: Int) -> Int {
+  let x = a[b[c] + a[c] * b[a[c]]] - b[a[b[c]]];
+  return x;
+}

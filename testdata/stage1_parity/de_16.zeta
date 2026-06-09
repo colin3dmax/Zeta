@@ -1,0 +1,5 @@
+module probe.de;
+fn main() -> Bool {
+  let r: Bool = w && a == b < c;
+  return r;
+}

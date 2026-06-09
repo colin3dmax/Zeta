@@ -1,0 +1,5 @@
+module probe.ds;
+fn main() -> Int {
+  let v: Int = arr { items: ["a	b", c { d: "\r" }] };
+  return 0;
+}

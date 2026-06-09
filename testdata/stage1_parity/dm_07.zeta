@@ -1,0 +1,17 @@
+module probe.dm07;
+fn f(x: Int) -> Int {
+  match x {
+    0 -> { return 1; }
+    7 -> {
+      match name {
+        Color.Red -> { return 10; }
+        Color.Blue(v) -> { return v; }
+        active -> { return active; }
+        _ -> { return 0; }
+      }
+      return 9;
+    }
+    _ -> { return 2; }
+  }
+  return x;
+}

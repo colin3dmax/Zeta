@@ -1,0 +1,8 @@
+module probe.db22;
+fn g(x: Int) -> Int {
+  return x;
+}
+fn f(a: Int) -> Int {
+  let x = g(a) + g(a) * g(a) - g(g(a)) + g(a) * g(g(g(a)));
+  return x;
+}

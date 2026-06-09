@@ -1,0 +1,5 @@
+module probe.ds;
+fn main() -> Int {
+  let v: Int = make(s { a: 1 }, [t { b: 2 }, u { c: 3 }], g[i].field);
+  return 0;
+}

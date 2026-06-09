@@ -1,0 +1,5 @@
+module probe.dp;
+fn main() -> Int {
+  let r: Int = arr[a + b][c * d].field[e - f].g;
+  return r;
+}

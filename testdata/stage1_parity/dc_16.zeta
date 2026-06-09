@@ -1,0 +1,16 @@
+module probe.dc16;
+struct Box { v: Int }
+fn struct_rhs_in_nest(n: Int) -> Int {
+  let mut r: Int = 0;
+  while n > 0 {
+    if n > 1 {
+      let b: Box = Box { v: n };
+      r = r + b.v;
+    } else {
+      let c: Box = Box { v: 0 };
+      r = r + c.v;
+    }
+    n = n - 1;
+  }
+  return r;
+}

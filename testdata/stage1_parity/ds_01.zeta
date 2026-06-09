@@ -1,0 +1,5 @@
+module probe.ds;
+fn main() -> Int {
+  let v: Int = outer { items: [inner { v: f(x) }, inner { v: g[h] }], meta: meta { tag: a.b.c } };
+  return 0;
+}

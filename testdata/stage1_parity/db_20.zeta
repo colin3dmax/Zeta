@@ -1,0 +1,12 @@
+module probe.db20;
+struct Inner {
+  v: Int,
+}
+struct Outer {
+  a: Inner,
+  b: Inner,
+}
+fn f(o: Outer) -> Int {
+  let x = o.a.v + o.b.v;
+  return x;
+}

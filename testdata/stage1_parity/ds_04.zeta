@@ -1,0 +1,5 @@
+module probe.ds;
+fn main() -> Int {
+  let v: Int = box { val: f(g(h(x))) + s { k: a.b.c }.field };
+  return 0;
+}

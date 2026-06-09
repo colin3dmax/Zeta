@@ -1,0 +1,5 @@
+module probe.db03;
+fn f(a: Bool, b: Bool, c: Bool, d: Bool, e: Bool) -> Bool {
+  let x = a && b && c && d && e && a && b && c && d && e;
+  return x;
+}

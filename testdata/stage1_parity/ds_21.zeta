@@ -1,0 +1,5 @@
+module probe.ds;
+fn main() -> Int {
+  let v: Int = [w { s: "tab	here", n: "esc\tx" }];
+  return 0;
+}

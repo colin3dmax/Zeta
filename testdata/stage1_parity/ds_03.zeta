@@ -1,0 +1,5 @@
+module probe.ds;
+fn main() -> Int {
+  let v: Int = node { kids: [node { kids: [node { kids: [leaf { v: 1 }] }] }] };
+  return 0;
+}

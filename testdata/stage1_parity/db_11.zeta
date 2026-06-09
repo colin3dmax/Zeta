@@ -1,0 +1,9 @@
+module probe.db11;
+struct Pt {
+  x: Int,
+  y: Int,
+}
+fn f(p: Pt, q: Pt) -> Int {
+  let v = p.x + q.y * p.y - q.x + p.x * q.x;
+  return v;
+}

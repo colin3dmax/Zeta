@@ -1,0 +1,8 @@
+module probe.db25;
+struct S {
+  v: Int,
+}
+fn f(a: Int) -> Int {
+  let s = (S { v: a }).v + (S { v: a + 1 }).v;
+  return s;
+}

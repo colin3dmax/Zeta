@@ -1,0 +1,26 @@
+module probe.dm13;
+fn f(x: Int) -> Int {
+  match x {
+    0 -> {
+      match x {
+        1 -> {
+          match x {
+            2 -> {
+              match x {
+                3 -> { return 333; }
+                _ -> { return 30; }
+              }
+              return 20;
+            }
+            _ -> { return 21; }
+          }
+          return 10;
+        }
+        _ -> { return 11; }
+      }
+      return 1;
+    }
+    _ -> { return 0; }
+  }
+  return x;
+}

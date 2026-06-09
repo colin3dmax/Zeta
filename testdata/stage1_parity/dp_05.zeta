@@ -1,0 +1,5 @@
+module probe.dp;
+fn main() -> Int {
+  let r: Int = box.points[idx(k)].value;
+  return r;
+}

@@ -1,0 +1,16 @@
+module probe.dm05;
+fn f(x: Int) -> Int {
+  match x {
+    0 -> {
+      let mut y: Int = x + 1;
+      y = y * 2;
+      match y {
+        2 -> { return 200; }
+        _ -> { return y; }
+      }
+      return 0;
+    }
+    _ -> { return 1; }
+  }
+  return x;
+}

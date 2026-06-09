@@ -1,0 +1,5 @@
+module probe.db13;
+fn f(a: Int, b: Int, c: Int, d: Int, e: Int) -> Int {
+  let x = a + (b + (c + (d + (e + (a + (b + (c + (d + e))))))));
+  return x;
+}

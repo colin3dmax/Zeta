@@ -1,0 +1,18 @@
+module probe.dc17;
+fn g(a: Int) -> Int { return a; }
+fn nested_call_cond(a: Int, b: Int) -> Int {
+  let mut r: Int = 0;
+  while g(a) < g(g(b)) && g(a + b) > 0 {
+    if g(g(a)) == g(b) {
+      r = r + 1;
+    } else {
+      if g(a) < 0 {
+        break;
+      } else {
+        r = r + g(a);
+      }
+    }
+    a = a + 1;
+  }
+  return r;
+}

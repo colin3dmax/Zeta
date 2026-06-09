@@ -1,0 +1,5 @@
+module probe.db02;
+fn f(a: Int, b: Int, c: Int, d: Int, e: Int, g: Int) -> Int {
+  let x = a + b + c + d + e + g + a + b + c + d + e + g;
+  return x;
+}

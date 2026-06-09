@@ -1,0 +1,8 @@
+module probe.dm02;
+fn f(a: IntArray) -> Int {
+  match a[0] {
+    1 -> { return 10; }
+    _ -> { return 0; }
+  }
+  return 0;
+}

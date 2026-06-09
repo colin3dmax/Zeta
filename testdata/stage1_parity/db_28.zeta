@@ -1,0 +1,10 @@
+module probe.db28;
+fn g(x: Int) -> Int {
+  return x;
+}
+fn f(a: Int, b: Int) -> Int {
+  if g(a + b) < g(a) * g(b) && g(g(a)) == g(b) {
+    return 1;
+  }
+  return 0;
+}

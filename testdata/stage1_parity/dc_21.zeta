@@ -1,0 +1,15 @@
+module probe.dc21;
+fn inner_if_no_else_then_outer_else(a: Int, b: Int) -> Int {
+  let mut r: Int = 0;
+  if a > 0 {
+    if b > 0 {
+      r = 1;
+    }
+  } else {
+    if b > 0 {
+      r = 2;
+    }
+    r = r + 10;
+  }
+  return r;
+}

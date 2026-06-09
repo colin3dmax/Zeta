@@ -1,0 +1,14 @@
+module probe.dm12;
+fn f(a: Bool, b: Bool) -> Int {
+  match !a && b {
+    true -> {
+      match a {
+        false -> { return 1; }
+        _ -> { return 2; }
+      }
+      return 3;
+    }
+    false -> { return 0; }
+  }
+  return 0;
+}

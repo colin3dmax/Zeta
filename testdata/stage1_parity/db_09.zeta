@@ -1,0 +1,8 @@
+module probe.db09;
+fn make() -> IntArray {
+  return [1, 2, 3];
+}
+fn f() -> Int {
+  let x = make()[0] + make()[1] * make()[2];
+  return x;
+}

@@ -1,0 +1,4 @@
+module probe.db36;
+fn f(a: Int, b: Int, e: Int, g: Int) -> Bool {
+  return e != g == a < b;
+}

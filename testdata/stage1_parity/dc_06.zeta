@@ -1,0 +1,7 @@
+module probe.dc06;
+fn empty_then_empty_else(a: Int, b: Int) -> Int {
+  if a < b {
+  } else {
+  }
+  return b;
+}

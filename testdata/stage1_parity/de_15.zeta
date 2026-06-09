@@ -1,0 +1,5 @@
+module probe.de;
+fn main() -> Bool {
+  let r: Bool = a < b == e || y;
+  return r;
+}

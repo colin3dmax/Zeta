@@ -1,0 +1,8 @@
+module probe.db06;
+fn g(x: Int) -> Int {
+  return x;
+}
+fn f(a: Int) -> Int {
+  let x = g(g(g(g(g(g(a))))));
+  return x;
+}

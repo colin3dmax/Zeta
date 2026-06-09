@@ -1,0 +1,5 @@
+module probe.ds;
+fn main() -> Int {
+  let v: Int = s { x: a + b * c, y: d[e] + f { g: 1 }.h, z: p(q) - r[s][t] };
+  return 0;
+}

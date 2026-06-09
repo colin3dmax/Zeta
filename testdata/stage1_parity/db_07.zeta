@@ -1,0 +1,10 @@
+module probe.db07;
+fn f(a: Int, b: Int, c: Int) -> Int {
+  if a < b {
+  } else {
+    return c;
+  }
+  while a < c {
+  }
+  return a;
+}

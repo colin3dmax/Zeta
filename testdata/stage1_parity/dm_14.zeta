@@ -1,0 +1,16 @@
+module probe.dm14;
+fn f(e: Event) -> Int {
+  match e {
+    Event.Click(p) -> {
+      let z: Int = p + 1;
+      match z {
+        Event.Move(q) -> { return q; }
+        _ -> { return z; }
+      }
+      return p;
+    }
+    Event.Idle -> { return 0; }
+    _ -> { return 9; }
+  }
+  return 0;
+}

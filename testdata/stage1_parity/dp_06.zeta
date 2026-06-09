@@ -1,0 +1,5 @@
+module probe.dp;
+fn main() -> IntArray {
+  let r: IntArray = [a.b(c), d[e].f, g(h)[i], p.q.r];
+  return r;
+}

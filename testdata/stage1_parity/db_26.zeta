@@ -1,0 +1,8 @@
+module probe.db26;
+fn f(a: Int, b: Int, c: Int) -> Int {
+  if a < b {
+    return 1;
+  } else {
+  }
+  return 0;
+}

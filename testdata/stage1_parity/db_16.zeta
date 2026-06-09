@@ -1,0 +1,11 @@
+module probe.db16;
+struct Box {
+  v: Int,
+}
+fn mk(n: Int) -> Box {
+  return Box { v: n };
+}
+fn f(a: Int, b: Int) -> Int {
+  let x = mk(a + b).v + mk(a * b).v - mk(a - b).v;
+  return x;
+}

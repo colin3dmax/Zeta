@@ -1,0 +1,8 @@
+module probe.db15;
+fn g(x: Int) -> Int {
+  return x;
+}
+fn f(a: Int, b: Int, c: Int) -> Int {
+  let x = g(a < b == c > a) + g((a + b) * c == a) - g(a && b || c < a);
+  return x;
+}

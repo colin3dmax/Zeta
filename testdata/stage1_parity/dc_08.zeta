@@ -1,0 +1,28 @@
+module probe.dc08;
+fn match_in_while_in_if(n: Int) -> Int {
+  let mut acc: Int = 0;
+  let mut i: Int = 0;
+  if n > 0 {
+    while i < n {
+      match i {
+        0 -> {
+          acc = acc + 1;
+        },
+        1 -> {
+          if i < n {
+            acc = acc + 2;
+          } else {
+            acc = acc + 3;
+          }
+        },
+        _ -> {
+          acc = acc + i;
+        }
+      }
+      i = i + 1;
+    }
+  } else {
+    acc = acc - 1;
+  }
+  return acc;
+}

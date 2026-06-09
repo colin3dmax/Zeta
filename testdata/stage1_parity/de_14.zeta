@@ -1,0 +1,5 @@
+module probe.de;
+fn main() -> Bool {
+  let r: Bool = a + b == c - d && e * f < g / h || !i;
+  return r;
+}

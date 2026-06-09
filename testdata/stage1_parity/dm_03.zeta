@@ -1,0 +1,8 @@
+module probe.dm03;
+fn f(a: Int, b: Int) -> Int {
+  match a + b * 2 {
+    0 -> { return 1; }
+    _ -> { return 2; }
+  }
+  return 0;
+}

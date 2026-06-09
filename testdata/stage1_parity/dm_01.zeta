@@ -1,0 +1,20 @@
+module probe.dm01;
+fn deep(x: Int) -> Int {
+  match compute(x) {
+    0 -> {
+      match x {
+        1 -> {
+          match x {
+            2 -> { return 99; }
+            _ -> { return 0; }
+          }
+          return 7;
+        }
+        _ -> { return 5; }
+      }
+      return 3;
+    }
+    _ -> { return 1; }
+  }
+  return x;
+}

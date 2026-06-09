@@ -1,0 +1,25 @@
+module probe.dc15;
+fn mixed_stmts_in_blocks(n: Int) -> Int {
+  let mut acc: Int = 0;
+  while n > 0 {
+    let x: Int = n + 1;
+    acc = acc + x;
+    foo(acc);
+    if x > 5 {
+      let y: Int = x * 2;
+      acc = acc + y;
+      bar(y);
+      continue;
+    } else {
+      acc = acc - 1;
+    }
+    n = n - 1;
+  }
+  return acc;
+}
+fn foo(a: Int) -> Int {
+  return a;
+}
+fn bar(a: Int) -> Int {
+  return a;
+}

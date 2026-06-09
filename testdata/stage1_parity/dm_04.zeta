@@ -1,0 +1,8 @@
+module probe.dm04;
+fn f(a: Int, b: Int) -> Int {
+  match a < b {
+    true -> { return 1; }
+    false -> { return 0; }
+  }
+  return 0;
+}

@@ -1409,8 +1409,7 @@ fn rust_logic_expr_supported_range(kinds: IntArray, start: Int, end: Int) -> Boo
   }
   let comparison: Int = last_comparison_operator_in_range(kinds, start, end);
   if comparison < end {
-    return rust_binary_expr_supported_range(kinds, start, comparison)
-      && rust_binary_expr_supported_range(kinds, comparison + 1, end);
+    return rust_comparison_operands_supported_range(kinds, start, comparison, end);
   }
   if rust_unary_expr_supported_range(kinds, start, end) {
     return true;
@@ -1468,8 +1467,7 @@ fn rust_not_operand_supported_range(kinds: IntArray, start: Int, end: Int) -> Bo
   }
   let comparison: Int = last_comparison_operator_in_range(kinds, start, end);
   if comparison < end {
-    return rust_binary_expr_supported_range(kinds, start, comparison)
-      && rust_binary_expr_supported_range(kinds, comparison + 1, end);
+    return rust_comparison_operands_supported_range(kinds, start, comparison, end);
   }
   return rust_unary_expr_supported_range(kinds, start, end);
 }
@@ -2516,7 +2514,19 @@ fn normalize_string_escapes(text: String) -> String {
       }
       i = i + 2;
     } else {
-      out = string_concat(out, string_byte_slice(text, i, 1));
+      if byte == 9 {
+        out = string_concat(out, "\\t");
+      } else {
+        if byte == 13 {
+          out = string_concat(out, "\\r");
+        } else {
+          if byte == 10 {
+            out = string_concat(out, "\\n");
+          } else {
+            out = string_concat(out, string_byte_slice(text, i, 1));
+          }
+        }
+      }
       i = i + 1;
     }
   }

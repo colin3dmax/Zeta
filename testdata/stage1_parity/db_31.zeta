@@ -1,0 +1,4 @@
+module probe.db31;
+fn f(a: Int, b: Int, c: Int, d: Int, e: Int, g: Int) -> Bool {
+  return a == b && c == d || e == g && a != b || c != d && e != g == a < b;
+}

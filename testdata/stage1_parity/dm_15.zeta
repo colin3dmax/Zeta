@@ -1,0 +1,15 @@
+module probe.dm15;
+fn f(x: Int) -> Int {
+  match x {
+    0 -> {
+      let p: Point = Point { x: 1, y: 2 };
+      match p.x {
+        1 -> { return p.y; }
+        _ -> { return p.x; }
+      }
+      return 0;
+    }
+    _ -> { return 1; }
+  }
+  return x;
+}

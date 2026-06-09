@@ -1,0 +1,8 @@
+module probe.dm17;
+fn f() -> Int {
+  match make() {
+    0 -> { return 1; }
+    _ -> { return 0; }
+  }
+  return 0;
+}

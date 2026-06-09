@@ -1,0 +1,5 @@
+module probe.dp;
+fn main() -> Int {
+  let r: Int = m(a)[b].c[d].e.f[g];
+  return r;
+}

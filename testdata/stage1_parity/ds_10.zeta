@@ -1,0 +1,5 @@
+module probe.ds;
+fn main() -> Int {
+  let v: Int = cfg { flags: a && b || c == d, vals: [e < f, g >= h], nest: m { ok: !p || q } };
+  return 0;
+}

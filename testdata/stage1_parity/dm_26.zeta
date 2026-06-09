@@ -1,0 +1,14 @@
+module probe.dm26;
+fn f(p: Bool, q: Bool, r: Bool) -> Int {
+  match p == true || q {
+    true -> {
+      match q == false && r {
+        true -> { return 1; }
+        false -> { return 2; }
+      }
+      return 3;
+    }
+    false -> { return 0; }
+  }
+  return 9;
+}

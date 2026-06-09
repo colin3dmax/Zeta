@@ -1,0 +1,8 @@
+module probe.db30;
+fn g(x: Int, y: Int) -> Int {
+  return x;
+}
+fn f(a: Int, b: Int, c: Int, d: Int) -> Int {
+  let x = g(g(g(a, b), g(c, d)), g(g(a, c), g(b, d)));
+  return x;
+}

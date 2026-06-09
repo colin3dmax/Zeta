@@ -1,0 +1,18 @@
+module probe.dc13;
+fn adjacent_empty_nonempty(n: Int) -> Int {
+  let mut r: Int = 0;
+  while n > 0 {
+    if n == 1 {
+    } else {
+      r = r + 1;
+    }
+    if n == 2 {
+      r = r + 2;
+    } else {
+    }
+    while r < 0 {
+    }
+    n = n - 1;
+  }
+  return r;
+}

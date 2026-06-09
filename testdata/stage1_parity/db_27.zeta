@@ -1,0 +1,9 @@
+module probe.db27;
+fn f(a: Int, b: Int, c: Int, d: Int) -> Int {
+  if (a + b) * (c - d) < a && b > c || d == a {
+    if !(a < b) && c > d {
+      return 1;
+    }
+  }
+  return 0;
+}

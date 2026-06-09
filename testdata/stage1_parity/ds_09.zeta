@@ -1,0 +1,5 @@
+module probe.ds;
+fn main() -> Int {
+  let v: Int = pt { x: arr[outer { y: inner[deep { z: i }] }] };
+  return 0;
+}

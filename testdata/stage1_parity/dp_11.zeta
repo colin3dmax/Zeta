@@ -1,0 +1,5 @@
+module probe.dp;
+fn main() -> Int {
+  let r: Int = build(Cell { v: a.b[c], w: d(e) }).result[k];
+  return r;
+}

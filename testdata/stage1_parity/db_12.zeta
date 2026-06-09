@@ -1,0 +1,5 @@
+module probe.db12;
+fn f(a: Int, b: Int, c: Int) -> Bool {
+  let x = !(a < b) && !(b < c) || !(a == c) && !(a != b);
+  return x;
+}

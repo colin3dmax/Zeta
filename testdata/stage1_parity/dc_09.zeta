@@ -1,0 +1,14 @@
+module probe.dc09;
+fn empty_match_arm(n: Int) -> Int {
+  let mut acc: Int = 0;
+  match n {
+    0 -> {
+    },
+    1 -> {
+      acc = acc + 1;
+    },
+    _ -> {
+    }
+  }
+  return acc;
+}

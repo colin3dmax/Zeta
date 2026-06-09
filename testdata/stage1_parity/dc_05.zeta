@@ -1,0 +1,24 @@
+module probe.dc05;
+fn deep_break_continue(n: Int) -> Int {
+  let mut i: Int = 0;
+  let mut acc: Int = 0;
+  while i < n {
+    while i < n {
+      while i < n {
+        if i == n {
+          break;
+        } else {
+          if i < 0 {
+            continue;
+          } else {
+            acc = acc + i;
+          }
+        }
+        i = i + 1;
+      }
+      i = i + 1;
+    }
+    i = i + 1;
+  }
+  return acc;
+}

@@ -1,0 +1,5 @@
+module probe.dp;
+fn main() -> IntArray {
+  let r: IntArray = [Cell { a: x.y[z], b: p }.a, grid[i].row[j]];
+  return r;
+}

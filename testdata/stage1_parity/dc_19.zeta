@@ -1,0 +1,28 @@
+module probe.dc19;
+enum Tok { Num, Op }
+fn variant_payload_nested(t: Tok, n: Int) -> Int {
+  let mut r: Int = 0;
+  match t {
+    Tok.Num(x) -> {
+      if x > 0 {
+        while x > 0 {
+          r = r + x;
+          x = x - 1;
+        }
+      } else {
+        r = 0;
+      }
+    },
+    Tok.Op(y) -> {
+      match y {
+        0 -> {
+          r = 100;
+        },
+        _ -> {
+          r = y;
+        }
+      }
+    }
+  }
+  return r;
+}

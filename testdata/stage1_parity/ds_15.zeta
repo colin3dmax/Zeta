@@ -1,0 +1,5 @@
+module probe.ds;
+fn main() -> Int {
+  let v: Int = grid { cells: [[a, b], [c, d]], row: grid.cells[i][j], val: f(grid.cells)[k] };
+  return 0;
+}

@@ -1,0 +1,18 @@
+module probe.dc03;
+fn nested_else_chain(n: Int) -> Int {
+  let mut r: Int = 0;
+  if n == 0 {
+    r = 1;
+  } else {
+    if n == 1 {
+      r = 2;
+    } else {
+      if n == 2 {
+        r = 3;
+      } else {
+        r = 4;
+      }
+    }
+  }
+  return r;
+}

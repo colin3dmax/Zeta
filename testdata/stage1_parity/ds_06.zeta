@@ -1,0 +1,5 @@
+module probe.ds;
+fn main() -> Int {
+  let v: Int = wrap { data: [f(a)[b], g(c).h, make()[i][j], k.l.m[n]] };
+  return 0;
+}

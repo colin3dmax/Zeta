@@ -1,0 +1,14 @@
+module probe.dm25;
+fn f(o: Obj, x: Int) -> Int {
+  match o.ready == true && check(x) || x >= 5 {
+    true -> {
+      match x != 0 {
+        true -> { return 1; }
+        false -> { return 2; }
+      }
+      return 3;
+    }
+    false -> { return 0; }
+  }
+  return 0;
+}

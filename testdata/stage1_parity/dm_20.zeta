@@ -1,0 +1,23 @@
+module probe.dm20;
+fn f(o: Obj, x: Int) -> Int {
+  match o.kind {
+    0 -> {
+      let mut acc: Int = o.base.value;
+      acc = acc + x * 2;
+      match acc {
+        10 -> {
+          acc = acc - 1;
+          match o.flag {
+            true -> { return acc; }
+            _ -> { return 0; }
+          }
+          return acc;
+        }
+        _ -> { return acc; }
+      }
+      return acc;
+    }
+    _ -> { return 9; }
+  }
+  return 0;
+}

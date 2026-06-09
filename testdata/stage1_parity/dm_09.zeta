@@ -1,0 +1,14 @@
+module probe.dm09;
+fn f(o: Obj) -> Int {
+  match o.inner.compute(1, 2) {
+    0 -> {
+      match o.flag {
+        true -> { return 1; }
+        _ -> { return 2; }
+      }
+      return 3;
+    }
+    _ -> { return 4; }
+  }
+  return 0;
+}

@@ -1,0 +1,5 @@
+module probe.ds;
+fn main() -> Int {
+  let v: Int = s { a: t { b: u { c: d.e.f.g.h } } }.a;
+  return 0;
+}

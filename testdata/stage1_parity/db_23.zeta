@@ -1,0 +1,10 @@
+module probe.db23;
+struct S {
+  v: Int,
+}
+fn f(a: Int, b: Int) -> S {
+  if a < b {
+    return S { v: a };
+  }
+  return S { v: b };
+}
