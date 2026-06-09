@@ -295,6 +295,23 @@ fn main() {
 }
 
 #[test]
+fn check_rejects_assign_to_immutable_field() {
+    let source = r#"
+struct Point {
+  x: Int,
+}
+fn main() {
+  let p: Point = Point { x: 1 };
+  p.x = 5;
+}
+"#;
+    let diagnostics =
+        zeta::check_source(source).expect_err("assigning to an immutable struct field should fail");
+    // resolver 阶段先于 typecheck 拦截:左值根变量 `p` 不可变。
+    assert_eq!(diagnostics[0].code, "RESOLVE_ASSIGN_IMMUTABLE");
+}
+
+#[test]
 fn check_rejects_match_pattern_type_mismatch() {
     let source = r#"
 fn main() {

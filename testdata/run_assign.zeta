@@ -1,0 +1,11 @@
+struct Point {
+  x: Int,
+  y: Int,
+}
+fn main() -> Int {
+  let mut p: Point = Point { x: 1, y: 2 };
+  let mut arr: IntArray = [10, 20, 30];
+  p.x = 50;
+  arr[2] = p.x;
+  return p.x + arr[2];
+}

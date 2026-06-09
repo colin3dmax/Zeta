@@ -403,33 +403,61 @@ fn check_stmts(
                     );
                 }
             }
-            Stmt::Assign {
-                name,
-                name_span,
-                value,
-            } => {
+            Stmt::Assign { target, value } => {
                 let value_type = infer_expr(value, locals, functions, structs, enums, diagnostics);
-                match locals.get(name) {
-                    Some(binding) if binding.mutable => {
-                        expect_type(
-                            &value_type,
-                            &binding.ty,
-                            "TYPE_ASSIGN_MISMATCH",
-                            value.span(),
-                            diagnostics,
-                        );
+                match target {
+                    Expr::Name { name, span } => match locals.get(name) {
+                        Some(binding) if binding.mutable => {
+                            expect_type(
+                                &value_type,
+                                &binding.ty,
+                                "TYPE_ASSIGN_MISMATCH",
+                                value.span(),
+                                diagnostics,
+                            );
+                        }
+                        Some(_) => diagnostics.push(Diagnostic::new(
+                            "TYPE_ASSIGN_IMMUTABLE",
+                            format!(
+                                "cannot assign to immutable local `{name}`; declare it with `let mut`"
+                            ),
+                            *span,
+                        )),
+                        None => diagnostics.push(Diagnostic::new(
+                            "TYPE_UNKNOWN_NAME",
+                            format!("unknown name `{name}`"),
+                            *span,
+                        )),
+                    },
+                    Expr::FieldAccess { .. } | Expr::Index { .. } => {
+                        let target_type =
+                            infer_expr(target, locals, functions, structs, enums, diagnostics);
+                        if let Some((root, root_span)) = target.assign_root() {
+                            match locals.get(root) {
+                                Some(binding) if binding.mutable => {
+                                    expect_type(
+                                        &value_type,
+                                        &target_type,
+                                        "TYPE_ASSIGN_MISMATCH",
+                                        value.span(),
+                                        diagnostics,
+                                    );
+                                }
+                                Some(_) => diagnostics.push(Diagnostic::new(
+                                    "TYPE_ASSIGN_IMMUTABLE",
+                                    format!(
+                                        "cannot assign to immutable local `{root}`; declare it with `let mut`"
+                                    ),
+                                    root_span,
+                                )),
+                                None => {}
+                            }
+                        }
                     }
-                    Some(_) => diagnostics.push(Diagnostic::new(
-                        "TYPE_ASSIGN_IMMUTABLE",
-                        format!(
-                            "cannot assign to immutable local `{name}`; declare it with `let mut`"
-                        ),
-                        *name_span,
-                    )),
-                    None => diagnostics.push(Diagnostic::new(
-                        "TYPE_UNKNOWN_NAME",
-                        format!("unknown name `{name}`"),
-                        *name_span,
+                    _ => diagnostics.push(Diagnostic::new(
+                        "TYPE_ASSIGN_TARGET",
+                        "invalid assignment target".to_string(),
+                        target.span(),
                     )),
                 }
             }

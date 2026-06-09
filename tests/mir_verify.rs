@@ -1,7 +1,8 @@
 use zeta::ast::Param;
 use zeta::diagnostic::Span;
 use zeta::mir::{
-    self, MirEnum, MirEnumVariant, MirExpr, MirFunction, MirMatchArm, MirPattern, MirStmt, Program,
+    self, MirEnum, MirEnumVariant, MirExpr, MirFunction, MirMatchArm, MirPattern, MirPlace, MirStmt,
+    Program,
 };
 
 #[test]
@@ -36,7 +37,7 @@ fn verifier_rejects_unknown_store_target() {
             return_type: Some("Int".to_string()),
             body: vec![
                 MirStmt::Store {
-                    name: "answer".to_string(),
+                    place: MirPlace::Local("answer".to_string()),
                     value: MirExpr::Int("42".to_string()),
                 },
                 MirStmt::Return(Some(MirExpr::Int("42".to_string()))),

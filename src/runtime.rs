@@ -1,6 +1,6 @@
 use crate::ast::{BinaryOp, Expr, Function, Item, Module, Pattern, Stmt, UnaryOp};
 use crate::diagnostic::{Diagnostic, Span};
-use crate::mir::{self, MirExpr, MirFunction, MirPattern, MirStmt, Program};
+use crate::mir::{self, MirExpr, MirFunction, MirPattern, MirPlace, MirStmt, Program};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
@@ -22,6 +22,13 @@ pub enum Value {
     },
     Array(Vec<Value>),
     Unit,
+}
+
+/// 赋值左值展平后的一步:字段名或已求值的数组下标。
+#[derive(Debug, Clone)]
+enum PlaceStep {
+    Field(String),
+    Index(usize),
 }
 
 pub fn run(module: &Module) -> Result<Value, Vec<Diagnostic>> {
@@ -193,15 +200,9 @@ impl MirRuntime {
                 locals.insert(name.clone(), value);
                 Ok(Control::Continue)
             }
-            MirStmt::Store { name, value } => {
+            MirStmt::Store { place, value } => {
                 let value = self.eval_expr(value, locals)?;
-                if !locals.contains_key(name) {
-                    return Err(runtime_error(
-                        "RUNTIME_UNKNOWN_NAME",
-                        format!("unknown name `{name}`"),
-                    ));
-                }
-                locals.insert(name.clone(), value);
+                self.store_place(place, value, locals)?;
                 Ok(Control::Continue)
             }
             MirStmt::If {
@@ -272,6 +273,49 @@ impl MirRuntime {
             MirStmt::Drop(value) => {
                 let _ = self.eval_expr(value, locals)?;
                 Ok(Control::Continue)
+            }
+        }
+    }
+
+    fn store_place(
+        &mut self,
+        place: &MirPlace,
+        value: Value,
+        locals: &mut HashMap<String, Value>,
+    ) -> Result<(), Diagnostic> {
+        let (root, path) = self.flatten_place(place, locals)?;
+        write_through_path(locals, &root, &path, value)
+    }
+
+    fn flatten_place(
+        &mut self,
+        place: &MirPlace,
+        locals: &HashMap<String, Value>,
+    ) -> Result<(String, Vec<PlaceStep>), Diagnostic> {
+        match place {
+            MirPlace::Local(name) => Ok((name.clone(), Vec::new())),
+            MirPlace::Field { base, field } => {
+                let (root, mut path) = self.flatten_place(base, locals)?;
+                path.push(PlaceStep::Field(field.clone()));
+                Ok((root, path))
+            }
+            MirPlace::Index { base, index } => {
+                let (root, mut path) = self.flatten_place(base, locals)?;
+                let idx = self.eval_expr(index, locals)?;
+                let Value::Int(i) = idx else {
+                    return Err(runtime_error(
+                        "RUNTIME_ASSIGN_INDEX_TYPE",
+                        "assignment index must evaluate to Int",
+                    ));
+                };
+                if i < 0 {
+                    return Err(runtime_error(
+                        "RUNTIME_ASSIGN_INDEX_BOUNDS",
+                        "negative assignment index",
+                    ));
+                }
+                path.push(PlaceStep::Index(i as usize));
+                Ok((root, path))
             }
         }
     }
@@ -495,15 +539,10 @@ impl Runtime {
                 locals.insert(name.clone(), value);
                 Ok(Control::Continue)
             }
-            Stmt::Assign { name, value, .. } => {
+            Stmt::Assign { target, value } => {
                 let value = self.eval_expr(value, locals)?;
-                if !locals.contains_key(name) {
-                    return Err(runtime_error(
-                        "RUNTIME_UNKNOWN_NAME",
-                        format!("unknown name `{name}`"),
-                    ));
-                }
-                locals.insert(name.clone(), value);
+                let (root, path) = self.flatten_ast_place(target, locals)?;
+                write_through_path(locals, &root, &path, value)?;
                 Ok(Control::Continue)
             }
             Stmt::If {
@@ -575,6 +614,43 @@ impl Runtime {
                 let _ = self.eval_expr(value, locals)?;
                 Ok(Control::Continue)
             }
+        }
+    }
+
+    fn flatten_ast_place(
+        &mut self,
+        target: &Expr,
+        locals: &HashMap<String, Value>,
+    ) -> Result<(String, Vec<PlaceStep>), Diagnostic> {
+        match target {
+            Expr::Name { name, .. } => Ok((name.clone(), Vec::new())),
+            Expr::FieldAccess { base, field, .. } => {
+                let (root, mut path) = self.flatten_ast_place(base, locals)?;
+                path.push(PlaceStep::Field(field.clone()));
+                Ok((root, path))
+            }
+            Expr::Index { base, index, .. } => {
+                let (root, mut path) = self.flatten_ast_place(base, locals)?;
+                let idx = self.eval_expr(index, locals)?;
+                let Value::Int(i) = idx else {
+                    return Err(runtime_error(
+                        "RUNTIME_ASSIGN_INDEX_TYPE",
+                        "assignment index must evaluate to Int",
+                    ));
+                };
+                if i < 0 {
+                    return Err(runtime_error(
+                        "RUNTIME_ASSIGN_INDEX_BOUNDS",
+                        "negative assignment index",
+                    ));
+                }
+                path.push(PlaceStep::Index(i as usize));
+                Ok((root, path))
+            }
+            _ => Err(runtime_error(
+                "RUNTIME_ASSIGN_TARGET",
+                "invalid assignment target",
+            )),
         }
     }
 
@@ -818,6 +894,52 @@ fn eval_binary(op: BinaryOp, left: Value, right: Value) -> Result<Value, Diagnos
             }
         }
     }
+}
+
+/// 沿展平后的 place 路径定位到目标位置并原地写入。两套 interpreter 共用。
+fn write_through_path(
+    locals: &mut HashMap<String, Value>,
+    root: &str,
+    path: &[PlaceStep],
+    value: Value,
+) -> Result<(), Diagnostic> {
+    let mut slot = locals
+        .get_mut(root)
+        .ok_or_else(|| runtime_error("RUNTIME_UNKNOWN_NAME", format!("unknown name `{root}`")))?;
+    for step in path {
+        slot = match step {
+            PlaceStep::Field(field) => match slot {
+                Value::Struct { fields, .. } => fields.get_mut(field).ok_or_else(|| {
+                    runtime_error("RUNTIME_ASSIGN_FIELD", format!("unknown field `{field}`"))
+                })?,
+                _ => {
+                    return Err(runtime_error(
+                        "RUNTIME_ASSIGN_FIELD_BASE",
+                        "field assignment requires a struct value",
+                    ))
+                }
+            },
+            PlaceStep::Index(i) => match slot {
+                Value::Array(values) => {
+                    if *i >= values.len() {
+                        return Err(runtime_error(
+                            "RUNTIME_ASSIGN_INDEX_BOUNDS",
+                            "assignment index out of bounds",
+                        ));
+                    }
+                    &mut values[*i]
+                }
+                _ => {
+                    return Err(runtime_error(
+                        "RUNTIME_ASSIGN_INDEX_BASE",
+                        "index assignment requires an array value",
+                    ))
+                }
+            },
+        };
+    }
+    *slot = value;
+    Ok(())
 }
 
 fn eval_unary(op: UnaryOp, value: Value) -> Result<Value, Diagnostic> {

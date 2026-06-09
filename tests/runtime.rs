@@ -27,6 +27,14 @@ fn run_executes_else_if_chain() {
 }
 
 #[test]
+fn run_executes_complex_assignment_targets() {
+    // p.x = 50; arr[2] = p.x; → 50 + 50 = 100
+    let value =
+        zeta::run_source(include_str!("../testdata/run_assign.zeta")).expect("program should run");
+    assert_eq!(value.to_string(), "100");
+}
+
+#[test]
 fn run_executes_function_call() {
     let value =
         zeta::run_source(include_str!("../testdata/run_call.zeta")).expect("program should run");

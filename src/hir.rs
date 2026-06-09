@@ -88,10 +88,17 @@ fn dump_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
             out.push_str(&format!("{pad}let {name}: {ty} mutability={mutability}\n"));
             dump_expr(value, indent + 1, out);
         }
-        Stmt::Assign { name, value, .. } => {
-            out.push_str(&format!("{pad}assign {name}\n"));
-            dump_expr(value, indent + 1, out);
-        }
+        Stmt::Assign { target, value } => match target {
+            Expr::Name { name, .. } => {
+                out.push_str(&format!("{pad}assign {name}\n"));
+                dump_expr(value, indent + 1, out);
+            }
+            _ => {
+                out.push_str(&format!("{pad}assign\n"));
+                dump_expr(target, indent + 1, out);
+                dump_expr(value, indent + 1, out);
+            }
+        },
         Stmt::If {
             condition,
             then_body,

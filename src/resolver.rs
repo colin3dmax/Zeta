@@ -221,11 +221,7 @@ fn check_stmts(
                     ));
                 }
             }
-            Stmt::Assign {
-                name,
-                name_span,
-                value,
-            } => {
+            Stmt::Assign { target, value } => {
                 check_expr(
                     value,
                     locals,
@@ -236,19 +232,51 @@ fn check_stmts(
                     function_name,
                     diagnostics,
                 );
-                match locals.get(name) {
-                    Some(binding) if binding.mutable => {}
-                    Some(_) => diagnostics.push(Diagnostic::new(
-                        "RESOLVE_ASSIGN_IMMUTABLE",
-                        format!(
-                            "cannot assign to immutable local `{name}`; declare it with `let mut`"
-                        ),
-                        *name_span,
-                    )),
-                    None => diagnostics.push(Diagnostic::new(
-                        "RESOLVE_UNKNOWN_NAME",
-                        format!("unknown name `{name}` in function `{function_name}`"),
-                        *name_span,
+                match target {
+                    Expr::Name { name, span } => match locals.get(name) {
+                        Some(binding) if binding.mutable => {}
+                        Some(_) => diagnostics.push(Diagnostic::new(
+                            "RESOLVE_ASSIGN_IMMUTABLE",
+                            format!(
+                                "cannot assign to immutable local `{name}`; declare it with `let mut`"
+                            ),
+                            *span,
+                        )),
+                        None => diagnostics.push(Diagnostic::new(
+                            "RESOLVE_UNKNOWN_NAME",
+                            format!("unknown name `{name}` in function `{function_name}`"),
+                            *span,
+                        )),
+                    },
+                    Expr::FieldAccess { .. } | Expr::Index { .. } => {
+                        check_expr(
+                            target,
+                            locals,
+                            functions,
+                            top_level_names,
+                            enum_variants,
+                            ambiguous_external_functions,
+                            function_name,
+                            diagnostics,
+                        );
+                        if let Some((root, root_span)) = target.assign_root() {
+                            match locals.get(root) {
+                                Some(binding) if binding.mutable => {}
+                                Some(_) => diagnostics.push(Diagnostic::new(
+                                    "RESOLVE_ASSIGN_IMMUTABLE",
+                                    format!(
+                                        "cannot assign to immutable local `{root}`; declare it with `let mut`"
+                                    ),
+                                    root_span,
+                                )),
+                                None => {}
+                            }
+                        }
+                    }
+                    _ => diagnostics.push(Diagnostic::new(
+                        "RESOLVE_ASSIGN_TARGET",
+                        "invalid assignment target",
+                        target.span(),
                     )),
                 }
             }

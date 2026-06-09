@@ -85,8 +85,7 @@ pub enum Stmt {
         value: Expr,
     },
     Assign {
-        name: String,
-        name_span: Span,
+        target: Expr,
         value: Expr,
     },
     If {
@@ -323,10 +322,19 @@ impl Stmt {
                 out.push('\n');
                 value.dump(indent + 1, out);
             }
-            Stmt::Assign { name, value, .. } => {
-                out.push_str(&format!("{pad}Assign name={name}\n"));
-                value.dump(indent + 1, out);
-            }
+            Stmt::Assign { target, value } => match target {
+                Expr::Name { name, .. } => {
+                    out.push_str(&format!("{pad}Assign name={name}\n"));
+                    value.dump(indent + 1, out);
+                }
+                _ => {
+                    out.push_str(&format!("{pad}Assign\n"));
+                    out.push_str(&format!("{pad}  Target\n"));
+                    target.dump(indent + 2, out);
+                    out.push_str(&format!("{pad}  Value\n"));
+                    value.dump(indent + 2, out);
+                }
+            },
             Stmt::If {
                 condition,
                 then_body,
@@ -411,6 +419,16 @@ impl Pattern {
 }
 
 impl Expr {
+    /// 赋值左值的根变量名与其 span:`a` / `a.b` / `a[i]` / `a.b[i].c` 的根都是 `a`。
+    /// 返回 None 表示该表达式不是合法的赋值目标(lvalue)。
+    pub fn assign_root(&self) -> Option<(&str, Span)> {
+        match self {
+            Expr::Name { name, span } => Some((name, *span)),
+            Expr::FieldAccess { base, .. } | Expr::Index { base, .. } => base.assign_root(),
+            _ => None,
+        }
+    }
+
     pub fn span(&self) -> Span {
         match self {
             Expr::Name { span, .. }

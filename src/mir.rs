@@ -37,7 +37,7 @@ pub enum MirStmt {
         value: MirExpr,
     },
     Store {
-        name: String,
+        place: MirPlace,
         value: MirExpr,
     },
     If {
@@ -57,6 +57,20 @@ pub enum MirStmt {
     Break,
     Continue,
     Drop(MirExpr),
+}
+
+/// 赋值左值(place):简单变量 `a`、字段 `a.b`、下标 `a[i]` 及其链式组合。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MirPlace {
+    Local(String),
+    Field {
+        base: Box<MirPlace>,
+        field: String,
+    },
+    Index {
+        base: Box<MirPlace>,
+        index: Box<MirExpr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -266,8 +280,8 @@ fn lower_stmt(
             ty: ty.clone(),
             value: lower_expr(value, enum_variants),
         },
-        Stmt::Assign { name, value, .. } => MirStmt::Store {
-            name: name.clone(),
+        Stmt::Assign { target, value } => MirStmt::Store {
+            place: lower_place(target, enum_variants),
             value: lower_expr(value, enum_variants),
         },
         Stmt::If {
@@ -331,6 +345,25 @@ fn lower_pattern(pattern: &Pattern) -> MirPattern {
         Pattern::String(value) => MirPattern::String(value.clone()),
         Pattern::Bool(value) => MirPattern::Bool(*value),
         Pattern::Wildcard => MirPattern::Wildcard,
+    }
+}
+
+fn lower_place(
+    target: &Expr,
+    enum_variants: &HashMap<String, HashMap<String, Option<String>>>,
+) -> MirPlace {
+    match target {
+        Expr::Name { name, .. } => MirPlace::Local(name.clone()),
+        Expr::FieldAccess { base, field, .. } => MirPlace::Field {
+            base: Box::new(lower_place(base, enum_variants)),
+            field: field.clone(),
+        },
+        Expr::Index { base, index, .. } => MirPlace::Index {
+            base: Box::new(lower_place(base, enum_variants)),
+            index: Box::new(lower_expr(index, enum_variants)),
+        },
+        // typecheck 已保证 target 是合法 lvalue,理论上不会到这里。
+        _ => MirPlace::Local(String::new()),
     }
 }
 
@@ -475,9 +508,10 @@ impl DumpCtx {
                 let value_temp = self.dump_expr(value, indent, out);
                 out.push_str(&format!("{pad}store {name}, {value_temp}\n"));
             }
-            MirStmt::Store { name, value } => {
+            MirStmt::Store { place, value } => {
                 let value_temp = self.dump_expr(value, indent, out);
-                out.push_str(&format!("{pad}store {name}, {value_temp}\n"));
+                let place_text = self.dump_place(place, indent, out);
+                out.push_str(&format!("{pad}store {place_text}, {value_temp}\n"));
             }
             MirStmt::If {
                 condition,
@@ -534,6 +568,21 @@ impl DumpCtx {
             MirStmt::Drop(value) => {
                 let value_temp = self.dump_expr(value, indent, out);
                 out.push_str(&format!("{pad}drop {value_temp}\n"));
+            }
+        }
+    }
+
+    fn dump_place(&mut self, place: &MirPlace, indent: usize, out: &mut String) -> String {
+        match place {
+            MirPlace::Local(name) => name.clone(),
+            MirPlace::Field { base, field } => {
+                let base_text = self.dump_place(base, indent, out);
+                format!("{base_text}.{field}")
+            }
+            MirPlace::Index { base, index } => {
+                let base_text = self.dump_place(base, indent, out);
+                let index_temp = self.dump_expr(index, indent, out);
+                format!("{base_text}[{index_temp}]")
             }
         }
     }
@@ -871,22 +920,16 @@ impl<'a> MirVerifier<'a> {
                 locals.insert(name.clone(), local_ty);
                 false
             }
-            MirStmt::Store { name, value } => {
+            MirStmt::Store { place, value } => {
                 let value_ty = self.verify_expr(value, locals);
-                let Some(local_ty) = locals.get(name).cloned() else {
-                    self.error(
-                        "MIR_UNKNOWN_LOCAL",
-                        format!("store target `{name}` is not defined"),
-                    );
-                    return false;
-                };
+                let place_ty = self.verify_place(place, locals);
                 self.expect_type(
                     &value_ty,
-                    &local_ty,
+                    &place_ty,
                     "MIR_STORE_TYPE",
                     format!(
-                        "store target `{name}` expects `{}`, found `{}`",
-                        local_ty.display(),
+                        "store target expects `{}`, found `{}`",
+                        place_ty.display(),
                         value_ty.display()
                     ),
                 );
@@ -995,6 +1038,30 @@ impl<'a> MirVerifier<'a> {
             MirStmt::Drop(value) => {
                 self.verify_expr(value, locals);
                 false
+            }
+        }
+    }
+
+    fn verify_place(&mut self, place: &MirPlace, locals: &HashMap<String, MirType>) -> MirType {
+        match place {
+            MirPlace::Local(name) => match locals.get(name).cloned() {
+                Some(ty) => ty,
+                None => {
+                    self.error(
+                        "MIR_UNKNOWN_LOCAL",
+                        format!("store target `{name}` is not defined"),
+                    );
+                    MirType::Unknown
+                }
+            },
+            MirPlace::Field { base, .. } => {
+                self.verify_place(base, locals);
+                MirType::Unknown
+            }
+            MirPlace::Index { base, index } => {
+                self.expect_int_index(index, locals);
+                self.verify_place(base, locals);
+                MirType::Unknown
             }
         }
     }

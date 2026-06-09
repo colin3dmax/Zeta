@@ -294,25 +294,17 @@ impl Parser {
             return Ok(Stmt::Continue { span });
         }
 
-        if let TokenKind::Ident(name) = self.peek_kind() {
-            if matches!(self.peek_kind_at(1), TokenKind::Symbol(Symbol::Eq)) {
-                let name = name.clone();
-                let name_span = self.peek().span;
-                self.pos += 1;
-                self.expect_symbol(Symbol::Eq, "expected `=` in assignment")?;
-                let value = self.parse_expr()?;
-                self.expect_symbol(Symbol::Semicolon, "expected `;` after assignment")?;
-                return Ok(Stmt::Assign {
-                    name,
-                    name_span,
-                    value,
-                });
-            }
+        let expr = self.parse_expr()?;
+        if self.consume_symbol(Symbol::Eq).is_some() {
+            let value = self.parse_expr()?;
+            self.expect_symbol(Symbol::Semicolon, "expected `;` after assignment")?;
+            return Ok(Stmt::Assign {
+                target: expr,
+                value,
+            });
         }
-
-        let value = self.parse_expr()?;
         self.expect_symbol(Symbol::Semicolon, "expected `;` after expression statement")?;
-        Ok(Stmt::Expr(value))
+        Ok(Stmt::Expr(expr))
     }
 
     fn parse_match_arm(&mut self) -> Result<MatchArm, Diagnostic> {
@@ -777,13 +769,6 @@ impl Parser {
 
     fn peek_kind(&self) -> &TokenKind {
         &self.peek().kind
-    }
-
-    fn peek_kind_at(&self, offset: usize) -> &TokenKind {
-        self.tokens
-            .get(self.pos + offset)
-            .map(|token| &token.kind)
-            .unwrap_or_else(|| &self.tokens[self.tokens.len() - 1].kind)
     }
 
     fn previous_span(&self) -> Span {

@@ -123,6 +123,25 @@ fn main() -> Int {
 }
 
 #[test]
+fn dumps_complex_assignment_targets() {
+    let dump = zeta::dump_ast(
+        r#"
+fn main() {
+  p.x = 1;
+  arr[0] = 2;
+}
+"#,
+    )
+    .expect("source should parse");
+
+    // 简单变量赋值用 `Assign name=`;字段/下标赋值用 Target/Value 段。
+    assert!(dump.contains("Assign\n"));
+    assert!(dump.contains("Target\n"));
+    assert!(dump.contains("FieldAccess field=x"));
+    assert!(dump.contains("Value\n"));
+}
+
+#[test]
 fn repl_parses_interactive_lines() {
     let binary = env!("CARGO_BIN_EXE_zeta");
     let mut child = std::process::Command::new(binary)
