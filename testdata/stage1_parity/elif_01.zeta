@@ -1,0 +1,24 @@
+module probe.elif;
+fn classify(a: Int) -> Int {
+  if a < 1 {
+    return 1;
+  } else if a < 2 {
+    return 2;
+  } else if a < 3 {
+    return 3;
+  } else {
+    return 4;
+  }
+}
+fn nested(x: Int, y: Int) -> Int {
+  if x < y {
+    if x < 0 {
+      return 0;
+    } else if x < 10 {
+      return 1;
+    }
+  } else if x > y {
+    return 2;
+  }
+  return 5;
+}

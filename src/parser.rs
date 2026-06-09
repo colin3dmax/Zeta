@@ -240,8 +240,13 @@ impl Parser {
             self.expect_symbol(Symbol::LBrace, "expected `{` after if condition")?;
             let then_body = self.parse_block_body()?;
             let else_body = if self.consume_keyword(Keyword::Else).is_some() {
-                self.expect_symbol(Symbol::LBrace, "expected `{` after else")?;
-                self.parse_block_body()?
+                if self.check_keyword(Keyword::If) {
+                    // `else if` desugars to `else { if ... }`:嵌套 if 作为单个 else 语句。
+                    vec![self.parse_stmt()?]
+                } else {
+                    self.expect_symbol(Symbol::LBrace, "expected `{` after else")?;
+                    self.parse_block_body()?
+                }
             } else {
                 Vec::new()
             };

@@ -107,6 +107,22 @@ fn main() -> Int {
 }
 
 #[test]
+fn dumps_else_if_chain_as_nested_if() {
+    let dump = zeta::dump_ast(
+        r#"
+fn main() -> Int {
+  if a < 1 { return 1; } else if a < 2 { return 2; } else { return 3; }
+}
+"#,
+    )
+    .expect("source should parse");
+
+    // `else if` desugars to a nested If under the Else branch.
+    assert!(dump.contains("Else\n"));
+    assert_eq!(dump.matches("If\n").count(), 2);
+}
+
+#[test]
 fn repl_parses_interactive_lines() {
     let binary = env!("CARGO_BIN_EXE_zeta");
     let mut child = std::process::Command::new(binary)
