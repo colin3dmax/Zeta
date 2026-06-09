@@ -2153,7 +2153,7 @@ module stage2.rust_field_dump;
 import stage1.frontend;
 
 fn main() -> String {
-  let source: String = "fn main() -> Bool { let active: Bool = user.active; let score: Int = user.profile.score + 1; let mixed: Bool = !user.enabled || ready; return config.limit > value && session.ready; }";
+  let source: String = "fn main() -> Bool { let active: Bool = user.active; let tag: Result = Result.None; let score: Int = user.profile.score + 1; let mixed: Bool = !user.enabled || ready; return config.limit > value && session.ready; }";
   return stage1.frontend.ast_dump_rust_item_dump(source);
 }
 "#;
@@ -2168,7 +2168,7 @@ fn main() -> String {
 
     assert_eq!(
         value.to_string(),
-        "Module\n  Function name=main exported=false\n    Return type=Bool\n    Let name=active type=Bool\n      FieldAccess field=active\n        Name user\n    Let name=score type=Int\n      Binary op=add\n        FieldAccess field=score\n          FieldAccess field=profile\n            Name user\n        Int 1\n    Let name=mixed type=Bool\n      Binary op=or\n        Unary op=not\n          FieldAccess field=enabled\n            Name user\n        Name ready\n    Return\n      Binary op=and\n        Binary op=gt\n          FieldAccess field=limit\n            Name config\n          Name value\n        FieldAccess field=ready\n          Name session\n"
+        "Module\n  Function name=main exported=false\n    Return type=Bool\n    Let name=active type=Bool\n      FieldAccess field=active\n        Name user\n    Let name=tag type=Result\n      FieldAccess field=None\n        Name Result\n    Let name=score type=Int\n      Binary op=add\n        FieldAccess field=score\n          FieldAccess field=profile\n            Name user\n        Int 1\n    Let name=mixed type=Bool\n      Binary op=or\n        Unary op=not\n          FieldAccess field=enabled\n            Name user\n        Name ready\n    Return\n      Binary op=and\n        Binary op=gt\n          FieldAccess field=limit\n            Name config\n          Name value\n        FieldAccess field=ready\n          Name session\n"
     );
 }
 
