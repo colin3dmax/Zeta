@@ -16,8 +16,16 @@ import std.core;
 //                   children, letting it reference their already-known indices
 //                   without any back-patching.
 //   * Item arenas — parallel arrays describing the structural skeleton
-//                   (function list + statement list), each pointing into the
+//                   (function list + statement arena), each pointing into the
 //                   expr arena for its expression children.
+//
+// Statements form a *tree* (if/while carry nested statement blocks). We keep
+// every statement in one flat statement arena (post-order) and record each
+// block's children as a contiguous (start, count) slice into a separate
+// `block_list` index array. Because statements are pushed post-order, a parent's
+// direct children are *not* contiguous in the statement arena itself, so each
+// block first gathers its direct child statement indices into a local list and
+// only then appends them to `block_list` as one contiguous run.
 //
 // Pipeline: lex -> recursive descent that *constructs* the arena -> walk the
 // arena to emit dump text byte-for-byte identical to the Rust `ast-dump`.
@@ -27,10 +35,15 @@ import std.core;
 fn int_node() -> Int { return 0; }
 fn name_node() -> Int { return 1; }
 fn binary_node() -> Int { return 2; }
+fn bool_node() -> Int { return 3; }
+fn unary_node() -> Int { return 4; }
 
 // Statement kinds.
 fn let_stmt() -> Int { return 0; }
 fn return_stmt() -> Int { return 1; }
+fn if_stmt() -> Int { return 2; }
+fn while_stmt() -> Int { return 3; }
+fn assign_stmt() -> Int { return 4; }
 
 // ---------------------------------------------------------------------------
 // Arena: a bundle of parallel arrays threaded functionally through the parser.
@@ -50,13 +63,25 @@ struct Arena {
   // Function list.
   fn_name: StringArray,
   fn_ret: StringArray,
-  fn_stmt_start: IntArray,
-  fn_stmt_count: IntArray,
-  // Statement list (shared, sliced per function via start/count above).
+  fn_param_start: IntArray,
+  fn_param_count: IntArray,
+  fn_body_start: IntArray,
+  fn_body_count: IntArray,
+  // Parameter list (sliced per function via start/count above).
+  param_name: StringArray,
+  param_type: StringArray,
+  // Statement arena (a flat post-order pool; tree shape lives in block_list).
   stmt_kind: IntArray,
   stmt_name: StringArray,
   stmt_type: StringArray,
+  stmt_mut: IntArray,
   stmt_expr: IntArray,
+  stmt_then_start: IntArray,
+  stmt_then_count: IntArray,
+  stmt_else_start: IntArray,
+  stmt_else_count: IntArray,
+  // Flat list of statement indices; blocks reference contiguous slices of it.
+  block_list: IntArray,
 }
 
 fn arena_empty() -> Arena {
@@ -69,12 +94,22 @@ fn arena_empty() -> Arena {
     module_name: "",
     fn_name: string_array_empty(),
     fn_ret: string_array_empty(),
-    fn_stmt_start: int_array_empty(),
-    fn_stmt_count: int_array_empty(),
+    fn_param_start: int_array_empty(),
+    fn_param_count: int_array_empty(),
+    fn_body_start: int_array_empty(),
+    fn_body_count: int_array_empty(),
+    param_name: string_array_empty(),
+    param_type: string_array_empty(),
     stmt_kind: int_array_empty(),
     stmt_name: string_array_empty(),
     stmt_type: string_array_empty(),
+    stmt_mut: int_array_empty(),
     stmt_expr: int_array_empty(),
+    stmt_then_start: int_array_empty(),
+    stmt_then_count: int_array_empty(),
+    stmt_else_start: int_array_empty(),
+    stmt_else_count: int_array_empty(),
+    block_list: int_array_empty(),
   };
 }
 
@@ -83,6 +118,15 @@ fn arena_empty() -> Arena {
 struct ParseResult {
   arena: Arena,
   node: Int,
+  pos: Int,
+}
+
+// BlockResult is returned by block parsers: it carries the (start, count) slice
+// into block_list describing the statements just parsed, plus the cursor.
+struct BlockResult {
+  arena: Arena,
+  start: Int,
+  count: Int,
   pos: Int,
 }
 
@@ -108,6 +152,24 @@ fn push_name_node(arena: Arena, text: String) -> Arena {
   return a;
 }
 
+fn push_bool_node(arena: Arena, text: String) -> Arena {
+  let mut a: Arena = arena;
+  a.node_kind = int_array_push(a.node_kind, bool_node());
+  a.node_a = int_array_push(a.node_a, 0);
+  a.node_b = int_array_push(a.node_b, 0);
+  a.node_text = string_array_push(a.node_text, text);
+  return a;
+}
+
+fn push_unary_node(arena: Arena, operand: Int, op: String) -> Arena {
+  let mut a: Arena = arena;
+  a.node_kind = int_array_push(a.node_kind, unary_node());
+  a.node_a = int_array_push(a.node_a, operand);
+  a.node_b = int_array_push(a.node_b, 0);
+  a.node_text = string_array_push(a.node_text, op);
+  return a;
+}
+
 fn push_binary_node(arena: Arena, left: Int, right: Int, op: String) -> Arena {
   let mut a: Arena = arena;
   a.node_kind = int_array_push(a.node_kind, binary_node());
@@ -121,11 +183,24 @@ fn push_binary_node(arena: Arena, left: Int, right: Int, op: String) -> Arena {
 // Recursive-descent parser. Token streams come from the lexer below.
 // Grammar (the M2 slice):
 //   module    := ("module" path ";")? function+
-//   function  := "fn" name "(" ")" "->" type "{" stmt* "}"
-//   stmt      := "let" name ":" type "=" expr ";" | "return" expr ";"
-//   expr      := term (("+"|"-") term)*
-//   term      := factor (("*"|"/") factor)*
-//   factor    := INT | NAME | "(" expr ")"
+//   function  := "fn" name "(" params? ")" "->" type "{" stmt* "}"
+//   params    := param ("," param)*
+//   param     := name ":" type
+//   stmt      := "let" "mut"? name ":" type "=" expr ";"
+//              | "return" expr ";"
+//              | "if" expr block ("else" (ifstmt | block))?
+//              | "while" expr block
+//              | name "=" expr ";"
+//   block     := "{" stmt* "}"
+//   expr      := or
+//   or        := and ("||" and)*
+//   and       := bitor (("&"|"|"|"^") bitor)*
+//   bitor     := cmp (("=="|"!="|"<"|"<="|">"|">=") cmp)*
+//   cmp       := add (("+"|"-") add)*
+//   add       := mul (("*"|"/"|"%") mul)*
+//   mul       := unary
+//   unary     := ("!"|"-"|"~") unary | primary
+//   primary   := INT | "true" | "false" | NAME | "(" expr ")"
 // ---------------------------------------------------------------------------
 
 export fn dump_module_via_arena(source: String) -> String {
@@ -166,10 +241,29 @@ fn parse_function(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -
   p = p + 1;
   let name: String = texts[p];
   p = p + 1;
-  // "(" ")"
+  // "("
   if p < kinds.len && kinds[p] == token_lparen() {
     p = p + 1;
   }
+  // params := param ("," param)*  (param := name ":" type)
+  let param_start: Int = a.param_name.len;
+  let mut param_count: Int = 0;
+  while p < kinds.len && kinds[p] != token_rparen() {
+    if kinds[p] == token_comma() {
+      p = p + 1;
+    }
+    let pname: String = texts[p];
+    p = p + 1;
+    if p < kinds.len && kinds[p] == token_colon() {
+      p = p + 1;
+    }
+    let ptype: String = texts[p];
+    p = p + 1;
+    a.param_name = string_array_push(a.param_name, pname);
+    a.param_type = string_array_push(a.param_type, ptype);
+    param_count = param_count + 1;
+  }
+  // ")"
   if p < kinds.len && kinds[p] == token_rparen() {
     p = p + 1;
   }
@@ -179,34 +273,79 @@ fn parse_function(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -
   }
   let ret: String = texts[p];
   p = p + 1;
-  // "{"
+  // "{" stmt* "}"
+  let body: BlockResult = parse_block(a, kinds, texts, p);
+  a = body.arena;
+  p = body.pos;
+  a.fn_name = string_array_push(a.fn_name, name);
+  a.fn_ret = string_array_push(a.fn_ret, ret);
+  a.fn_param_start = int_array_push(a.fn_param_start, param_start);
+  a.fn_param_count = int_array_push(a.fn_param_count, param_count);
+  a.fn_body_start = int_array_push(a.fn_body_start, body.start);
+  a.fn_body_count = int_array_push(a.fn_body_count, body.count);
+  return ParseResult { arena: a, node: 0, pos: p };
+}
+
+// block := "{" stmt* "}" — gathers direct child statement indices locally then
+// commits them to block_list as one contiguous run.
+fn parse_block(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> BlockResult {
+  let mut a: Arena = arena;
+  let mut p: Int = pos;
   if p < kinds.len && kinds[p] == token_lbrace() {
     p = p + 1;
   }
-  let stmt_start: Int = a.stmt_kind.len;
-  let mut count: Int = 0;
+  let mut items: IntArray = int_array_empty();
   while p < kinds.len && kinds[p] != token_rbrace() {
     let r: ParseResult = parse_stmt(a, kinds, texts, p);
     a = r.arena;
     p = r.pos;
-    count = count + 1;
+    items = int_array_push(items, r.node);
   }
-  // "}"
   if p < kinds.len && kinds[p] == token_rbrace() {
     p = p + 1;
   }
-  a.fn_name = string_array_push(a.fn_name, name);
-  a.fn_ret = string_array_push(a.fn_ret, ret);
-  a.fn_stmt_start = int_array_push(a.fn_stmt_start, stmt_start);
-  a.fn_stmt_count = int_array_push(a.fn_stmt_count, count);
-  return ParseResult { arena: a, node: 0, pos: p };
+  let start: Int = a.block_list.len;
+  let count: Int = items.len;
+  let mut i: Int = 0;
+  while i < count {
+    a.block_list = int_array_push(a.block_list, items[i]);
+    i = i + 1;
+  }
+  return BlockResult { arena: a, start: start, count: count, pos: p };
 }
 
+// parse_stmt parses one statement, pushes it onto the statement arena, and
+// returns its statement-arena index in ParseResult.node.
 fn parse_stmt(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
   if kinds[pos] == token_let() {
     return parse_let(arena, kinds, texts, pos);
   }
-  return parse_return(arena, kinds, texts, pos);
+  if kinds[pos] == token_return() {
+    return parse_return(arena, kinds, texts, pos);
+  }
+  if kinds[pos] == token_if() {
+    return parse_if(arena, kinds, texts, pos);
+  }
+  if kinds[pos] == token_while() {
+    return parse_while(arena, kinds, texts, pos);
+  }
+  return parse_assign(arena, kinds, texts, pos);
+}
+
+// Append a fully-described statement to the statement arena, returning its index.
+fn push_stmt(arena: Arena, kind: Int, name: String, ty: String, is_mut: Int, expr: Int,
+             then_start: Int, then_count: Int, else_start: Int, else_count: Int) -> Arena {
+  let mut a: Arena = arena;
+  a.stmt_kind = int_array_push(a.stmt_kind, kind);
+  a.stmt_name = string_array_push(a.stmt_name, name);
+  a.stmt_type = string_array_push(a.stmt_type, ty);
+  a.stmt_mut = int_array_push(a.stmt_mut, is_mut);
+  a.stmt_expr = int_array_push(a.stmt_expr, expr);
+  a.stmt_then_start = int_array_push(a.stmt_then_start, then_start);
+  a.stmt_then_count = int_array_push(a.stmt_then_count, then_count);
+  a.stmt_else_start = int_array_push(a.stmt_else_start, else_start);
+  a.stmt_else_count = int_array_push(a.stmt_else_count, else_count);
+  return a;
 }
 
 fn parse_let(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
@@ -214,6 +353,12 @@ fn parse_let(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> Par
   let mut p: Int = pos;
   // "let"
   p = p + 1;
+  // optional "mut"
+  let mut is_mut: Int = 0;
+  if p < kinds.len && kinds[p] == token_mut() {
+    is_mut = 1;
+    p = p + 1;
+  }
   let name: String = texts[p];
   p = p + 1;
   // ":" type
@@ -233,11 +378,9 @@ fn parse_let(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> Par
   if p < kinds.len && kinds[p] == token_semicolon() {
     p = p + 1;
   }
-  a.stmt_kind = int_array_push(a.stmt_kind, let_stmt());
-  a.stmt_name = string_array_push(a.stmt_name, name);
-  a.stmt_type = string_array_push(a.stmt_type, ty);
-  a.stmt_expr = int_array_push(a.stmt_expr, r.node);
-  return ParseResult { arena: a, node: 0, pos: p };
+  let index: Int = a.stmt_kind.len;
+  a = push_stmt(a, let_stmt(), name, ty, is_mut, r.node, 0, 0, 0, 0);
+  return ParseResult { arena: a, node: index, pos: p };
 }
 
 fn parse_return(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
@@ -252,22 +395,138 @@ fn parse_return(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> 
   if p < kinds.len && kinds[p] == token_semicolon() {
     p = p + 1;
   }
-  a.stmt_kind = int_array_push(a.stmt_kind, return_stmt());
-  a.stmt_name = string_array_push(a.stmt_name, "");
-  a.stmt_type = string_array_push(a.stmt_type, "");
-  a.stmt_expr = int_array_push(a.stmt_expr, r.node);
-  return ParseResult { arena: a, node: 0, pos: p };
+  let index: Int = a.stmt_kind.len;
+  a = push_stmt(a, return_stmt(), "", "", 0, r.node, 0, 0, 0, 0);
+  return ParseResult { arena: a, node: index, pos: p };
 }
 
-// expr := term (("+"|"-") term)*  — left associative.
+// if := "if" expr block ("else" (ifstmt | block))?
+// The else-if form is just an `if` statement living inside the else block, so we
+// dispatch to parse_stmt for `else if` and let it land as a single block item.
+fn parse_if(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let mut a: Arena = arena;
+  let mut p: Int = pos;
+  // "if"
+  p = p + 1;
+  let cond: ParseResult = parse_expr(a, kinds, texts, p);
+  a = cond.arena;
+  p = cond.pos;
+  let then_block: BlockResult = parse_block(a, kinds, texts, p);
+  a = then_block.arena;
+  p = then_block.pos;
+  let mut else_start: Int = 0;
+  let mut else_count: Int = 0;
+  if p < kinds.len && kinds[p] == token_else() {
+    p = p + 1;
+    if p < kinds.len && kinds[p] == token_if() {
+      // else if: parse the nested if as one statement and wrap it in a 1-item
+      // else block.
+      let nested: ParseResult = parse_stmt(a, kinds, texts, p);
+      a = nested.arena;
+      p = nested.pos;
+      else_start = a.block_list.len;
+      else_count = 1;
+      a.block_list = int_array_push(a.block_list, nested.node);
+    } else {
+      let else_block: BlockResult = parse_block(a, kinds, texts, p);
+      a = else_block.arena;
+      p = else_block.pos;
+      else_start = else_block.start;
+      else_count = else_block.count;
+    }
+  }
+  let index: Int = a.stmt_kind.len;
+  a = push_stmt(a, if_stmt(), "", "", 0, cond.node,
+                then_block.start, then_block.count, else_start, else_count);
+  return ParseResult { arena: a, node: index, pos: p };
+}
+
+// while := "while" expr block
+fn parse_while(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let mut a: Arena = arena;
+  let mut p: Int = pos;
+  // "while"
+  p = p + 1;
+  let cond: ParseResult = parse_expr(a, kinds, texts, p);
+  a = cond.arena;
+  p = cond.pos;
+  let body: BlockResult = parse_block(a, kinds, texts, p);
+  a = body.arena;
+  p = body.pos;
+  let index: Int = a.stmt_kind.len;
+  a = push_stmt(a, while_stmt(), "", "", 0, cond.node,
+                body.start, body.count, 0, 0);
+  return ParseResult { arena: a, node: index, pos: p };
+}
+
+// assign := name "=" expr ";"  (simple variable target only)
+fn parse_assign(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let mut a: Arena = arena;
+  let mut p: Int = pos;
+  let name: String = texts[p];
+  p = p + 1;
+  // "="
+  if p < kinds.len && kinds[p] == token_eq() {
+    p = p + 1;
+  }
+  let r: ParseResult = parse_expr(a, kinds, texts, p);
+  a = r.arena;
+  p = r.pos;
+  // ";"
+  if p < kinds.len && kinds[p] == token_semicolon() {
+    p = p + 1;
+  }
+  let index: Int = a.stmt_kind.len;
+  a = push_stmt(a, assign_stmt(), name, "", 0, r.node, 0, 0, 0, 0);
+  return ParseResult { arena: a, node: index, pos: p };
+}
+
+// ---------------------------------------------------------------------------
+// Expression precedence ladder, lowest to highest:
+//   or  := and ("||" and)*
+//   and := bit (("&"|"|"|"^") bit)*          [bit ops share one left-assoc tier]
+//   bit := cmp (("=="|"!="|"<"|"<="|">"|">=") cmp)*
+//   cmp := add (("+"|"-") add)*
+//   add := mul (("*"|"/"|"%") mul)*
+//   mul := unary
+//   unary := ("!"|"-"|"~") unary | primary
+//   primary := INT | true | false | NAME | "(" expr ")"
+// Every binary tier folds left-associatively by the same post-order pattern as
+// the original `+ - * /` slice.
+// ---------------------------------------------------------------------------
 fn parse_expr(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
-  let mut left: ParseResult = parse_term(arena, kinds, texts, pos);
+  return parse_or(arena, kinds, texts, pos);
+}
+
+fn is_or_op(kind: Int) -> Bool {
+  return kind == token_oror();
+}
+
+fn is_bit_op(kind: Int) -> Bool {
+  return kind == token_amp() || kind == token_pipe() || kind == token_caret();
+}
+
+fn is_cmp_op(kind: Int) -> Bool {
+  return kind == token_eqeq() || kind == token_ne() || kind == token_lt()
+      || kind == token_le() || kind == token_gt() || kind == token_ge();
+}
+
+fn is_add_op(kind: Int) -> Bool {
+  return kind == token_plus() || kind == token_minus();
+}
+
+fn is_mul_op(kind: Int) -> Bool {
+  return kind == token_star() || kind == token_slash() || kind == token_percent();
+}
+
+fn parse_or(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let left: ParseResult = parse_and(arena, kinds, texts, pos);
   let mut a: Arena = left.arena;
   let mut node: Int = left.node;
   let mut p: Int = left.pos;
-  while p < kinds.len && (kinds[p] == token_plus() || kinds[p] == token_minus()) {
+  while p < kinds.len && is_or_op(kinds[p]) {
     let op: String = binary_op_name(kinds[p]);
-    let rhs: ParseResult = parse_term(a, kinds, texts, p + 1);
+    let rhs: ParseResult = parse_and(a, kinds, texts, p + 1);
     a = rhs.arena;
     p = rhs.pos;
     let new_index: Int = a.node_kind.len;
@@ -277,15 +536,14 @@ fn parse_expr(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> Pa
   return ParseResult { arena: a, node: node, pos: p };
 }
 
-// term := factor (("*"|"/") factor)*  — left associative, binds tighter.
-fn parse_term(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
-  let mut left: ParseResult = parse_factor(arena, kinds, texts, pos);
+fn parse_and(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let left: ParseResult = parse_bit(arena, kinds, texts, pos);
   let mut a: Arena = left.arena;
   let mut node: Int = left.node;
   let mut p: Int = left.pos;
-  while p < kinds.len && (kinds[p] == token_star() || kinds[p] == token_slash()) {
+  while p < kinds.len && kinds[p] == token_andand() {
     let op: String = binary_op_name(kinds[p]);
-    let rhs: ParseResult = parse_factor(a, kinds, texts, p + 1);
+    let rhs: ParseResult = parse_bit(a, kinds, texts, p + 1);
     a = rhs.arena;
     p = rhs.pos;
     let new_index: Int = a.node_kind.len;
@@ -295,8 +553,89 @@ fn parse_term(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> Pa
   return ParseResult { arena: a, node: node, pos: p };
 }
 
-// factor := INT | NAME | "(" expr ")"
-fn parse_factor(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+fn parse_bit(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let left: ParseResult = parse_cmp(arena, kinds, texts, pos);
+  let mut a: Arena = left.arena;
+  let mut node: Int = left.node;
+  let mut p: Int = left.pos;
+  while p < kinds.len && is_bit_op(kinds[p]) {
+    let op: String = binary_op_name(kinds[p]);
+    let rhs: ParseResult = parse_cmp(a, kinds, texts, p + 1);
+    a = rhs.arena;
+    p = rhs.pos;
+    let new_index: Int = a.node_kind.len;
+    a = push_binary_node(a, node, rhs.node, op);
+    node = new_index;
+  }
+  return ParseResult { arena: a, node: node, pos: p };
+}
+
+fn parse_cmp(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let left: ParseResult = parse_add(arena, kinds, texts, pos);
+  let mut a: Arena = left.arena;
+  let mut node: Int = left.node;
+  let mut p: Int = left.pos;
+  while p < kinds.len && is_cmp_op(kinds[p]) {
+    let op: String = binary_op_name(kinds[p]);
+    let rhs: ParseResult = parse_add(a, kinds, texts, p + 1);
+    a = rhs.arena;
+    p = rhs.pos;
+    let new_index: Int = a.node_kind.len;
+    a = push_binary_node(a, node, rhs.node, op);
+    node = new_index;
+  }
+  return ParseResult { arena: a, node: node, pos: p };
+}
+
+fn parse_add(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let left: ParseResult = parse_mul(arena, kinds, texts, pos);
+  let mut a: Arena = left.arena;
+  let mut node: Int = left.node;
+  let mut p: Int = left.pos;
+  while p < kinds.len && is_add_op(kinds[p]) {
+    let op: String = binary_op_name(kinds[p]);
+    let rhs: ParseResult = parse_mul(a, kinds, texts, p + 1);
+    a = rhs.arena;
+    p = rhs.pos;
+    let new_index: Int = a.node_kind.len;
+    a = push_binary_node(a, node, rhs.node, op);
+    node = new_index;
+  }
+  return ParseResult { arena: a, node: node, pos: p };
+}
+
+fn parse_mul(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let left: ParseResult = parse_unary(arena, kinds, texts, pos);
+  let mut a: Arena = left.arena;
+  let mut node: Int = left.node;
+  let mut p: Int = left.pos;
+  while p < kinds.len && is_mul_op(kinds[p]) {
+    let op: String = binary_op_name(kinds[p]);
+    let rhs: ParseResult = parse_unary(a, kinds, texts, p + 1);
+    a = rhs.arena;
+    p = rhs.pos;
+    let new_index: Int = a.node_kind.len;
+    a = push_binary_node(a, node, rhs.node, op);
+    node = new_index;
+  }
+  return ParseResult { arena: a, node: node, pos: p };
+}
+
+// unary := ("!"|"-"|"~") unary | primary  — right-recursive, highest binding.
+fn parse_unary(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  if kinds[pos] == token_bang() || kinds[pos] == token_minus() || kinds[pos] == token_tilde() {
+    let op: String = unary_op_name(kinds[pos]);
+    let operand: ParseResult = parse_unary(arena, kinds, texts, pos + 1);
+    let mut a: Arena = operand.arena;
+    let new_index: Int = a.node_kind.len;
+    a = push_unary_node(a, operand.node, op);
+    return ParseResult { arena: a, node: new_index, pos: operand.pos };
+  }
+  return parse_primary(arena, kinds, texts, pos);
+}
+
+// primary := INT | true | false | NAME | "(" expr ")"
+fn parse_primary(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
   if kinds[pos] == token_lparen() {
     let inner: ParseResult = parse_expr(arena, kinds, texts, pos + 1);
     let mut p: Int = inner.pos;
@@ -310,6 +649,11 @@ fn parse_factor(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> 
     let a: Arena = push_int_node(arena, texts[pos]);
     return ParseResult { arena: a, node: index, pos: pos + 1 };
   }
+  if kinds[pos] == token_true() || kinds[pos] == token_false() {
+    let index: Int = arena.node_kind.len;
+    let a: Arena = push_bool_node(arena, texts[pos]);
+    return ParseResult { arena: a, node: index, pos: pos + 1 };
+  }
   // identifier / name
   let index: Int = arena.node_kind.len;
   let a: Arena = push_name_node(arena, texts[pos]);
@@ -317,16 +661,28 @@ fn parse_factor(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> 
 }
 
 fn binary_op_name(kind: Int) -> String {
-  if kind == token_plus() {
-    return "add";
-  }
-  if kind == token_minus() {
-    return "sub";
-  }
-  if kind == token_star() {
-    return "mul";
-  }
-  return "div";
+  if kind == token_oror() { return "or"; }
+  if kind == token_andand() { return "and"; }
+  if kind == token_amp() { return "bit_and"; }
+  if kind == token_pipe() { return "bit_or"; }
+  if kind == token_caret() { return "bit_xor"; }
+  if kind == token_eqeq() { return "eq"; }
+  if kind == token_ne() { return "not_eq"; }
+  if kind == token_lt() { return "lt"; }
+  if kind == token_le() { return "lte"; }
+  if kind == token_gt() { return "gt"; }
+  if kind == token_ge() { return "gte"; }
+  if kind == token_plus() { return "add"; }
+  if kind == token_minus() { return "sub"; }
+  if kind == token_star() { return "mul"; }
+  if kind == token_slash() { return "div"; }
+  return "mod";
+}
+
+fn unary_op_name(kind: Int) -> String {
+  if kind == token_bang() { return "not"; }
+  if kind == token_minus() { return "neg"; }
+  return "bit_not";
 }
 
 // ---------------------------------------------------------------------------
@@ -345,14 +701,25 @@ fn dump_from_arena(arena: Arena) -> String {
     out = string_concat(out, "  Function name=");
     out = string_concat(out, arena.fn_name[fi]);
     out = string_concat(out, " exported=false\n");
+    let pstart: Int = arena.fn_param_start[fi];
+    let pcount: Int = arena.fn_param_count[fi];
+    let mut pi: Int = 0;
+    while pi < pcount {
+      out = string_concat(out, "    Param name=");
+      out = string_concat(out, arena.param_name[pstart + pi]);
+      out = string_concat(out, " type=");
+      out = string_concat(out, arena.param_type[pstart + pi]);
+      out = string_concat(out, "\n");
+      pi = pi + 1;
+    }
     out = string_concat(out, "    Return type=");
     out = string_concat(out, arena.fn_ret[fi]);
     out = string_concat(out, "\n");
-    let start: Int = arena.fn_stmt_start[fi];
-    let count: Int = arena.fn_stmt_count[fi];
+    let start: Int = arena.fn_body_start[fi];
+    let count: Int = arena.fn_body_count[fi];
     let mut si: Int = 0;
     while si < count {
-      out = dump_stmt(out, arena, start + si);
+      out = dump_stmt(out, arena, arena.block_list[start + si], 2);
       si = si + 1;
     }
     fi = fi + 1;
@@ -360,19 +727,78 @@ fn dump_from_arena(arena: Arena) -> String {
   return out;
 }
 
-fn dump_stmt(out: String, arena: Arena, index: Int) -> String {
-  let mut next: String = out;
-  if arena.stmt_kind[index] == let_stmt() {
-    next = string_concat(next, "    Let name=");
+// Walk one statement. `depth` is the indentation level (in 2-space units) at
+// which this statement's header line is emitted.
+fn dump_stmt(out: String, arena: Arena, index: Int, depth: Int) -> String {
+  let pad: String = indent_of(depth);
+  let kind: Int = arena.stmt_kind[index];
+  if kind == let_stmt() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "Let name=");
     next = string_concat(next, arena.stmt_name[index]);
     next = string_concat(next, " type=");
     next = string_concat(next, arena.stmt_type[index]);
+    if arena.stmt_mut[index] == 1 {
+      next = string_concat(next, " mutable=true");
+    }
     next = string_concat(next, "\n");
-    next = dump_expr(next, arena, arena.stmt_expr[index], 3);
+    next = dump_expr(next, arena, arena.stmt_expr[index], depth + 1);
     return next;
   }
-  next = string_concat(next, "    Return\n");
-  next = dump_expr(next, arena, arena.stmt_expr[index], 3);
+  if kind == return_stmt() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "Return\n");
+    next = dump_expr(next, arena, arena.stmt_expr[index], depth + 1);
+    return next;
+  }
+  if kind == assign_stmt() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "Assign name=");
+    next = string_concat(next, arena.stmt_name[index]);
+    next = string_concat(next, "\n");
+    next = dump_expr(next, arena, arena.stmt_expr[index], depth + 1);
+    return next;
+  }
+  if kind == while_stmt() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "While\n");
+    let cpad: String = indent_of(depth + 1);
+    next = string_concat(next, cpad);
+    next = string_concat(next, "Condition\n");
+    next = dump_expr(next, arena, arena.stmt_expr[index], depth + 2);
+    next = string_concat(next, cpad);
+    next = string_concat(next, "Body\n");
+    next = dump_block(next, arena, arena.stmt_then_start[index],
+                      arena.stmt_then_count[index], depth + 2);
+    return next;
+  }
+  // if
+  let mut next: String = string_concat(out, pad);
+  next = string_concat(next, "If\n");
+  let cpad: String = indent_of(depth + 1);
+  next = string_concat(next, cpad);
+  next = string_concat(next, "Condition\n");
+  next = dump_expr(next, arena, arena.stmt_expr[index], depth + 2);
+  next = string_concat(next, cpad);
+  next = string_concat(next, "Then\n");
+  next = dump_block(next, arena, arena.stmt_then_start[index],
+                    arena.stmt_then_count[index], depth + 2);
+  if arena.stmt_else_count[index] > 0 {
+    next = string_concat(next, cpad);
+    next = string_concat(next, "Else\n");
+    next = dump_block(next, arena, arena.stmt_else_start[index],
+                      arena.stmt_else_count[index], depth + 2);
+  }
+  return next;
+}
+
+fn dump_block(out: String, arena: Arena, start: Int, count: Int, depth: Int) -> String {
+  let mut next: String = out;
+  let mut i: Int = 0;
+  while i < count {
+    next = dump_stmt(next, arena, arena.block_list[start + i], depth);
+    i = i + 1;
+  }
   return next;
 }
 
@@ -393,6 +819,21 @@ fn dump_expr(out: String, arena: Arena, node: Int, depth: Int) -> String {
     next = string_concat(next, "Name ");
     next = string_concat(next, arena.node_text[node]);
     next = string_concat(next, "\n");
+    return next;
+  }
+  if kind == bool_node() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "Bool ");
+    next = string_concat(next, arena.node_text[node]);
+    next = string_concat(next, "\n");
+    return next;
+  }
+  if kind == unary_node() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "Unary op=");
+    next = string_concat(next, arena.node_text[node]);
+    next = string_concat(next, "\n");
+    next = dump_expr(next, arena, arena.node_a[node], depth + 1);
     return next;
   }
   // binary
@@ -508,10 +949,29 @@ fn lex_texts(source: String) -> StringArray {
   return string_array_push(texts, "");
 }
 
+// Multi-byte operators: "->", "&&", "||", "==", "!=", "<=", ">=".
 fn symbol_width(source: String, index: Int) -> Int {
   let byte: Int = string_byte_at(source, index);
   let len: Int = string_len(source);
   if byte == 45 && index + 1 < len && string_byte_at(source, index + 1) == 62 {
+    return 2;
+  }
+  if byte == 38 && index + 1 < len && string_byte_at(source, index + 1) == 38 {
+    return 2;
+  }
+  if byte == 124 && index + 1 < len && string_byte_at(source, index + 1) == 124 {
+    return 2;
+  }
+  if byte == 61 && index + 1 < len && string_byte_at(source, index + 1) == 61 {
+    return 2;
+  }
+  if byte == 33 && index + 1 < len && string_byte_at(source, index + 1) == 61 {
+    return 2;
+  }
+  if byte == 60 && index + 1 < len && string_byte_at(source, index + 1) == 61 {
+    return 2;
+  }
+  if byte == 62 && index + 1 < len && string_byte_at(source, index + 1) == 61 {
     return 2;
   }
   return 1;
@@ -535,14 +995,33 @@ fn keyword_or_ident(text: String) -> Int {
   if text == "let" {
     return token_let();
   }
+  if text == "mut" {
+    return token_mut();
+  }
   if text == "return" {
     return token_return();
+  }
+  if text == "if" {
+    return token_if();
+  }
+  if text == "else" {
+    return token_else();
+  }
+  if text == "while" {
+    return token_while();
+  }
+  if text == "true" {
+    return token_true();
+  }
+  if text == "false" {
+    return token_false();
   }
   return token_ident();
 }
 
 fn symbol_kind(source: String, index: Int) -> Int {
   let byte: Int = string_byte_at(source, index);
+  let len: Int = string_len(source);
   if byte == 40 {
     return token_lparen();
   }
@@ -561,17 +1040,59 @@ fn symbol_kind(source: String, index: Int) -> Int {
   if byte == 59 {
     return token_semicolon();
   }
+  if byte == 44 {
+    return token_comma();
+  }
   if byte == 46 {
     return token_dot();
   }
   if byte == 45 {
-    if index + 1 < string_len(source) && string_byte_at(source, index + 1) == 62 {
+    if index + 1 < len && string_byte_at(source, index + 1) == 62 {
       return token_arrow();
     }
     return token_minus();
   }
   if byte == 61 {
+    if index + 1 < len && string_byte_at(source, index + 1) == 61 {
+      return token_eqeq();
+    }
     return token_eq();
+  }
+  if byte == 33 {
+    if index + 1 < len && string_byte_at(source, index + 1) == 61 {
+      return token_ne();
+    }
+    return token_bang();
+  }
+  if byte == 60 {
+    if index + 1 < len && string_byte_at(source, index + 1) == 61 {
+      return token_le();
+    }
+    return token_lt();
+  }
+  if byte == 62 {
+    if index + 1 < len && string_byte_at(source, index + 1) == 61 {
+      return token_ge();
+    }
+    return token_gt();
+  }
+  if byte == 38 {
+    if index + 1 < len && string_byte_at(source, index + 1) == 38 {
+      return token_andand();
+    }
+    return token_amp();
+  }
+  if byte == 124 {
+    if index + 1 < len && string_byte_at(source, index + 1) == 124 {
+      return token_oror();
+    }
+    return token_pipe();
+  }
+  if byte == 94 {
+    return token_caret();
+  }
+  if byte == 126 {
+    return token_tilde();
   }
   if byte == 43 {
     return token_plus();
@@ -581,6 +1102,9 @@ fn symbol_kind(source: String, index: Int) -> Int {
   }
   if byte == 47 {
     return token_slash();
+  }
+  if byte == 37 {
+    return token_percent();
   }
   return token_unknown();
 }
@@ -594,18 +1118,39 @@ fn token_int() -> Int { return 2; }
 fn token_module() -> Int { return 10; }
 fn token_fn() -> Int { return 14; }
 fn token_let() -> Int { return 15; }
+fn token_mut() -> Int { return 16; }
 fn token_return() -> Int { return 17; }
+fn token_if() -> Int { return 18; }
+fn token_else() -> Int { return 19; }
+fn token_while() -> Int { return 20; }
+fn token_true() -> Int { return 21; }
+fn token_false() -> Int { return 22; }
 fn token_lparen() -> Int { return 30; }
 fn token_rparen() -> Int { return 31; }
 fn token_lbrace() -> Int { return 32; }
 fn token_rbrace() -> Int { return 33; }
 fn token_colon() -> Int { return 36; }
 fn token_semicolon() -> Int { return 37; }
+fn token_comma() -> Int { return 38; }
 fn token_dot() -> Int { return 39; }
 fn token_arrow() -> Int { return 40; }
 fn token_eq() -> Int { return 41; }
+fn token_eqeq() -> Int { return 42; }
+fn token_ne() -> Int { return 43; }
+fn token_lt() -> Int { return 44; }
+fn token_le() -> Int { return 45; }
+fn token_gt() -> Int { return 46; }
+fn token_ge() -> Int { return 47; }
+fn token_bang() -> Int { return 48; }
+fn token_amp() -> Int { return 49; }
+fn token_pipe() -> Int { return 50; }
 fn token_plus() -> Int { return 51; }
 fn token_minus() -> Int { return 52; }
 fn token_star() -> Int { return 53; }
 fn token_slash() -> Int { return 54; }
+fn token_percent() -> Int { return 55; }
+fn token_caret() -> Int { return 56; }
+fn token_tilde() -> Int { return 57; }
+fn token_andand() -> Int { return 58; }
+fn token_oror() -> Int { return 59; }
 fn token_unknown() -> Int { return 99; }

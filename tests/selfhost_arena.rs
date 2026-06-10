@@ -109,3 +109,147 @@ fn arena_matches_oracle_on_deep_mixed_precedence() {
         "module deep.test; fn compute() -> Int { let a: Int = 1 + 2 * 3 - 4 / 2; let b: Int = (a + 1) * (a - 2) / (a + 3); let c: Int = a + b * a - b; return c; } fn second() -> Int { let z: Int = ((1 + 2) * (3 + 4)) - 5; return z; }",
     );
 }
+
+// --- Batch 2: full expression spectrum + if/while/assign ---
+
+#[test]
+fn arena_matches_oracle_on_full_precedence_ladder() {
+    assert_matches_oracle(
+        "fn f() -> Bool { let r: Bool = a || b && c == d + e * f; return r; }",
+    );
+}
+
+#[test]
+fn arena_matches_oracle_on_bool_literals() {
+    assert_matches_oracle(
+        "fn f() -> Bool { let t: Bool = true; let g: Bool = false; return t; }",
+    );
+}
+
+#[test]
+fn arena_matches_oracle_on_unary_mix() {
+    assert_matches_oracle("fn f() -> Bool { let r: Bool = !a && -b; return r; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_unary_bit_not() {
+    assert_matches_oracle("fn f() -> Int { let r: Int = ~a + -b; return r; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_bitwise_chain() {
+    assert_matches_oracle("fn f() -> Int { let r: Int = a & b | c ^ d; return r; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_modulo() {
+    assert_matches_oracle("fn f() -> Int { let r: Int = a % b + c * d % e; return r; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_all_comparisons() {
+    assert_matches_oracle(
+        "fn f() -> Bool { let a: Bool = p == q; let b: Bool = p != q; let c: Bool = p < q; let d: Bool = p <= q; let e: Bool = p > q; let g: Bool = p >= q; return a; }",
+    );
+}
+
+#[test]
+fn arena_matches_oracle_on_if_only() {
+    assert_matches_oracle("fn f() -> Int { if a { return 1; } return 0; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_if_else() {
+    assert_matches_oracle("fn f() -> Int { if a { return 1; } else { return 2; } }");
+}
+
+#[test]
+fn arena_matches_oracle_on_if_else_if_else_chain() {
+    assert_matches_oracle(
+        "fn f() -> Int { if a { return 1; } else if b { return 2; } else if c { return 3; } else { return 4; } }",
+    );
+}
+
+#[test]
+fn arena_matches_oracle_on_empty_else() {
+    assert_matches_oracle("fn f() -> Int { if a { return 1; } return 0; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_while() {
+    assert_matches_oracle(
+        "fn f() -> Int { let mut i: Int = 0; while i < n { i = i + 1; } return i; }",
+    );
+}
+
+#[test]
+fn arena_matches_oracle_on_while_with_nested_if() {
+    assert_matches_oracle(
+        "fn f() -> Int { while c { x = x + 1; if d { x = x - 1; } } return x; }",
+    );
+}
+
+#[test]
+fn arena_matches_oracle_on_simple_assign() {
+    assert_matches_oracle("fn f() -> Int { x = a + b * c; return x; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_params_and_mut() {
+    assert_matches_oracle(
+        "fn f(a: Int, b: Int) -> Int { let mut s: Int = a + b; s = s * 2; return s; }",
+    );
+}
+
+#[test]
+fn arena_matches_oracle_on_while_inside_if_else() {
+    assert_matches_oracle(
+        "fn f(a: Bool, n: Int) -> Int { let mut i: Int = 0; if a { while i < n { i = i + 1; } } else { while i > 0 { i = i - 1; } } return i; }",
+    );
+}
+
+// --- Regression: existing stage1 parity probes that use only this batch's
+// constructs. Probes relying on calls/indexing/field-access/struct/array
+// literals/strings/break/continue/for are intentionally skipped (see the test
+// returned summary for the list).
+fn assert_probe(path: &str) {
+    let source = std::fs::read_to_string(path).expect("probe source should read");
+    assert_matches_oracle(&source);
+}
+
+#[test]
+fn arena_matches_oracle_on_operator_probes() {
+    // op_07 (parens), op_13 (call/index/field — skip), op_chain (call/string — skip).
+    for name in [
+        "op_01", "op_02", "op_03", "op_04", "op_05", "op_06", "op_07", "op_08", "op_09",
+        "op_10", "op_11", "op_12", "op_14", "op_15",
+    ] {
+        assert_probe(&format!("testdata/stage1_parity/{name}.zeta"));
+    }
+}
+
+#[test]
+fn arena_matches_oracle_on_bitwise_neg_mod_probes() {
+    for name in ["bitwise_01", "neg_01", "mod_01"] {
+        assert_probe(&format!("testdata/stage1_parity/{name}.zeta"));
+    }
+}
+
+#[test]
+fn arena_matches_oracle_on_control_flow_probes() {
+    // cf_05/cf_11/cf_12/cf_15 use break/continue and are skipped (not in this
+    // batch); for_* are skipped too.
+    for name in [
+        "cf_01", "cf_02", "cf_03", "cf_04", "cf_06", "cf_07", "cf_08", "cf_09", "cf_10",
+        "cf_13", "cf_14", "elif_01",
+    ] {
+        assert_probe(&format!("testdata/stage1_parity/{name}.zeta"));
+    }
+}
+
+#[test]
+fn arena_matches_oracle_on_review_kitchen_sink() {
+    assert_matches_oracle(
+        "fn f(a: Int, b: Int) -> Bool { let mut r: Int = a || b && a == b + a * b; if a < b { r = a; } else if a > b { r = b; } else { r = 0; } while r < a & b | a { r = r + 1; } return !r == false && -a < ~b; }",
+    );
+}
