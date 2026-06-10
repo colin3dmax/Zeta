@@ -78,6 +78,7 @@ fn oracle_report(program_source: &str) -> String {
                 "RESOLVE_UNKNOWN_FUNCTION" => "RESOLVE_UNKNOWN_FUNCTION name=",
                 "RESOLVE_DUPLICATE_LOCAL" => "RESOLVE_DUPLICATE_LOCAL name=",
                 "RESOLVE_DUPLICATE_ITEM" => "RESOLVE_DUPLICATE_ITEM name=",
+                "RESOLVE_UNKNOWN_IMPORT" => "RESOLVE_UNKNOWN_IMPORT name=",
                 _ => continue,
             };
             let name = extract_backtick_name(&diagnostic.message)
@@ -414,6 +415,134 @@ fn resolve_duplicate_fn_still_resolves_both_bodies() {
     // unknown name, after the duplicate-item line).
     assert_matches_oracle(
         "fn f() -> Int { return one; } fn f() -> Int { return two; }",
+    );
+}
+
+// --- slice #4: import boundary (RESOLVE_UNKNOWN_IMPORT + std name sets) -----
+
+#[test]
+fn resolve_unknown_import_reported() {
+    assert_matches_oracle("import foo.bar; fn f() -> Int { return 0; }");
+}
+
+#[test]
+fn resolve_single_segment_unknown_import() {
+    assert_matches_oracle("import foo; fn f() -> Int { return 0; }");
+}
+
+#[test]
+fn resolve_std_prefix_but_unknown_import() {
+    // `std.fake` is not a standard import — prefix matching must be exact.
+    assert_matches_oracle("import std.fake; fn f() -> Int { return 0; }");
+}
+
+#[test]
+fn resolve_std_core_import_ok_and_fn_known() {
+    assert_matches_oracle(
+        "import std.core; fn f() -> Int { return string_len(\"a\"); }",
+    );
+}
+
+#[test]
+fn resolve_std_core_fn_unknown_without_import() {
+    assert_matches_oracle("fn f() -> Int { return string_len(\"a\"); }");
+}
+
+#[test]
+fn resolve_std_io_import_ok_and_fn_known() {
+    assert_matches_oracle(
+        "import std.io; fn f() -> String { return path_join(\"a\", \"b\"); }",
+    );
+}
+
+#[test]
+fn resolve_std_core_does_not_grant_io_fns() {
+    assert_matches_oracle(
+        "import std.core; fn f() -> String { return path_join(\"a\", \"b\"); }",
+    );
+}
+
+#[test]
+fn resolve_std_enum_variant_call_known_with_import() {
+    assert_matches_oracle(
+        "import std.core; fn f() -> Int { let x: OptionInt = OptionInt.Some(1); return 0; }",
+    );
+}
+
+#[test]
+fn resolve_std_enum_bare_reference_known_with_import() {
+    // Std enum names join top_level_names → a bare reference is not unknown.
+    assert_matches_oracle("import std.core; fn f() -> Int { return OptionInt; }");
+}
+
+#[test]
+fn resolve_std_enum_bare_reference_unknown_without_import() {
+    assert_matches_oracle("fn f() -> Int { return OptionInt; }");
+}
+
+#[test]
+fn resolve_std_fn_bare_reference_is_unknown_name() {
+    // Std FUNCTION names are callable but are NOT legal bare references
+    // (functions joins the callee set, not top_level_names).
+    assert_matches_oracle("import std.core; fn f() -> Int { return string_len; }");
+}
+
+#[test]
+fn resolve_item_conflicts_with_std_core_name() {
+    assert_matches_oracle(
+        "import std.core; enum OptionInt { A } fn f() -> Int { return 0; }",
+    );
+}
+
+#[test]
+fn resolve_item_conflicts_with_std_io_name() {
+    assert_matches_oracle(
+        "import std.io; struct ResultString { x: Int } fn f() -> Int { return 0; }",
+    );
+}
+
+#[test]
+fn resolve_item_before_import_still_conflicts() {
+    // standard_top_level_names is computed from the whole module before the
+    // item loop — an item preceding the import still conflicts.
+    assert_matches_oracle(
+        "enum ResultInt { A } import std.core; fn f() -> Int { return 0; }",
+    );
+}
+
+#[test]
+fn resolve_user_duplicate_and_std_conflict_both_report() {
+    // Second `ResultInt` item reports a user-level duplicate AND a std
+    // conflict; the first reports only the conflict. Three lines total.
+    assert_matches_oracle(
+        "import std.core; fn ResultInt() -> Int { return 0; } struct ResultInt { x: Int }",
+    );
+}
+
+#[test]
+fn resolve_no_conflict_without_the_import() {
+    assert_matches_oracle("enum OptionInt { A } fn f() -> Int { return 0; }");
+}
+
+#[test]
+fn resolve_unknown_imports_interleaved_with_duplicates_in_item_order() {
+    assert_matches_oracle(
+        "import a.b; fn f() -> Int { return 0; } import c.d; fn f() -> Int { return 1; }",
+    );
+}
+
+#[test]
+fn resolve_repeated_std_import_not_duplicate() {
+    // Imports have no item name → never duplicate items.
+    assert_matches_oracle(
+        "import std.core; import std.core; fn f() -> Int { return 0; }",
+    );
+}
+
+#[test]
+fn resolve_std_import_with_alias_is_known() {
+    assert_matches_oracle(
+        "import std.core as core; fn f() -> Int { return string_len(\"a\"); }",
     );
 }
 

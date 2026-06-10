@@ -2434,6 +2434,12 @@ struct ResolveState {
   // an enum-variant call (see is_enum_variant_call).
   fns: StringArray,
   fn_count: Int,
+  // Enum-variant pairs contributed by the standard imports (parallel arrays:
+  // std_enums[i].std_variants[i] is a legal variant call). Populated only when
+  // the module imports std.core / std.io — mirrors the Rust resolver extending
+  // enum_variants with standard_enum_variants. Exact-length (no logical count).
+  std_enums: StringArray,
+  std_variants: StringArray,
   locals: StringArray,
   count: Int,
   report: String,
@@ -2453,6 +2459,38 @@ export fn resolve_report(source: String) -> String {
   // so far" set — a named item whose name is already in top[0..top_count] is a
   // duplicate (imports and module decls have no item name and never count).
   let mut report: String = "";
+  // Import boundary: the only legal imports in a single-file resolve are the
+  // standard `std.core` / `std.io` (mirroring the Rust resolver with empty
+  // local_imports); anything else reports RESOLVE_UNKNOWN_IMPORT. Whether the
+  // standard modules are imported ANYWHERE in the module is computed up front
+  // (the Rust resolver builds standard_top_level_names before its item loop),
+  // so an item conflicting with a std name reports even when it precedes the
+  // import in the source.
+  let mut has_std_core: Bool = false;
+  let mut has_std_io: Bool = false;
+  let mut si: Int = 0;
+  while si < arena.item_kind.len {
+    if arena.item_kind[si] == item_import() {
+      let path: String = arena.import_path[arena.item_ref[si]];
+      if path == "std.core" {
+        has_std_core = true;
+      }
+      if path == "std.io" {
+        has_std_io = true;
+      }
+    }
+    si = si + 1;
+  }
+  // Top-level names contributed by the standard imports (enum names only —
+  // std function names are callable but are NOT legal bare references).
+  let mut std_top: StringArray = string_array_empty();
+  if has_std_core {
+    std_top = string_array_push(std_top, "OptionInt");
+    std_top = string_array_push(std_top, "ResultInt");
+  }
+  if has_std_io {
+    std_top = string_array_push(std_top, "ResultString");
+  }
   let mut top: StringArray = string_array_empty();
   let mut top_count: Int = 0;
   // Function names only — the callee set consulted for RESOLVE_UNKNOWN_FUNCTION.
@@ -2462,6 +2500,14 @@ export fn resolve_report(source: String) -> String {
   while ii < arena.item_kind.len {
     let kind: Int = arena.item_kind[ii];
     let ref: Int = arena.item_ref[ii];
+    if kind == item_import() {
+      let path: String = arena.import_path[ref];
+      if path != "std.core" && path != "std.io" {
+        report = string_concat(report, "RESOLVE_UNKNOWN_IMPORT name=");
+        report = string_concat(report, path);
+        report = string_concat(report, "\n");
+      }
+    }
     let mut name: String = "";
     let mut named: Bool = false;
     if kind == item_struct() {
@@ -2486,45 +2532,129 @@ export fn resolve_report(source: String) -> String {
       }
       top = string_array_push(top, name);
       top_count = top_count + 1;
+      // A user item may ALSO clash with a std-import name (a second
+      // RESOLVE_DUPLICATE_ITEM line for the same item, after the user-level
+      // duplicate — matching the Rust resolver's two checks in that order).
+      if name_in_list(std_top, std_top.len, name) {
+        report = string_concat(report, "RESOLVE_DUPLICATE_ITEM name=");
+        report = string_concat(report, name);
+        report = string_concat(report, "\n");
+      }
     }
     ii = ii + 1;
   }
-  // Resolve each function body in source order.
-  let mut fi: Int = 0;
-  while fi < arena.item_kind.len {
-    if arena.item_kind[fi] == item_function() {
-      let ref: Int = arena.item_ref[fi];
-      report = resolve_function(arena, top, top_count, fns, fn_count, ref, report);
-    }
-    fi = fi + 1;
+  // Standard items join the lookup sets only AFTER duplicate detection (the
+  // Rust resolver builds top_level_names / functions independently of
+  // check_top_level's seen-set): std enum names become legal bare references,
+  // std functions become known callees.
+  let mut k: Int = 0;
+  while k < std_top.len {
+    top = string_array_push(top, std_top[k]);
+    k = k + 1;
   }
-  return report;
-}
-
-// Resolve one function: seed locals with its parameters, then walk the body.
-fn resolve_function(arena: Arena, top: StringArray, top_count: Int, fns: StringArray, fn_count: Int, ref: Int, report: String) -> String {
+  top_count = top.len;
+  if has_std_core {
+    fns = push_std_core_function_names(fns);
+  }
+  if has_std_io {
+    fns = push_std_io_function_names(fns);
+  }
+  fn_count = fns.len;
+  // Enum-variant pairs from the standard imports (legal `Enum.Variant(...)`
+  // callees alongside the user enums in the arena's enum table).
+  let mut std_enums: StringArray = string_array_empty();
+  let mut std_variants: StringArray = string_array_empty();
+  if has_std_core {
+    std_enums = string_array_push(std_enums, "OptionInt");
+    std_variants = string_array_push(std_variants, "Some");
+    std_enums = string_array_push(std_enums, "OptionInt");
+    std_variants = string_array_push(std_variants, "None");
+    std_enums = string_array_push(std_enums, "ResultInt");
+    std_variants = string_array_push(std_variants, "Ok");
+    std_enums = string_array_push(std_enums, "ResultInt");
+    std_variants = string_array_push(std_variants, "Err");
+  }
+  if has_std_io {
+    std_enums = string_array_push(std_enums, "ResultString");
+    std_variants = string_array_push(std_variants, "Ok");
+    std_enums = string_array_push(std_enums, "ResultString");
+    std_variants = string_array_push(std_variants, "Err");
+  }
+  // Build the shared resolver state once; per-function resolution resets the
+  // scope stack but threads the report (and locals array growth) forward.
   let mut state: ResolveState = ResolveState {
     arena: arena,
     top: top,
     top_count: top_count,
     fns: fns,
     fn_count: fn_count,
+    std_enums: std_enums,
+    std_variants: std_variants,
     locals: string_array_empty(),
     count: 0,
     report: report,
-    fn_name: arena.fn_name[ref],
+    fn_name: "",
   };
+  // Resolve each function body in source order.
+  let mut fi: Int = 0;
+  while fi < arena.item_kind.len {
+    if arena.item_kind[fi] == item_function() {
+      state = resolve_function(state, arena.item_ref[fi]);
+    }
+    fi = fi + 1;
+  }
+  return state.report;
+}
+
+// The std.core / std.io function name sets (mirror src/std_api.rs
+// STD_CORE_FUNCTIONS / STD_IO_FUNCTIONS — the oracle differential will catch
+// any drift between these lists and the Rust tables).
+fn push_std_core_function_names(fns: StringArray) -> StringArray {
+  let mut out: StringArray = fns;
+  out = string_array_push(out, "string_len");
+  out = string_array_push(out, "string_byte_at");
+  out = string_array_push(out, "string_byte_slice");
+  out = string_array_push(out, "string_concat");
+  out = string_array_push(out, "int_to_string");
+  out = string_array_push(out, "ascii_is_digit");
+  out = string_array_push(out, "ascii_is_alpha");
+  out = string_array_push(out, "ascii_is_alnum");
+  out = string_array_push(out, "ascii_is_whitespace");
+  out = string_array_push(out, "int_array_empty");
+  out = string_array_push(out, "int_array_push");
+  out = string_array_push(out, "string_array_empty");
+  out = string_array_push(out, "string_array_push");
+  out = string_array_push(out, "bool_array_empty");
+  out = string_array_push(out, "bool_array_push");
+  return out;
+}
+
+fn push_std_io_function_names(fns: StringArray) -> StringArray {
+  let mut out: StringArray = fns;
+  out = string_array_push(out, "file_read_to_string");
+  out = string_array_push(out, "path_join");
+  out = string_array_push(out, "path_basename");
+  out = string_array_push(out, "diagnostic_format");
+  return out;
+}
+
+// Resolve one function: reset the scope stack, seed it with the parameters,
+// then walk the body. The report accumulated so far rides along in `state`.
+fn resolve_function(state: ResolveState, ref: Int) -> ResolveState {
+  let mut s: ResolveState = state;
+  let arena: Arena = s.arena;
+  s.count = 0;
+  s.fn_name = arena.fn_name[ref];
   // Bind parameters through bind_local so a repeated parameter name reports
   // RESOLVE_DUPLICATE_LOCAL, exactly like the Rust resolver's param loop.
   let pstart: Int = arena.fn_param_start[ref];
   let pcount: Int = arena.fn_param_count[ref];
   let mut pi: Int = 0;
   while pi < pcount {
-    state = bind_local(state, arena.param_name[pstart + pi]);
+    s = bind_local(s, arena.param_name[pstart + pi]);
     pi = pi + 1;
   }
-  let after: ResolveState = resolve_block(state, arena.fn_body_start[ref], arena.fn_body_count[ref]);
-  return after.report;
+  return resolve_block(s, arena.fn_body_start[ref], arena.fn_body_count[ref]);
 }
 
 // Is `name` currently in lexical scope (params + lets declared so far + loop /
@@ -2642,11 +2772,11 @@ fn report_duplicate_local(state: ResolveState, name: String) -> ResolveState {
 }
 
 // Is `callee` an enum-variant call, i.e. `Enum.Variant` where `Enum` is a
-// (user-defined) enum and `Variant` is one of its variants? Mirrors the Rust
-// resolver's is_enum_variant_call: split at the LAST '.', then check the table.
-// (Standard-library enum variants like Option/Result are out of this slice and
-// are deliberately not exercised by the corpus.)
-fn is_enum_variant_call(arena: Arena, callee: String) -> Bool {
+// user-defined enum (arena enum table) or a std-import enum (state.std_enums
+// pairs) and `Variant` is one of its variants? Mirrors the Rust resolver's
+// is_enum_variant_call: split at the LAST '.', then check the tables.
+fn is_enum_variant_call(state: ResolveState, callee: String) -> Bool {
+  let arena: Arena = state.arena;
   let len: Int = string_len(callee);
   // find the last '.' (byte 46)
   let mut dot: Int = 0 - 1;
@@ -2679,6 +2809,14 @@ fn is_enum_variant_call(arena: Arena, callee: String) -> Bool {
       }
     }
     e = e + 1;
+  }
+  // Standard-import enum variants (exact-length parallel pairs).
+  let mut p: Int = 0;
+  while p < state.std_enums.len {
+    if state.std_enums[p] == enum_name && state.std_variants[p] == variant {
+      return true;
+    }
+    p = p + 1;
   }
   return false;
 }
@@ -2895,7 +3033,7 @@ fn resolve_expr(state: ResolveState, node: Int) -> ResolveState {
     // still reported as an unknown function). The callee is checked BEFORE the
     // arguments so the diagnostic order matches the oracle.
     let callee: String = arena.node_text[node];
-    if !fn_in_scope(s, callee) && !is_enum_variant_call(arena, callee) {
+    if !fn_in_scope(s, callee) && !is_enum_variant_call(s, callee) {
       s = report_unknown_function(s, callee);
     }
     let start: Int = arena.node_a[node];
