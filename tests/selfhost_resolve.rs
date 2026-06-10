@@ -85,6 +85,10 @@ fn oracle_report(program_source: &str) -> String {
                 .expect("resolver message should contain a backtick-quoted name");
             out.push_str(label);
             out.push_str(name);
+            out.push_str(&format!(
+                " span={}..{}",
+                diagnostic.span.start, diagnostic.span.end
+            ));
             out.push('\n');
         }
     }
@@ -567,4 +571,43 @@ fn resolve_matches_oracle_on_three_code_reversal_kitchen_sink() {
     assert_matches_oracle(
         "fn helper() -> Int { return 0; } fn f(x: Int, x: Int) -> Int { let a: Int = ghostVar; let b: Int = ghostFn(); let a: Int = 2; for x in [1, 2] { let c: Int = helper(); } for (let mut x: Int = 0; x < 1; x = x + 1) { let d: Int = a; } return helper(); }",
     );
+}
+
+// --- slice #5: exact span alignment -----------------------------------------
+
+#[test]
+fn resolve_span_distinguishes_repeated_unknown_names() {
+    // The two `x` references differ ONLY in their byte spans.
+    assert_matches_oracle("fn f() -> Int { return x + x; }");
+}
+
+#[test]
+fn resolve_span_multiline_source() {
+    // Byte offsets count newlines like any other byte.
+    assert_matches_oracle("fn f() -> Int {\n  let a: Int = 1;\n  return missing;\n}");
+}
+
+#[test]
+fn resolve_span_qualified_callee_with_spaces() {
+    // The callee span runs from the first path ident to the last, covering the
+    // interior whitespace around the dots.
+    assert_matches_oracle("fn f() -> Int { return demo . util . compute(); }");
+}
+
+#[test]
+fn resolve_span_import_with_spaces() {
+    // The import path span likewise covers `a . b` (not the keyword/semicolon).
+    assert_matches_oracle("import a . b; fn f() -> Int { return 0; }");
+}
+
+#[test]
+fn resolve_span_duplicate_local_on_second_binding() {
+    // The duplicate-local span points at the SECOND (new) binding's ident.
+    assert_matches_oracle("fn f() -> Int { let x: Int = 1; let x: Int = 2; return x; }");
+}
+
+#[test]
+fn resolve_span_duplicate_item_on_second_item() {
+    // The duplicate-item span points at the second item's name token.
+    assert_matches_oracle("fn dup() -> Int { return 0; } fn dup() -> Int { return 1; }");
 }

@@ -144,6 +144,25 @@ struct Arena {
   arm_pattern: StringArray,
   arm_body_start: IntArray,
   arm_body_count: IntArray,
+  // Token byte offsets, parallel to the lexer's kinds/texts arrays. Set by the
+  // entry points right after lexing; the parser reads it to record spans.
+  token_start: IntArray,
+  // Name-reference spans per expr node: Name nodes carry the ident token span,
+  // Call nodes the dotted-callee-path span (first ident start .. last ident
+  // end); -1/-1 for every other node kind.
+  node_span_start: IntArray,
+  node_span_end: IntArray,
+  // Start offset of the binding ident for let rows and of the target ident for
+  // simple-assign rows; -1 for other statement kinds. Single-ident spans store
+  // only the start — the end is always start + len(name).
+  stmt_name_span_start: IntArray,
+  param_name_span_start: IntArray,
+  fn_name_span_start: IntArray,
+  struct_name_span_start: IntArray,
+  enum_name_span_start: IntArray,
+  // Import path span (multi-token, so start and end are both recorded).
+  import_path_span_start: IntArray,
+  import_path_span_end: IntArray,
 }
 
 fn arena_empty() -> Arena {
@@ -201,6 +220,16 @@ fn arena_empty() -> Arena {
     arm_pattern: string_array_empty(),
     arm_body_start: int_array_empty(),
     arm_body_count: int_array_empty(),
+    token_start: int_array_empty(),
+    node_span_start: int_array_empty(),
+    node_span_end: int_array_empty(),
+    stmt_name_span_start: int_array_empty(),
+    param_name_span_start: int_array_empty(),
+    fn_name_span_start: int_array_empty(),
+    struct_name_span_start: int_array_empty(),
+    enum_name_span_start: int_array_empty(),
+    import_path_span_start: int_array_empty(),
+    import_path_span_end: int_array_empty(),
   };
 }
 
@@ -231,15 +260,21 @@ fn push_int_node(arena: Arena, text: String) -> Arena {
   a.node_a = int_array_push(a.node_a, 0);
   a.node_b = int_array_push(a.node_b, 0);
   a.node_text = string_array_push(a.node_text, text);
+  a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
+  a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
   return a;
 }
 
-fn push_name_node(arena: Arena, text: String) -> Arena {
+// Name carries the span of its identifier token (a Name reference diagnostic
+// points at exactly that token).
+fn push_name_node(arena: Arena, text: String, span_start: Int, span_end: Int) -> Arena {
   let mut a: Arena = arena;
   a.node_kind = int_array_push(a.node_kind, name_node());
   a.node_a = int_array_push(a.node_a, 0);
   a.node_b = int_array_push(a.node_b, 0);
   a.node_text = string_array_push(a.node_text, text);
+  a.node_span_start = int_array_push(a.node_span_start, span_start);
+  a.node_span_end = int_array_push(a.node_span_end, span_end);
   return a;
 }
 
@@ -249,6 +284,8 @@ fn push_bool_node(arena: Arena, text: String) -> Arena {
   a.node_a = int_array_push(a.node_a, 0);
   a.node_b = int_array_push(a.node_b, 0);
   a.node_text = string_array_push(a.node_text, text);
+  a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
+  a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
   return a;
 }
 
@@ -258,6 +295,8 @@ fn push_unary_node(arena: Arena, operand: Int, op: String) -> Arena {
   a.node_a = int_array_push(a.node_a, operand);
   a.node_b = int_array_push(a.node_b, 0);
   a.node_text = string_array_push(a.node_text, op);
+  a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
+  a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
   return a;
 }
 
@@ -267,6 +306,8 @@ fn push_binary_node(arena: Arena, left: Int, right: Int, op: String) -> Arena {
   a.node_a = int_array_push(a.node_a, left);
   a.node_b = int_array_push(a.node_b, right);
   a.node_text = string_array_push(a.node_text, op);
+  a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
+  a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
   return a;
 }
 
@@ -278,16 +319,22 @@ fn push_string_node(arena: Arena, text: String) -> Arena {
   a.node_a = int_array_push(a.node_a, 0);
   a.node_b = int_array_push(a.node_b, 0);
   a.node_text = string_array_push(a.node_text, text);
+  a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
+  a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
   return a;
 }
 
 // Call: text is the dotted callee path; (arg_start, arg_count) slice child_list.
-fn push_call_node(arena: Arena, callee: String, arg_start: Int, arg_count: Int) -> Arena {
+// The span covers the callee path only (first ident start .. last ident end),
+// matching the Rust parser's callee_span.
+fn push_call_node(arena: Arena, callee: String, arg_start: Int, arg_count: Int, span_start: Int, span_end: Int) -> Arena {
   let mut a: Arena = arena;
   a.node_kind = int_array_push(a.node_kind, call_node());
   a.node_a = int_array_push(a.node_a, arg_start);
   a.node_b = int_array_push(a.node_b, arg_count);
   a.node_text = string_array_push(a.node_text, callee);
+  a.node_span_start = int_array_push(a.node_span_start, span_start);
+  a.node_span_end = int_array_push(a.node_span_end, span_end);
   return a;
 }
 
@@ -298,6 +345,8 @@ fn push_index_node(arena: Arena, base: Int, index: Int) -> Arena {
   a.node_a = int_array_push(a.node_a, base);
   a.node_b = int_array_push(a.node_b, index);
   a.node_text = string_array_push(a.node_text, "");
+  a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
+  a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
   return a;
 }
 
@@ -308,6 +357,8 @@ fn push_field_node(arena: Arena, base: Int, field: String) -> Arena {
   a.node_a = int_array_push(a.node_a, base);
   a.node_b = int_array_push(a.node_b, 0);
   a.node_text = string_array_push(a.node_text, field);
+  a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
+  a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
   return a;
 }
 
@@ -318,6 +369,8 @@ fn push_array_node(arena: Arena, elem_start: Int, elem_count: Int) -> Arena {
   a.node_a = int_array_push(a.node_a, elem_start);
   a.node_b = int_array_push(a.node_b, elem_count);
   a.node_text = string_array_push(a.node_text, "");
+  a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
+  a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
   return a;
 }
 
@@ -328,6 +381,8 @@ fn push_range_node(arena: Arena, start: Int, end: Int) -> Arena {
   a.node_a = int_array_push(a.node_a, start);
   a.node_b = int_array_push(a.node_b, end);
   a.node_text = string_array_push(a.node_text, "");
+  a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
+  a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
   return a;
 }
 
@@ -339,6 +394,8 @@ fn push_struct_lit_node(arena: Arena, type_name: String, field_start: Int, field
   a.node_a = int_array_push(a.node_a, field_start);
   a.node_b = int_array_push(a.node_b, field_count);
   a.node_text = string_array_push(a.node_text, type_name);
+  a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
+  a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
   return a;
 }
 
@@ -369,7 +426,9 @@ fn push_struct_lit_node(arena: Arena, type_name: String, field_start: Int, field
 export fn dump_module_via_arena(source: String) -> String {
   let kinds: IntArray = lex_kinds(source);
   let texts: StringArray = lex_texts(source);
-  let result: ParseResult = parse_module(arena_empty(), kinds, texts, 0);
+  let mut start_arena: Arena = arena_empty();
+  start_arena.token_start = lex_starts(source);
+  let result: ParseResult = parse_module(start_arena, kinds, texts, 0);
   return dump_from_arena(result.arena);
 }
 
@@ -424,11 +483,15 @@ fn parse_import(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, exp
   let mut p: Int = pos;
   // "import"
   p = p + 1;
+  // Path span: first path token start .. last path token end (the alias and the
+  // ";" never join the loop, so `p - 1` after it is always the last path token).
+  let path_start_tok: Int = p;
   let mut path: String = "";
   while p < kinds.len && (kinds[p] == token_ident() || kinds[p] == token_dot()) {
     path = string_concat(path, texts[p]);
     p = p + 1;
   }
+  let path_end_tok: Int = p - 1;
   let mut alias: String = "";
   if p < kinds.len && kinds[p] == token_as() {
     p = p + 1;
@@ -442,6 +505,9 @@ fn parse_import(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, exp
   a.import_path = string_array_push(a.import_path, path);
   a.import_alias = string_array_push(a.import_alias, alias);
   a.import_exported = int_array_push(a.import_exported, exported);
+  a.import_path_span_start = int_array_push(a.import_path_span_start, a.token_start[path_start_tok]);
+  a.import_path_span_end = int_array_push(a.import_path_span_end,
+                                          a.token_start[path_end_tok] + string_len(texts[path_end_tok]));
   a.item_kind = int_array_push(a.item_kind, item_import());
   a.item_ref = int_array_push(a.item_ref, ref);
   return ParseResult { arena: a, node: 0, pos: p };
@@ -453,6 +519,7 @@ fn parse_struct(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, exp
   let mut p: Int = pos;
   // "struct"
   p = p + 1;
+  let name_tok: Int = p;
   let name: String = texts[p];
   p = p + 1;
   if p < kinds.len && kinds[p] == token_lbrace() {
@@ -481,6 +548,7 @@ fn parse_struct(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, exp
   }
   let ref: Int = a.struct_name.len;
   a.struct_name = string_array_push(a.struct_name, name);
+  a.struct_name_span_start = int_array_push(a.struct_name_span_start, a.token_start[name_tok]);
   a.struct_exported = int_array_push(a.struct_exported, exported);
   a.struct_field_start = int_array_push(a.struct_field_start, field_start);
   a.struct_field_count = int_array_push(a.struct_field_count, field_count);
@@ -496,6 +564,7 @@ fn parse_enum(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, expor
   let mut p: Int = pos;
   // "enum"
   p = p + 1;
+  let name_tok: Int = p;
   let name: String = texts[p];
   p = p + 1;
   if p < kinds.len && kinds[p] == token_lbrace() {
@@ -528,6 +597,7 @@ fn parse_enum(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, expor
   }
   let ref: Int = a.enum_name.len;
   a.enum_name = string_array_push(a.enum_name, name);
+  a.enum_name_span_start = int_array_push(a.enum_name_span_start, a.token_start[name_tok]);
   a.enum_exported = int_array_push(a.enum_exported, exported);
   a.enum_variant_start = int_array_push(a.enum_variant_start, variant_start);
   a.enum_variant_count = int_array_push(a.enum_variant_count, variant_count);
@@ -541,6 +611,7 @@ fn parse_function(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, e
   let mut p: Int = pos;
   // "fn"
   p = p + 1;
+  let name_tok: Int = p;
   let name: String = texts[p];
   p = p + 1;
   // "("
@@ -554,6 +625,7 @@ fn parse_function(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, e
     if kinds[p] == token_comma() {
       p = p + 1;
     }
+    let pname_tok: Int = p;
     let pname: String = texts[p];
     p = p + 1;
     if p < kinds.len && kinds[p] == token_colon() {
@@ -562,6 +634,7 @@ fn parse_function(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, e
     let ptype: String = texts[p];
     p = p + 1;
     a.param_name = string_array_push(a.param_name, pname);
+    a.param_name_span_start = int_array_push(a.param_name_span_start, a.token_start[pname_tok]);
     a.param_type = string_array_push(a.param_type, ptype);
     param_count = param_count + 1;
   }
@@ -585,6 +658,7 @@ fn parse_function(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, e
   p = body.pos;
   let ref: Int = a.fn_name.len;
   a.fn_name = string_array_push(a.fn_name, name);
+  a.fn_name_span_start = int_array_push(a.fn_name_span_start, a.token_start[name_tok]);
   a.fn_exported = int_array_push(a.fn_exported, exported);
   a.fn_has_ret = int_array_push(a.fn_has_ret, has_ret);
   a.fn_ret = string_array_push(a.fn_ret, ret);
@@ -681,6 +755,9 @@ fn push_stmt_full(arena: Arena, kind: Int, name: String, ty: String, has_type: I
   a.stmt_target = int_array_push(a.stmt_target, target);
   a.stmt_init = int_array_push(a.stmt_init, init);
   a.stmt_step = int_array_push(a.stmt_step, step);
+  // Binding/target ident start, overwritten in place by parse_let / emit_assign
+  // for the rows that have one (-1 keeps the array parallel for the rest).
+  a.stmt_name_span_start = int_array_push(a.stmt_name_span_start, 0 - 1);
   return a;
 }
 
@@ -695,6 +772,7 @@ fn parse_let(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> Par
     is_mut = 1;
     p = p + 1;
   }
+  let name_tok: Int = p;
   let name: String = texts[p];
   p = p + 1;
   // optional ":" type — an untyped `let` omits the `type=` field in the dump.
@@ -719,6 +797,7 @@ fn parse_let(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> Par
   }
   let index: Int = a.stmt_kind.len;
   a = push_stmt(a, let_stmt(), name, ty, has_type, is_mut, r.node, 0, 0, 0, 0);
+  a.stmt_name_span_start[index] = a.token_start[name_tok];
   return ParseResult { arena: a, node: index, pos: p };
 }
 
@@ -1115,7 +1194,11 @@ fn parse_assign_no_semi(arena: Arena, kinds: IntArray, texts: StringArray, pos: 
 fn emit_assign(arena: Arena, target: Int, value: Int) -> Arena {
   let mut a: Arena = arena;
   if a.node_kind[target] == name_node() {
-    return push_stmt(a, assign_stmt(), a.node_text[target], "", 0, 0, value, 0, 0, 0, 0);
+    let row: Int = a.stmt_kind.len;
+    a = push_stmt(a, assign_stmt(), a.node_text[target], "", 0, 0, value, 0, 0, 0, 0);
+    // The simple target's span is exactly the Name node's ident token span.
+    a.stmt_name_span_start[row] = a.node_span_start[target];
+    return a;
   }
   return push_stmt_full(a, assign_stmt(), "", "", 0, 0, value, 0, 0, 0, 0, target, 0 - 1, 0 - 1);
 }
@@ -1370,9 +1453,13 @@ fn parse_primary(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, al
     path = string_concat(path, texts[p + 1]);
     p = p + 2;
   }
-  // "(" → qualified/simple call over the joined path.
+  // "(" → qualified/simple call over the joined path. The callee span runs from
+  // the first path ident's start to the last path ident's end (token p - 1),
+  // covering any interior whitespace — matching the Rust parser's callee_span.
   if p < kinds.len && kinds[p] == token_lparen() {
-    return parse_call(arena, kinds, texts, p, path, allow_struct);
+    return parse_call(arena, kinds, texts, p, path, allow_struct,
+                      arena.token_start[pos],
+                      arena.token_start[p - 1] + string_len(texts[p - 1]));
   }
   // NAME "{" → struct literal (only outside if/while condition contexts).
   if allow_struct == 1 && p < kinds.len && kinds[p] == token_lbrace()
@@ -1383,7 +1470,8 @@ fn parse_primary(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, al
   // nodes for each subsequent segment.
   let mut a: Arena = arena;
   let base_index: Int = a.node_kind.len;
-  a = push_name_node(a, texts[pos]);
+  a = push_name_node(a, texts[pos], a.token_start[pos],
+                     a.token_start[pos] + string_len(texts[pos]));
   let mut node: Int = base_index;
   let mut q: Int = pos + 1;
   while q + 1 < kinds.len && kinds[q] == token_dot() && kinds[q + 1] == token_ident() {
@@ -1395,8 +1483,10 @@ fn parse_primary(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, al
   return ParseResult { arena: a, node: node, pos: p };
 }
 
-// call := "(" (expr ("," expr)*)? ")"  — `pos` points at the "(".
-fn parse_call(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, callee: String, allow_struct: Int) -> ParseResult {
+// call := "(" (expr ("," expr)*)? ")"  — `pos` points at the "(". The callee
+// span computed by parse_primary is threaded through to the Call node.
+fn parse_call(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, callee: String, allow_struct: Int,
+              callee_span_start: Int, callee_span_end: Int) -> ParseResult {
   let mut a: Arena = arena;
   let mut p: Int = pos + 1;
   let mut args: IntArray = int_array_empty();
@@ -1421,7 +1511,7 @@ fn parse_call(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, calle
     i = i + 1;
   }
   let new_index: Int = a.node_kind.len;
-  a = push_call_node(a, callee, start, count);
+  a = push_call_node(a, callee, start, count, callee_span_start, callee_span_end);
   return ParseResult { arena: a, node: new_index, pos: p };
 }
 
@@ -2105,6 +2195,69 @@ fn lex_texts(source: String) -> StringArray {
   return string_array_push(texts, "");
 }
 
+// Third parallel lexer pass: each token's starting byte offset (the EOF sentinel
+// carries the source length). Mirrors lex_kinds / lex_texts branch for branch so
+// the three arrays always stay index-aligned.
+fn lex_starts(source: String) -> IntArray {
+  let mut starts: IntArray = int_array_empty();
+  let mut index: Int = 0;
+  let len: Int = string_len(source);
+  while index < len {
+    let byte: Int = string_byte_at(source, index);
+    let mut handled: Bool = false;
+    if !handled && ascii_is_whitespace(byte) {
+      index = index + 1;
+      handled = true;
+    }
+    if !handled && byte == 47 && index + 1 < len && string_byte_at(source, index + 1) == 47 {
+      index = index + 2;
+      while index < len && string_byte_at(source, index) != 10 {
+        index = index + 1;
+      }
+      handled = true;
+    }
+    if !handled && is_ident_start(byte) {
+      let start: Int = index;
+      index = index + 1;
+      while index < len && is_ident_continue(string_byte_at(source, index)) {
+        index = index + 1;
+      }
+      starts = int_array_push(starts, start);
+      handled = true;
+    }
+    if !handled && ascii_is_digit(byte) {
+      let start: Int = index;
+      index = index + 1;
+      while index < len && ascii_is_digit(string_byte_at(source, index)) {
+        index = index + 1;
+      }
+      starts = int_array_push(starts, start);
+      handled = true;
+    }
+    if !handled && byte == 34 {
+      let start: Int = index;
+      index = index + 1;
+      while index < len && string_byte_at(source, index) != 34 {
+        if string_byte_at(source, index) == 92 && index + 1 < len {
+          index = index + 2;
+        } else {
+          index = index + 1;
+        }
+      }
+      if index < len {
+        index = index + 1;
+      }
+      starts = int_array_push(starts, start);
+      handled = true;
+    }
+    if !handled {
+      starts = int_array_push(starts, index);
+      index = index + symbol_width(source, index);
+    }
+  }
+  return int_array_push(starts, len);
+}
+
 // Multi-byte operators: "->", "&&", "||", "==", "!=", "<=", ">=".
 fn symbol_width(source: String, index: Int) -> Int {
   let byte: Int = string_byte_at(source, index);
@@ -2449,7 +2602,9 @@ struct ResolveState {
 export fn resolve_report(source: String) -> String {
   let kinds: IntArray = lex_kinds(source);
   let texts: StringArray = lex_texts(source);
-  let parsed: ParseResult = parse_module(arena_empty(), kinds, texts, 0);
+  let mut start_arena: Arena = arena_empty();
+  start_arena.token_start = lex_starts(source);
+  let parsed: ParseResult = parse_module(start_arena, kinds, texts, 0);
   let arena: Arena = parsed.arena;
   // Gather top-level names (function / struct / enum) — these shadow nothing but
   // make a bare reference to them legal. The same pass detects top-level
@@ -2505,21 +2660,28 @@ export fn resolve_report(source: String) -> String {
       if path != "std.core" && path != "std.io" {
         report = string_concat(report, "RESOLVE_UNKNOWN_IMPORT name=");
         report = string_concat(report, path);
+        report = string_concat(report, span_suffix(arena.import_path_span_start[ref],
+                                                   arena.import_path_span_end[ref]));
         report = string_concat(report, "\n");
       }
     }
     let mut name: String = "";
     let mut named: Bool = false;
+    // Item-name ident start (the duplicate-item diagnostics point at it).
+    let mut name_span_start: Int = 0 - 1;
     if kind == item_struct() {
       name = arena.struct_name[ref];
+      name_span_start = arena.struct_name_span_start[ref];
       named = true;
     }
     if kind == item_enum() {
       name = arena.enum_name[ref];
+      name_span_start = arena.enum_name_span_start[ref];
       named = true;
     }
     if kind == item_function() {
       name = arena.fn_name[ref];
+      name_span_start = arena.fn_name_span_start[ref];
       named = true;
       fns = string_array_push(fns, name);
       fn_count = fn_count + 1;
@@ -2528,6 +2690,7 @@ export fn resolve_report(source: String) -> String {
       if name_in_list(top, top_count, name) {
         report = string_concat(report, "RESOLVE_DUPLICATE_ITEM name=");
         report = string_concat(report, name);
+        report = string_concat(report, span_suffix(name_span_start, name_span_start + string_len(name)));
         report = string_concat(report, "\n");
       }
       top = string_array_push(top, name);
@@ -2538,6 +2701,7 @@ export fn resolve_report(source: String) -> String {
       if name_in_list(std_top, std_top.len, name) {
         report = string_concat(report, "RESOLVE_DUPLICATE_ITEM name=");
         report = string_concat(report, name);
+        report = string_concat(report, span_suffix(name_span_start, name_span_start + string_len(name)));
         report = string_concat(report, "\n");
       }
     }
@@ -2651,7 +2815,9 @@ fn resolve_function(state: ResolveState, ref: Int) -> ResolveState {
   let pcount: Int = arena.fn_param_count[ref];
   let mut pi: Int = 0;
   while pi < pcount {
-    s = bind_local(s, arena.param_name[pstart + pi]);
+    let pspan: Int = arena.param_name_span_start[pstart + pi];
+    s = bind_local(s, arena.param_name[pstart + pi],
+                   pspan, pspan + string_len(arena.param_name[pstart + pi]));
     pi = pi + 1;
   }
   return resolve_block(s, arena.fn_body_start[ref], arena.fn_body_count[ref]);
@@ -2719,10 +2885,10 @@ fn name_in_list(list: StringArray, count: Int, name: String) -> Bool {
 // (The C-for init is a `let` statement and so DOES go through bind_local, which
 // is why `for (let mut i ...)` shadowing an outer `i` reports while `for i`
 // shadowing it does not — matching the oracle exactly.)
-fn bind_local(state: ResolveState, name: String) -> ResolveState {
+fn bind_local(state: ResolveState, name: String, span_start: Int, span_end: Int) -> ResolveState {
   let mut s: ResolveState = state;
   if local_in_scope(s, name) {
-    s = report_duplicate_local(s, name);
+    s = report_duplicate_local(s, name, span_start, span_end);
   }
   return bind_local_silent(s, name);
 }
@@ -2744,29 +2910,42 @@ fn bind_local_silent(state: ResolveState, name: String) -> ResolveState {
   return s;
 }
 
+// Render the trailing ` span=S..E` suffix every diagnostic line carries,
+// mirroring the byte offsets of the Rust Diagnostic.span.
+fn span_suffix(start: Int, end: Int) -> String {
+  let mut out: String = " span=";
+  out = string_concat(out, int_to_string(start));
+  out = string_concat(out, "..");
+  out = string_concat(out, int_to_string(end));
+  return out;
+}
+
 // Append one unknown-name diagnostic line.
-fn report_unknown(state: ResolveState, name: String) -> ResolveState {
+fn report_unknown(state: ResolveState, name: String, span_start: Int, span_end: Int) -> ResolveState {
   let mut s: ResolveState = state;
   s.report = string_concat(s.report, "RESOLVE_UNKNOWN_NAME name=");
   s.report = string_concat(s.report, name);
+  s.report = string_concat(s.report, span_suffix(span_start, span_end));
   s.report = string_concat(s.report, "\n");
   return s;
 }
 
 // Append one unknown-function diagnostic line (callee = the dotted path string).
-fn report_unknown_function(state: ResolveState, callee: String) -> ResolveState {
+fn report_unknown_function(state: ResolveState, callee: String, span_start: Int, span_end: Int) -> ResolveState {
   let mut s: ResolveState = state;
   s.report = string_concat(s.report, "RESOLVE_UNKNOWN_FUNCTION name=");
   s.report = string_concat(s.report, callee);
+  s.report = string_concat(s.report, span_suffix(span_start, span_end));
   s.report = string_concat(s.report, "\n");
   return s;
 }
 
-// Append one duplicate-local diagnostic line.
-fn report_duplicate_local(state: ResolveState, name: String) -> ResolveState {
+// Append one duplicate-local diagnostic line (span = the NEW binding's ident).
+fn report_duplicate_local(state: ResolveState, name: String, span_start: Int, span_end: Int) -> ResolveState {
   let mut s: ResolveState = state;
   s.report = string_concat(s.report, "RESOLVE_DUPLICATE_LOCAL name=");
   s.report = string_concat(s.report, name);
+  s.report = string_concat(s.report, span_suffix(span_start, span_end));
   s.report = string_concat(s.report, "\n");
   return s;
 }
@@ -2864,7 +3043,9 @@ fn resolve_stmt(state: ResolveState, index: Int) -> ResolveState {
     // The initializer is resolved in the *pre-binding* scope (so a let cannot
     // see itself), then the name becomes visible to following statements.
     s = resolve_expr(s, arena.stmt_expr[index]);
-    s = bind_local(s, arena.stmt_name[index]);
+    let lspan: Int = arena.stmt_name_span_start[index];
+    s = bind_local(s, arena.stmt_name[index],
+                   lspan, lspan + string_len(arena.stmt_name[index]));
     return s;
   }
   if kind == return_stmt() {
@@ -2890,7 +3071,8 @@ fn resolve_stmt(state: ResolveState, index: Int) -> ResolveState {
       // consulted for assignment targets, mirroring the Rust resolver).
       let target_name: String = arena.stmt_name[index];
       if !local_in_scope(s, target_name) {
-        s = report_unknown(s, target_name);
+        let tspan: Int = arena.stmt_name_span_start[index];
+        s = report_unknown(s, target_name, tspan, tspan + string_len(target_name));
       }
     }
     return s;
@@ -3009,7 +3191,7 @@ fn resolve_expr(state: ResolveState, node: Int) -> ResolveState {
   if kind == name_node() {
     let name: String = arena.node_text[node];
     if !local_in_scope(s, name) && !top_in_scope(s, name) {
-      s = report_unknown(s, name);
+      s = report_unknown(s, name, arena.node_span_start[node], arena.node_span_end[node]);
     }
     return s;
   }
@@ -3034,7 +3216,8 @@ fn resolve_expr(state: ResolveState, node: Int) -> ResolveState {
     // arguments so the diagnostic order matches the oracle.
     let callee: String = arena.node_text[node];
     if !fn_in_scope(s, callee) && !is_enum_variant_call(s, callee) {
-      s = report_unknown_function(s, callee);
+      s = report_unknown_function(s, callee,
+                                  arena.node_span_start[node], arena.node_span_end[node]);
     }
     let start: Int = arena.node_a[node];
     let count: Int = arena.node_b[node];
