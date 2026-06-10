@@ -160,6 +160,15 @@ struct Arena {
   fn_name_span_start: IntArray,
   struct_name_span_start: IntArray,
   enum_name_span_start: IntArray,
+  // Declared-type token spans (every type name in the language is a single
+  // ident token, so only the start is stored; end = start + len(name)).
+  // -1 marks "no type here" (payload-less enum variants / fns without `->` /
+  // untyped lets / non-let statement rows).
+  field_type_span_start: IntArray,
+  variant_payload_span_start: IntArray,
+  param_type_span_start: IntArray,
+  fn_ret_span_start: IntArray,
+  stmt_type_span_start: IntArray,
   // Import path span (multi-token, so start and end are both recorded).
   import_path_span_start: IntArray,
   import_path_span_end: IntArray,
@@ -228,6 +237,11 @@ fn arena_empty() -> Arena {
     fn_name_span_start: int_array_empty(),
     struct_name_span_start: int_array_empty(),
     enum_name_span_start: int_array_empty(),
+    field_type_span_start: int_array_empty(),
+    variant_payload_span_start: int_array_empty(),
+    param_type_span_start: int_array_empty(),
+    fn_ret_span_start: int_array_empty(),
+    stmt_type_span_start: int_array_empty(),
     import_path_span_start: int_array_empty(),
     import_path_span_end: int_array_empty(),
   };
@@ -536,10 +550,12 @@ fn parse_struct(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, exp
       if p < kinds.len && kinds[p] == token_colon() {
         p = p + 1;
       }
+      let ftype_tok: Int = p;
       let ftype: String = texts[p];
       p = p + 1;
       a.field_name = string_array_push(a.field_name, fname);
       a.field_type = string_array_push(a.field_type, ftype);
+      a.field_type_span_start = int_array_push(a.field_type_span_start, a.token_start[ftype_tok]);
       field_count = field_count + 1;
     }
   }
@@ -579,9 +595,12 @@ fn parse_enum(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, expor
       let vname: String = texts[p];
       p = p + 1;
       let mut payload: String = "";
+      // Payload type token start; -1 when the variant carries no payload.
+      let mut payload_span: Int = 0 - 1;
       if p < kinds.len && kinds[p] == token_lparen() {
         p = p + 1;
         payload = texts[p];
+        payload_span = a.token_start[p];
         p = p + 1;
         if p < kinds.len && kinds[p] == token_rparen() {
           p = p + 1;
@@ -589,6 +608,7 @@ fn parse_enum(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, expor
       }
       a.variant_name = string_array_push(a.variant_name, vname);
       a.variant_payload = string_array_push(a.variant_payload, payload);
+      a.variant_payload_span_start = int_array_push(a.variant_payload_span_start, payload_span);
       variant_count = variant_count + 1;
     }
   }
@@ -631,11 +651,13 @@ fn parse_function(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, e
     if p < kinds.len && kinds[p] == token_colon() {
       p = p + 1;
     }
+    let ptype_tok: Int = p;
     let ptype: String = texts[p];
     p = p + 1;
     a.param_name = string_array_push(a.param_name, pname);
     a.param_name_span_start = int_array_push(a.param_name_span_start, a.token_start[pname_tok]);
     a.param_type = string_array_push(a.param_type, ptype);
+    a.param_type_span_start = int_array_push(a.param_type_span_start, a.token_start[ptype_tok]);
     param_count = param_count + 1;
   }
   // ")"
@@ -646,9 +668,12 @@ fn parse_function(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, e
   // and the dump omits the `Return type=` line entirely).
   let mut has_ret: Int = 0;
   let mut ret: String = "";
+  // Return type token start; -1 when the function has no `->` clause.
+  let mut ret_span: Int = 0 - 1;
   if p < kinds.len && kinds[p] == token_arrow() {
     p = p + 1;
     ret = texts[p];
+    ret_span = a.token_start[p];
     p = p + 1;
     has_ret = 1;
   }
@@ -662,6 +687,7 @@ fn parse_function(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, e
   a.fn_exported = int_array_push(a.fn_exported, exported);
   a.fn_has_ret = int_array_push(a.fn_has_ret, has_ret);
   a.fn_ret = string_array_push(a.fn_ret, ret);
+  a.fn_ret_span_start = int_array_push(a.fn_ret_span_start, ret_span);
   a.fn_param_start = int_array_push(a.fn_param_start, param_start);
   a.fn_param_count = int_array_push(a.fn_param_count, param_count);
   a.fn_body_start = int_array_push(a.fn_body_start, body.start);
@@ -758,6 +784,9 @@ fn push_stmt_full(arena: Arena, kind: Int, name: String, ty: String, has_type: I
   // Binding/target ident start, overwritten in place by parse_let / emit_assign
   // for the rows that have one (-1 keeps the array parallel for the rest).
   a.stmt_name_span_start = int_array_push(a.stmt_name_span_start, 0 - 1);
+  // Declared-type token start, overwritten in place by parse_let for typed lets
+  // (-1 for untyped lets and every other statement kind).
+  a.stmt_type_span_start = int_array_push(a.stmt_type_span_start, 0 - 1);
   return a;
 }
 
@@ -778,9 +807,12 @@ fn parse_let(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> Par
   // optional ":" type — an untyped `let` omits the `type=` field in the dump.
   let mut has_type: Int = 0;
   let mut ty: String = "";
+  // Declared-type token start; -1 when the let is untyped.
+  let mut ty_span: Int = 0 - 1;
   if p < kinds.len && kinds[p] == token_colon() {
     p = p + 1;
     ty = texts[p];
+    ty_span = a.token_start[p];
     p = p + 1;
     has_type = 1;
   }
@@ -798,6 +830,7 @@ fn parse_let(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> Par
   let index: Int = a.stmt_kind.len;
   a = push_stmt(a, let_stmt(), name, ty, has_type, is_mut, r.node, 0, 0, 0, 0);
   a.stmt_name_span_start[index] = a.token_start[name_tok];
+  a.stmt_type_span_start[index] = ty_span;
   return ParseResult { arena: a, node: index, pos: p };
 }
 
@@ -3264,4 +3297,194 @@ fn resolve_expr(state: ResolveState, node: Int) -> ResolveState {
   s = resolve_expr(s, arena.node_a[node]);
   s = resolve_expr(s, arena.node_b[node]);
   return s;
+}
+
+// ---------------------------------------------------------------------------
+// M4 vertical slice #1: declared-type validation consuming the arena AST.
+//
+// Mirrors src/typecheck.rs's validate_declared_types, which runs BEFORE any
+// function-body type checking and reports TYPE_UNKNOWN_TYPE for every declared
+// type name that is neither a builtin, a user struct/enum (whole-module
+// prescan, so forward references are legal), nor a std-import enum
+// (`import std.core` grants OptionInt/ResultInt, `import std.io` grants
+// ResultString — the import may appear anywhere in the module).
+//
+// Visit order, matching the oracle exactly: items in source order; struct
+// fields in field order; enum variant payloads in variant order (payload-less
+// variants are skipped); fn params in order, then the return type (only when
+// `->` is present), then the body statements recursively — typed lets report
+// their declared type; If recurses then before else; While/ForIn recurse the
+// body; ForC recurses init, then step, then body (the condition is an
+// expression and carries no declared type); Match recurses each arm body in
+// arm order. Untyped lets and Assign/Return/Break/Continue/Expr report nothing.
+// ---------------------------------------------------------------------------
+
+export fn typecheck_report(source: String) -> String {
+  let kinds: IntArray = lex_kinds(source);
+  let texts: StringArray = lex_texts(source);
+  let mut start_arena: Arena = arena_empty();
+  start_arena.token_start = lex_starts(source);
+  let parsed: ParseResult = parse_module(start_arena, kinds, texts, 0);
+  let arena: Arena = parsed.arena;
+  // Whether the std modules are imported ANYWHERE in the module is computed up
+  // front (the Rust typechecker builds standard_external_enums from the whole
+  // module before validating).
+  let mut has_std_core: Bool = false;
+  let mut has_std_io: Bool = false;
+  let mut si: Int = 0;
+  while si < arena.item_kind.len {
+    if arena.item_kind[si] == item_import() {
+      let path: String = arena.import_path[arena.item_ref[si]];
+      if path == "std.core" {
+        has_std_core = true;
+      }
+      if path == "std.io" {
+        has_std_io = true;
+      }
+    }
+    si = si + 1;
+  }
+  // The legal type-name set: builtins + every user struct/enum name (prescanned
+  // from the whole module, so forward references resolve) + std enums by import.
+  let mut types: StringArray = string_array_empty();
+  types = string_array_push(types, "Int");
+  types = string_array_push(types, "String");
+  types = string_array_push(types, "Bool");
+  types = string_array_push(types, "Unit");
+  types = string_array_push(types, "IntArray");
+  types = string_array_push(types, "StringArray");
+  types = string_array_push(types, "BoolArray");
+  let mut ti: Int = 0;
+  while ti < arena.struct_name.len {
+    types = string_array_push(types, arena.struct_name[ti]);
+    ti = ti + 1;
+  }
+  ti = 0;
+  while ti < arena.enum_name.len {
+    types = string_array_push(types, arena.enum_name[ti]);
+    ti = ti + 1;
+  }
+  if has_std_core {
+    types = string_array_push(types, "OptionInt");
+    types = string_array_push(types, "ResultInt");
+  }
+  if has_std_io {
+    types = string_array_push(types, "ResultString");
+  }
+  // Validate every declared type in item order.
+  let mut report: String = "";
+  let mut ii: Int = 0;
+  while ii < arena.item_kind.len {
+    let kind: Int = arena.item_kind[ii];
+    let ref: Int = arena.item_ref[ii];
+    if kind == item_struct() {
+      let fstart: Int = arena.struct_field_start[ref];
+      let fcount: Int = arena.struct_field_count[ref];
+      let mut fi: Int = 0;
+      while fi < fcount {
+        report = check_type_name(report, types, arena.field_type[fstart + fi],
+                                 arena.field_type_span_start[fstart + fi]);
+        fi = fi + 1;
+      }
+    }
+    if kind == item_enum() {
+      let vstart: Int = arena.enum_variant_start[ref];
+      let vcount: Int = arena.enum_variant_count[ref];
+      let mut vi: Int = 0;
+      while vi < vcount {
+        // Only variants with a payload declare a type.
+        if arena.variant_payload[vstart + vi] != "" {
+          report = check_type_name(report, types, arena.variant_payload[vstart + vi],
+                                   arena.variant_payload_span_start[vstart + vi]);
+        }
+        vi = vi + 1;
+      }
+    }
+    if kind == item_function() {
+      let pstart: Int = arena.fn_param_start[ref];
+      let pcount: Int = arena.fn_param_count[ref];
+      let mut pi: Int = 0;
+      while pi < pcount {
+        report = check_type_name(report, types, arena.param_type[pstart + pi],
+                                 arena.param_type_span_start[pstart + pi]);
+        pi = pi + 1;
+      }
+      if arena.fn_has_ret[ref] == 1 {
+        report = check_type_name(report, types, arena.fn_ret[ref], arena.fn_ret_span_start[ref]);
+      }
+      report = validate_block(report, arena, types, arena.fn_body_start[ref], arena.fn_body_count[ref]);
+    }
+    ii = ii + 1;
+  }
+  return report;
+}
+
+// Append one TYPE_UNKNOWN_TYPE line when `name` is not in the legal type set.
+// Every type name is a single ident token: span end = start + len(name).
+fn check_type_name(report: String, types: StringArray, name: String, span_start: Int) -> String {
+  if name_in_list(types, types.len, name) {
+    return report;
+  }
+  let mut out: String = report;
+  out = string_concat(out, "TYPE_UNKNOWN_TYPE name=");
+  out = string_concat(out, name);
+  out = string_concat(out, span_suffix(span_start, span_start + string_len(name)));
+  out = string_concat(out, "\n");
+  return out;
+}
+
+// Validate the declared types in a contiguous run of statements (a block).
+fn validate_block(report: String, arena: Arena, types: StringArray, start: Int, count: Int) -> String {
+  let mut out: String = report;
+  let mut i: Int = 0;
+  while i < count {
+    out = validate_stmt(out, arena, types, arena.block_list[start + i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// Validate one statement's declared types, recursing into nested blocks in the
+// oracle's order (see the section comment above).
+fn validate_stmt(report: String, arena: Arena, types: StringArray, index: Int) -> String {
+  let kind: Int = arena.stmt_kind[index];
+  let mut out: String = report;
+  if kind == let_stmt() {
+    // Only typed lets declare a type; untyped lets are not validated.
+    if arena.stmt_has_type[index] == 1 {
+      out = check_type_name(out, types, arena.stmt_type[index], arena.stmt_type_span_start[index]);
+    }
+    return out;
+  }
+  if kind == if_stmt() {
+    out = validate_block(out, arena, types, arena.stmt_then_start[index], arena.stmt_then_count[index]);
+    out = validate_block(out, arena, types, arena.stmt_else_start[index], arena.stmt_else_count[index]);
+    return out;
+  }
+  if kind == while_stmt() {
+    return validate_block(out, arena, types, arena.stmt_then_start[index], arena.stmt_then_count[index]);
+  }
+  if kind == for_in_stmt() {
+    return validate_block(out, arena, types, arena.stmt_then_start[index], arena.stmt_then_count[index]);
+  }
+  if kind == for_c_stmt() {
+    // Oracle order: init, then step, then body (the condition is an expression).
+    out = validate_stmt(out, arena, types, arena.stmt_init[index]);
+    out = validate_stmt(out, arena, types, arena.stmt_step[index]);
+    out = validate_block(out, arena, types, arena.stmt_then_start[index], arena.stmt_then_count[index]);
+    return out;
+  }
+  if kind == match_stmt() {
+    let astart: Int = arena.stmt_then_start[index];
+    let acount: Int = arena.stmt_then_count[index];
+    let mut ai: Int = 0;
+    while ai < acount {
+      out = validate_block(out, arena, types,
+                           arena.arm_body_start[astart + ai], arena.arm_body_count[astart + ai]);
+      ai = ai + 1;
+    }
+    return out;
+  }
+  // assign / return / break / continue / expr: no declared types.
+  return out;
 }
