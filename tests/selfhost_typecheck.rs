@@ -65,30 +65,36 @@ fn main() -> String {{
 
 /// Oracle: run the Rust typechecker, keep the diagnostics this slice
 /// reproduces in the exact order they were emitted, and format them
-/// identically to the Zeta report. Three shapes:
-///   * TYPE_UNKNOWN_TYPE (slice 1): `... name=N span=S..E`
-///   * expect-style codes (slice 2): message "expected {E}, found {F}" becomes
-///     `CODE expected=E found=F span=S..E`
-///   * fixed-message codes (slice 2): just `CODE span=S..E`
-/// Any other code is filtered out (slice 3 territory the corpus avoids).
+/// identically to the Zeta report. Four shapes:
+///   * name-carrying codes (slices 1 + 3): `CODE name=N span=S..E`
+///   * expect-style codes (slices 2 + 3): message "expected {E}, found {F}"
+///     becomes `CODE expected=E found=F span=S..E`
+///   * fixed-message codes (slices 2 + 3): just `CODE span=S..E`
+///   * TYPE_CALL_ARITY (slice 3): message "function `f` expects N arguments,
+///     found M" becomes `TYPE_CALL_ARITY name=f expected=N found=M span=S..E`
+/// Any other code is filtered out (slice 4 territory the corpus avoids).
 fn oracle_report(program_source: &str) -> String {
     let module = zeta::parse_source(program_source).expect("oracle parse should succeed");
     let mut out = String::new();
     if let Err(diagnostics) = zeta::typecheck::check(&module) {
         for diagnostic in diagnostics {
             match diagnostic.code {
-                "TYPE_UNKNOWN_TYPE" => {
+                "TYPE_UNKNOWN_TYPE" | "TYPE_UNKNOWN_STRUCT" | "TYPE_DUPLICATE_FIELD"
+                | "TYPE_UNKNOWN_FIELD" | "TYPE_MISSING_FIELD" | "TYPE_ARRAY_FIELD"
+                | "TYPE_ASSIGN_IMMUTABLE" | "TYPE_UNKNOWN_NAME" => {
                     let name = extract_backtick_name(&diagnostic.message)
                         .expect("typecheck message should contain a backtick-quoted name");
                     out.push_str(&format!(
-                        "TYPE_UNKNOWN_TYPE name={name} span={}..{}\n",
-                        diagnostic.span.start, diagnostic.span.end
+                        "{} name={name} span={}..{}\n",
+                        diagnostic.code, diagnostic.span.start, diagnostic.span.end
                     ));
                 }
                 "TYPE_LET_MISMATCH" | "TYPE_IF_CONDITION" | "TYPE_WHILE_CONDITION"
                 | "TYPE_FORC_CONDITION" | "TYPE_RETURN_MISMATCH" | "TYPE_BINARY_OPERAND"
                 | "TYPE_LOGICAL_OPERAND" | "TYPE_EQUALITY_OPERAND" | "TYPE_ORDERING_OPERAND"
-                | "TYPE_UNARY_OPERAND" | "TYPE_RANGE_BOUND" => {
+                | "TYPE_UNARY_OPERAND" | "TYPE_RANGE_BOUND" | "TYPE_CALL_ARGUMENT"
+                | "TYPE_STRUCT_FIELD" | "TYPE_ARRAY_ELEMENT" | "TYPE_INDEX"
+                | "TYPE_ASSIGN_MISMATCH" => {
                     let rest = diagnostic
                         .message
                         .strip_prefix("expected ")
@@ -101,10 +107,28 @@ fn oracle_report(program_source: &str) -> String {
                         diagnostic.code, diagnostic.span.start, diagnostic.span.end
                     ));
                 }
-                "TYPE_FOR_ITERABLE" | "TYPE_BREAK_OUTSIDE_LOOP" | "TYPE_CONTINUE_OUTSIDE_LOOP" => {
+                "TYPE_FOR_ITERABLE" | "TYPE_BREAK_OUTSIDE_LOOP" | "TYPE_CONTINUE_OUTSIDE_LOOP"
+                | "TYPE_ARRAY_EMPTY" | "TYPE_INDEX_BASE" | "TYPE_FIELD_BASE"
+                | "TYPE_ASSIGN_TARGET" => {
                     out.push_str(&format!(
                         "{} span={}..{}\n",
                         diagnostic.code, diagnostic.span.start, diagnostic.span.end
+                    ));
+                }
+                "TYPE_CALL_ARITY" => {
+                    let name = extract_backtick_name(&diagnostic.message)
+                        .expect("arity message should contain a backtick-quoted name");
+                    let rest = diagnostic
+                        .message
+                        .split_once("expects ")
+                        .expect("arity message should contain `expects `")
+                        .1;
+                    let (expected, found) = rest
+                        .split_once(" arguments, found ")
+                        .expect("arity message should contain ` arguments, found `");
+                    out.push_str(&format!(
+                        "TYPE_CALL_ARITY name={name} expected={expected} found={found} span={}..{}\n",
+                        diagnostic.span.start, diagnostic.span.end
                     ));
                 }
                 _ => continue,
@@ -218,9 +242,12 @@ fn typecheck_multiple_unknowns_in_item_order() {
 }
 
 // ---------------------------------------------------------------------------
-// M4 slice #2: expression type inference. The corpus avoids the slice-3 gaps:
-// function calls, index/field access, array/struct literals, match patterns,
-// parenthesized reported expressions, and compound assignment.
+// M4 slice #2: expression type inference. The corpus avoids the slice-4 gaps
+// and the known quirks: enum-variant calls/values (incl. enum-prefixed dotted
+// callees), match patterns, struct names ending in "Array", struct literals
+// missing more than one field (HashMap-random missing order), non-lvalue
+// assignment targets, parenthesized reported expressions, and compound
+// assignment.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -363,5 +390,241 @@ fn typecheck_unknown_type_then_infer_order() {
     // `a` binds "<error>" so its own let suppresses.
     assert_matches_oracle(
         "fn f() -> Int { let a: Ghost = 1; let b: Bool = 2; return b; }",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// M4 slice #3: Call / StructLiteral / ArrayLiteral / Index / FieldAccess
+// inference plus Assign-target checking.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn typecheck_call_arity_zero_args() {
+    // Arity reports at the callee path; the call still types as g's return.
+    assert_matches_oracle("fn g(a: Int) -> Int { return a; } fn f() -> Int { return g(); }");
+}
+
+#[test]
+fn typecheck_call_arity_extra_args() {
+    // Early exit: the arity report returns immediately, arguments unvisited.
+    assert_matches_oracle("fn g(a: Int) -> Int { return a; } fn f() -> Int { return g(1, 2); }");
+}
+
+#[test]
+fn typecheck_call_argument_mismatch() {
+    // expected=Int found=Bool, span = the argument expression.
+    assert_matches_oracle("fn g(a: Int) -> Int { return a; } fn f() -> Int { return g(true); }");
+}
+
+#[test]
+fn typecheck_call_return_type_used() {
+    // The call types as g's return (String), so the let reports found=String.
+    assert_matches_oracle(
+        "fn g() -> String { return \"s\"; } fn f() -> Int { let x: Int = g(); return x; }",
+    );
+}
+
+#[test]
+fn typecheck_unit_fn_call_as_value() {
+    // No `->` clause means the call yields Unit: found=Unit on the let.
+    assert_matches_oracle("fn h() { } fn f() -> Int { let x: Int = h(); return x; }");
+}
+
+#[test]
+fn typecheck_unknown_callee_silent_args_unvisited() {
+    // An unknown callee is the resolver's business: the typechecker stays
+    // silent AND never visits the arguments (the bad `true` cannot report),
+    // and the "<error>" result suppresses the return check. Zero lines.
+    assert_matches_oracle("fn f() -> Int { return ghost(true); }");
+}
+
+#[test]
+fn typecheck_std_fn_signature() {
+    // `import std.core` grants string_len(String) -> Int: the Int argument
+    // reports TYPE_CALL_ARGUMENT expected=String found=Int; the return is Int
+    // so the return check passes.
+    assert_matches_oracle("import std.core; fn f() -> Int { return string_len(1); }");
+}
+
+#[test]
+fn typecheck_std_fn_without_import_silent() {
+    // Without the import string_len is just an unknown callee: zero lines.
+    assert_matches_oracle("fn f() -> Int { return string_len(1); }");
+}
+
+#[test]
+fn typecheck_struct_literal_ok() {
+    assert_matches_oracle(
+        "struct Point { x: Int, y: Int } fn f() -> Int { let p: Point = Point { x: 1, y: 2 }; return p.x; }",
+    );
+}
+
+#[test]
+fn typecheck_unknown_struct_literal() {
+    // TYPE_UNKNOWN_TYPE for the let annotation comes first (declared-type
+    // validation), then TYPE_UNKNOWN_STRUCT at the literal's type-name token.
+    // The literal still types as Named(Ghost) but the let's declared type is
+    // "<error>", so the let check suppresses.
+    assert_matches_oracle("fn f() -> Int { let p: Ghost = Ghost { a: 1 }; return 0; }");
+}
+
+#[test]
+fn typecheck_struct_field_mismatch() {
+    // expected=Int found=Bool, span = the field's value expression.
+    assert_matches_oracle(
+        "struct Point { x: Int, y: Int } fn f() -> Int { let p: Point = Point { x: true, y: 2 }; return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_struct_literal_unknown_field() {
+    // `z` is not declared on Point: TYPE_UNKNOWN_FIELD at the field name.
+    assert_matches_oracle(
+        "struct Point { x: Int, y: Int } fn f() -> Int { let p: Point = Point { x: 1, y: 2, z: 3 }; return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_struct_literal_duplicate_field() {
+    // The SECOND `x` reports TYPE_DUPLICATE_FIELD at its own name token.
+    assert_matches_oracle(
+        "struct Point { x: Int, y: Int } fn f() -> Int { let p: Point = Point { x: 1, x: 2, y: 3 }; return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_struct_literal_missing_one_field() {
+    // Exactly ONE missing field (`y`) — Rust iterates missing fields in
+    // HashMap order, so the corpus never misses two. Span = type-name token.
+    assert_matches_oracle(
+        "struct Point { x: Int, y: Int } fn f() -> Int { let p: Point = Point { x: 1 }; return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_array_element_mismatch() {
+    // The first element fixes Int; the `true` reports at its own span.
+    assert_matches_oracle("fn f() -> IntArray { return [1, 2, true]; }");
+}
+
+#[test]
+fn typecheck_array_error_element_suppresses() {
+    // `miss` infers "<error>" as the element type, so the later Int element
+    // suppresses and the array itself is "<error>" (let suppressed too).
+    assert_matches_oracle("fn f() -> Int { let a: IntArray = [miss, 1]; return 0; }");
+}
+
+#[test]
+fn typecheck_empty_array() {
+    // Fixed-message TYPE_ARRAY_EMPTY over the `[]`; the "<error>" result
+    // suppresses the let.
+    assert_matches_oracle("fn f() -> Int { let a: IntArray = []; return 0; }");
+}
+
+#[test]
+fn typecheck_index_type_and_base() {
+    // A Bool index reports TYPE_INDEX at the index expression.
+    assert_matches_oracle("fn f(xs: IntArray) -> Int { return xs[true]; }");
+    // A non-array base reports fixed-message TYPE_INDEX_BASE at the base; the
+    // "<error>" result suppresses the return check.
+    assert_matches_oracle("fn f(n: Int) -> Int { return n[0]; }");
+}
+
+#[test]
+fn typecheck_index_element_type() {
+    // xs[0] yields the element Int: TYPE_RETURN_MISMATCH expected=Bool found=Int.
+    assert_matches_oracle("fn f(xs: IntArray) -> Bool { return xs[0]; }");
+}
+
+#[test]
+fn typecheck_array_len_ok_and_bad_field() {
+    // `len` is the one supported array field, typed Int.
+    assert_matches_oracle("fn f(xs: IntArray) -> Int { return xs.len; }");
+    // Any other field is TYPE_ARRAY_FIELD at the field ident; "<error>"
+    // suppresses the return check.
+    assert_matches_oracle("fn f(xs: IntArray) -> Int { return xs.size; }");
+}
+
+#[test]
+fn typecheck_field_base_int_and_recovery_type() {
+    // QUIRK: TYPE_FIELD_BASE recovers with Named(field) — the field NAME
+    // becomes the type — so the return ALSO reports, with found=x.
+    assert_matches_oracle("fn f(n: Int) -> Int { return n.x; }");
+}
+
+#[test]
+fn typecheck_field_on_unknown_name_not_suppressed() {
+    // QUIRK: an "<error>" base is NOT suppressed by the field access — Rust's
+    // `let Named(..) = .. else` catches Error too. TYPE_FIELD_BASE plus the
+    // found=x return mismatch, same as the Int-base case.
+    assert_matches_oracle("fn f() -> Int { return miss.x; }");
+}
+
+#[test]
+fn typecheck_struct_chain_and_raw_field_type() {
+    // QUIRK: struct field types go through parse_type (identity), NOT
+    // parse_declared_type — `m: Mystery` keeps Named(Mystery) even though
+    // Mystery is unknown. So after the TYPE_UNKNOWN_TYPE from declared-type
+    // validation, `return b.m` reports found=Mystery (not suppressed).
+    assert_matches_oracle("struct B { m: Mystery } fn f(b: B) -> Int { return b.m; }");
+}
+
+#[test]
+fn typecheck_assign_immutable_simple_name() {
+    // A plain `let` binding is immutable: TYPE_ASSIGN_IMMUTABLE at the target.
+    assert_matches_oracle("fn f() -> Int { let x: Int = 1; x = 2; return x; }");
+}
+
+#[test]
+fn typecheck_assign_mut_simple_name_mismatch() {
+    // Mutable binding, wrong value type: expected=Int found=Bool at the value.
+    assert_matches_oracle("fn f() -> Int { let mut x: Int = 1; x = true; return x; }");
+}
+
+#[test]
+fn typecheck_assign_unknown_simple_name() {
+    // An unbound simple target reports TYPE_UNKNOWN_NAME (unlike a complex
+    // target's unbound root, which stays silent).
+    assert_matches_oracle("fn f() -> Int { ghost = 1; return 0; }");
+}
+
+#[test]
+fn typecheck_assign_field_of_immutable_param() {
+    // Parameters are immutable: assigning through `p.x` reports
+    // TYPE_ASSIGN_IMMUTABLE at the chain ROOT `p`.
+    assert_matches_oracle("struct P { x: Int } fn f(p: P) -> Int { p.x = 1; return 0; }");
+}
+
+#[test]
+fn typecheck_assign_field_mismatch() {
+    // Mutable struct local, wrong value type for the field: expected=Int.
+    assert_matches_oracle(
+        "struct Point { x: Int, y: Int } fn f() -> Int { let mut p: Point = Point { x: 1, y: 2 }; p.x = true; return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_assign_unknown_field_recovery_chain() {
+    // QUIRK chain: inferring the target `p.z` reports TYPE_UNKNOWN_FIELD and
+    // recovers with Named(z), so the assign ALSO reports expected=z found=Int.
+    assert_matches_oracle(
+        "struct Point { x: Int, y: Int } fn f() -> Int { let mut p: Point = Point { x: 1, y: 2 }; p.z = 1; return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_assign_index_of_immutable_param() {
+    // Index targets walk to the root too: TYPE_ASSIGN_IMMUTABLE at `xs`.
+    assert_matches_oracle("fn f(xs: IntArray) -> Int { xs[0] = 1; return 0; }");
+}
+
+#[test]
+fn typecheck_for_in_struct_array() {
+    // Generalized element extraction: [P{..}, P{..}] types as PArray, so the
+    // loop binding is P and `p.x` is Int. Zero lines. (The literal goes
+    // through an untyped let because the oracle parser bans struct literals
+    // anywhere inside a for-in iterable, even nested in an array literal.)
+    assert_matches_oracle(
+        "struct P { x: Int } fn f() -> Int { let arr = [P { x: 1 }, P { x: 2 }]; for p in arr { let v: Int = p.x; } return 0; }",
     );
 }

@@ -83,6 +83,10 @@ struct Arena {
   // (start, count) in node_a/node_b of the owning StructLiteral node.
   sl_field_name: StringArray,
   sl_field_value: IntArray,
+  // Field-name ident token start per struct-literal field, parallel to
+  // sl_field_name (single token: end = start + len(name)). TYPE_DUPLICATE_FIELD
+  // and TYPE_UNKNOWN_FIELD point at the field name, mirroring Rust's name_span.
+  sl_field_name_span_start: IntArray,
   // Module decl: has_module=1 when a `module a.b.c;` was present.
   has_module: Int,
   module_name: String,
@@ -149,7 +153,9 @@ struct Arena {
   token_start: IntArray,
   // Name-reference spans per expr node: Name nodes carry the ident token span,
   // Call nodes the dotted-callee-path span (first ident start .. last ident
-  // end); -1/-1 for every other node kind.
+  // end), FieldAccess nodes the field ident token span (Rust's field_span),
+  // StructLiteral nodes the type-name token span (Rust's ty_span); -1/-1 for
+  // every other node kind.
   node_span_start: IntArray,
   node_span_end: IntArray,
   // Full expression spans per expr node, mirroring the Rust Expr::span():
@@ -192,6 +198,7 @@ fn arena_empty() -> Arena {
     child_list: int_array_empty(),
     sl_field_name: string_array_empty(),
     sl_field_value: int_array_empty(),
+    sl_field_name_span_start: int_array_empty(),
     has_module: 0,
     module_name: "",
     item_kind: int_array_empty(),
@@ -394,15 +401,18 @@ fn push_index_node(arena: Arena, base: Int, index: Int, full_start: Int, full_en
   return a;
 }
 
-// FieldAccess: node_a is the base expr, text is the field name.
-fn push_field_node(arena: Arena, base: Int, field: String, full_start: Int, full_end: Int) -> Arena {
+// FieldAccess: node_a is the base expr, text is the field name. (span_start,
+// span_end) is the field ident token span — TYPE_ARRAY_FIELD and
+// TYPE_UNKNOWN_FIELD point at the field name, mirroring Rust's field_span.
+fn push_field_node(arena: Arena, base: Int, field: String, span_start: Int, span_end: Int,
+                   full_start: Int, full_end: Int) -> Arena {
   let mut a: Arena = arena;
   a.node_kind = int_array_push(a.node_kind, field_node());
   a.node_a = int_array_push(a.node_a, base);
   a.node_b = int_array_push(a.node_b, 0);
   a.node_text = string_array_push(a.node_text, field);
-  a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
-  a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
+  a.node_span_start = int_array_push(a.node_span_start, span_start);
+  a.node_span_end = int_array_push(a.node_span_end, span_end);
   a.node_full_start = int_array_push(a.node_full_start, full_start);
   a.node_full_end = int_array_push(a.node_full_end, full_end);
   return a;
@@ -437,16 +447,19 @@ fn push_range_node(arena: Arena, start: Int, end: Int, full_start: Int, full_end
 }
 
 // StructLiteral: text is the type name; (field_start, field_count) slice the
-// parallel sl_field_name / sl_field_value arrays.
+// parallel sl_field_name / sl_field_value arrays. (span_start, span_end) is the
+// type-name token span — TYPE_UNKNOWN_STRUCT and TYPE_MISSING_FIELD point at
+// the type name, mirroring Rust's ty_span.
 fn push_struct_lit_node(arena: Arena, type_name: String, field_start: Int, field_count: Int,
+                        span_start: Int, span_end: Int,
                         full_start: Int, full_end: Int) -> Arena {
   let mut a: Arena = arena;
   a.node_kind = int_array_push(a.node_kind, struct_lit_node());
   a.node_a = int_array_push(a.node_a, field_start);
   a.node_b = int_array_push(a.node_b, field_count);
   a.node_text = string_array_push(a.node_text, type_name);
-  a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
-  a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
+  a.node_span_start = int_array_push(a.node_span_start, span_start);
+  a.node_span_end = int_array_push(a.node_span_end, span_end);
   a.node_full_start = int_array_push(a.node_full_start, full_start);
   a.node_full_end = int_array_push(a.node_full_end, full_end);
   return a;
@@ -1496,8 +1509,10 @@ fn parse_postfix(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, al
       let field: String = texts[p];
       p = p + 1;
       let new_index: Int = a.node_kind.len;
-      // Full span: base start .. field ident end (token p-1 is the field).
+      // Full span: base start .. field ident end (token p-1 is the field);
+      // name span: the field ident token itself.
       a = push_field_node(a, node, field,
+                          a.token_start[p - 1], a.token_start[p - 1] + string_len(field),
                           a.node_full_start[node], a.token_start[p - 1] + string_len(field));
       node = new_index;
     }
@@ -1575,8 +1590,11 @@ fn parse_primary(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, al
   let mut q: Int = pos + 1;
   while q + 1 < kinds.len && kinds[q] == token_dot() && kinds[q + 1] == token_ident() {
     let new_index: Int = a.node_kind.len;
-    // Full span: chain start .. this segment's ident end.
-    a = push_field_node(a, node, texts[q + 1], a.node_full_start[node],
+    // Full span: chain start .. this segment's ident end; name span: the
+    // segment's ident token itself.
+    a = push_field_node(a, node, texts[q + 1],
+                        a.token_start[q + 1], a.token_start[q + 1] + string_len(texts[q + 1]),
+                        a.node_full_start[node],
                         a.token_start[q + 1] + string_len(texts[q + 1]));
     node = new_index;
     q = q + 2;
@@ -1656,12 +1674,14 @@ fn parse_struct_literal(arena: Arena, kinds: IntArray, texts: StringArray, pos: 
   let mut a: Arena = arena;
   let mut p: Int = pos + 1;
   let mut names: StringArray = string_array_empty();
+  let mut name_spans: IntArray = int_array_empty();
   let mut values: IntArray = int_array_empty();
   while p < kinds.len && kinds[p] != token_rbrace() {
     if kinds[p] == token_comma() {
       p = p + 1;
     } else {
       let fname: String = texts[p];
+      name_spans = int_array_push(name_spans, a.token_start[p]);
       p = p + 1;
       if p < kinds.len && kinds[p] == token_colon() {
         p = p + 1;
@@ -1681,12 +1701,16 @@ fn parse_struct_literal(arena: Arena, kinds: IntArray, texts: StringArray, pos: 
   let mut i: Int = 0;
   while i < count {
     a.sl_field_name = string_array_push(a.sl_field_name, names[i]);
+    a.sl_field_name_span_start = int_array_push(a.sl_field_name_span_start, name_spans[i]);
     a.sl_field_value = int_array_push(a.sl_field_value, values[i]);
     i = i + 1;
   }
   let new_index: Int = a.node_kind.len;
-  // Full span: type-name ident (token pos-1) start .. "}" end (token p-1).
+  // Full span: type-name ident (token pos-1) start .. "}" end (token p-1);
+  // name span: the type-name ident token itself.
   a = push_struct_lit_node(a, type_name, start, count,
+                           a.token_start[pos - 1],
+                           a.token_start[pos - 1] + string_len(type_name),
                            a.token_start[pos - 1], a.token_start[p - 1] + 1);
   return ParseResult { arena: a, node: new_index, pos: p };
 }
@@ -3490,14 +3514,33 @@ export fn typecheck_report(source: String) -> String {
     }
     ii = ii + 1;
   }
+  // M4 slice #3: the callable-signature table. Std signatures first (gated on
+  // the imports, mirroring standard_external_functions), user functions last —
+  // tc_sig_index's reverse scan then reproduces the Rust map's precedence.
+  let mut sigs: SigTable = SigTable {
+    names: string_array_empty(),
+    rets: string_array_empty(),
+    param_start: int_array_empty(),
+    param_count: int_array_empty(),
+    params: string_array_empty(),
+  };
+  if has_std_core {
+    sigs = sig_std_core(sigs);
+  }
+  if has_std_io {
+    sigs = sig_std_io(sigs);
+  }
+  sigs = sig_user_functions(sigs, arena, types);
   // M4 slice #2: after declared-type validation (whose diagnostics all come
   // first, mirroring the Rust check()), run expression type inference over
   // every function body in item order.
   let mut tc: TcState = TcState {
     arena: arena,
     types: types,
+    sigs: sigs,
     local_names: string_array_empty(),
     local_types: string_array_empty(),
+    local_muts: int_array_empty(),
     count: 0,
     report: report,
     ret: "",
@@ -3584,22 +3627,28 @@ fn validate_stmt(report: String, arena: Arena, types: StringArray, index: Int) -
 }
 
 // ---------------------------------------------------------------------------
-// M4 vertical slice #2: minimal expression type inference, mirroring
+// M4 vertical slices #2 + #3: expression type inference, mirroring
 // src/typecheck.rs's check_function / check_stmts / infer_expr / expect_type.
 //
 // Types are represented by their Rust display strings: "Int" / "String" /
-// "Bool" / "IntArray" / "StringArray" / "BoolArray" / "Unit" / "Range" /
-// user struct & enum names verbatim / "<error>" for Type::Error. Equality is
-// plain string equality, exactly matching the oracle's Type comparison for
-// every type this slice can produce.
+// "Bool" / "Unit" / "Range" / user struct & enum names verbatim / "<error>"
+// for Type::Error / element+"Array" for Type::Array (so "IntArray",
+// "StringArray", "PointArray", ...). Equality is plain string equality,
+// exactly matching the oracle's Type comparison for every type this slice can
+// produce — PROVIDED no user struct/enum name ends in "Array" (a Named type
+// ending in "Array" would collide with an Array display; the corpus forbids
+// such names).
 //
-// Slice gaps (the differential corpus must not touch them):
-//   * Call / Index / FieldAccess / ArrayLiteral / StructLiteral exprs infer to
-//     "<error>" without reporting or visiting children (slice 3 territory).
-//   * Assign targets are not checked (TYPE_ASSIGN_MISMATCH / _IMMUTABLE /
-//     TYPE_UNKNOWN_NAME); only the assigned value is inferred.
+// Slice 3 covers Call / StructLiteral / ArrayLiteral / Index / FieldAccess
+// inference plus Assign-target checking. Remaining gaps (the differential
+// corpus must not touch them):
+//   * Enum-variant CALLS (`E.V(x)`, TYPE_ENUM_VARIANT_ARITY/_PAYLOAD) and enum
+//     VALUES (`E.V`, TYPE_ENUM_VARIANT_ARITY / TYPE_UNKNOWN_VARIANT): both
+//     infer to "<error>" without reporting or visiting children (slice 4).
 //   * Match patterns are not type-checked (TYPE_MATCH_PATTERN /
 //     exhaustiveness); variant payload bindings get type "<error>".
+//   * TYPE_MISSING_FIELD iterates Rust's HashMap in RANDOM order — every
+//     struct literal in the corpus must miss at most ONE field.
 // ---------------------------------------------------------------------------
 
 // Threaded typecheck state. `local_names`/`local_types` form the same logical
@@ -3611,12 +3660,29 @@ fn validate_stmt(report: String, arena: Arena, types: StringArray, index: Int) -
 struct TcState {
   arena: Arena,
   types: StringArray,
+  sigs: SigTable,
   local_names: StringArray,
   local_types: StringArray,
+  local_muts: IntArray,
   count: Int,
   report: String,
   ret: String,
   loop_depth: Int,
+}
+
+// Callable signatures, mirroring the Rust `functions` map (function_signatures
+// + or_insert of the std externals). Parallel arrays: per signature a name, a
+// return-type display string, and a (param_start, param_count) slice into the
+// flat `params` array. Std signatures are pushed FIRST and user functions
+// LAST; tc_sig_index scans in REVERSE so a user fn shadows a std name (Rust's
+// or_insert keeps the user entry) and a later duplicate user fn shadows an
+// earlier one (HashMap collect overwrites).
+struct SigTable {
+  names: StringArray,
+  rets: StringArray,
+  param_start: IntArray,
+  param_count: IntArray,
+  params: StringArray,
 }
 
 // Zeta multi-return: infer hands back the threaded state plus the type string.
@@ -3633,6 +3699,169 @@ fn tc_declared_type(types: StringArray, name: String) -> String {
     return name;
   }
   return "<error>";
+}
+
+// Append one signature to the table (flattening the param types).
+fn sig_push(table: SigTable, name: String, ret: String, ptypes: StringArray) -> SigTable {
+  let mut t: SigTable = table;
+  t.names = string_array_push(t.names, name);
+  t.rets = string_array_push(t.rets, ret);
+  t.param_start = int_array_push(t.param_start, t.params.len);
+  t.param_count = int_array_push(t.param_count, ptypes.len);
+  let mut i: Int = 0;
+  while i < ptypes.len {
+    t.params = string_array_push(t.params, ptypes[i]);
+    i = i + 1;
+  }
+  return t;
+}
+
+// The std.core signatures, mirroring src/std_api.rs STD_CORE_FUNCTIONS exactly
+// (parameter types AND order). Type strings are stored raw: every std type is
+// either a builtin or an enum granted by the SAME import, so Rust's
+// parse_declared_type maps each one to itself in display-string space.
+fn sig_std_core(table: SigTable) -> SigTable {
+  let mut t: SigTable = table;
+  t = sig_push(t, "string_len", "Int", ["String"]);
+  t = sig_push(t, "string_byte_at", "Int", ["String", "Int"]);
+  t = sig_push(t, "string_byte_slice", "String", ["String", "Int", "Int"]);
+  t = sig_push(t, "string_concat", "String", ["String", "String"]);
+  t = sig_push(t, "int_to_string", "String", ["Int"]);
+  t = sig_push(t, "ascii_is_digit", "Bool", ["Int"]);
+  t = sig_push(t, "ascii_is_alpha", "Bool", ["Int"]);
+  t = sig_push(t, "ascii_is_alnum", "Bool", ["Int"]);
+  t = sig_push(t, "ascii_is_whitespace", "Bool", ["Int"]);
+  t = sig_push(t, "int_array_empty", "IntArray", string_array_empty());
+  t = sig_push(t, "int_array_push", "IntArray", ["IntArray", "Int"]);
+  t = sig_push(t, "string_array_empty", "StringArray", string_array_empty());
+  t = sig_push(t, "string_array_push", "StringArray", ["StringArray", "String"]);
+  t = sig_push(t, "bool_array_empty", "BoolArray", string_array_empty());
+  t = sig_push(t, "bool_array_push", "BoolArray", ["BoolArray", "Bool"]);
+  return t;
+}
+
+// The std.io signatures, mirroring src/std_api.rs STD_IO_FUNCTIONS exactly.
+fn sig_std_io(table: SigTable) -> SigTable {
+  let mut t: SigTable = table;
+  t = sig_push(t, "file_read_to_string", "ResultString", ["String"]);
+  t = sig_push(t, "path_join", "String", ["String", "String"]);
+  t = sig_push(t, "path_basename", "String", ["String"]);
+  t = sig_push(t, "diagnostic_format", "String", ["String", "Int", "Int", "String"]);
+  return t;
+}
+
+// Append every user function's signature in item order. Param and return types
+// go through tc_declared_type (the Rust parse_declared_type: unknown names
+// degrade to "<error>"); a missing `->` clause means "Unit".
+fn sig_user_functions(table: SigTable, arena: Arena, types: StringArray) -> SigTable {
+  let mut t: SigTable = table;
+  let mut i: Int = 0;
+  while i < arena.fn_name.len {
+    t.names = string_array_push(t.names, arena.fn_name[i]);
+    if arena.fn_has_ret[i] == 1 {
+      t.rets = string_array_push(t.rets, tc_declared_type(types, arena.fn_ret[i]));
+    } else {
+      t.rets = string_array_push(t.rets, "Unit");
+    }
+    t.param_start = int_array_push(t.param_start, t.params.len);
+    t.param_count = int_array_push(t.param_count, arena.fn_param_count[i]);
+    let pstart: Int = arena.fn_param_start[i];
+    let mut pi: Int = 0;
+    while pi < arena.fn_param_count[i] {
+      t.params = string_array_push(t.params,
+                                   tc_declared_type(types, arena.param_type[pstart + pi]));
+      pi = pi + 1;
+    }
+    i = i + 1;
+  }
+  return t;
+}
+
+// Find `name` in the signature table; -1 on miss. REVERSE scan — see the
+// SigTable comment for why this reproduces the Rust map's precedence.
+fn tc_sig_index(sigs: SigTable, name: String) -> Int {
+  let mut i: Int = sigs.names.len - 1;
+  while i >= 0 {
+    if sigs.names[i] == name {
+      return i;
+    }
+    i = i - 1;
+  }
+  return 0 - 1;
+}
+
+// Find the struct-table row for `name`; -1 on miss. REVERSE scan so a later
+// duplicate struct shadows an earlier one (HashMap collect overwrites).
+fn tc_struct_index(arena: Arena, name: String) -> Int {
+  let mut i: Int = arena.struct_name.len - 1;
+  while i >= 0 {
+    if arena.struct_name[i] == name {
+      return i;
+    }
+    i = i - 1;
+  }
+  return 0 - 1;
+}
+
+// The declared type of `field` on struct row `sindex`, or "" when the struct
+// has no such field. The declared text is returned VERBATIM — Rust builds the
+// struct table with parse_type, which maps every name (even an unknown one
+// like `Mystery`) to a type displaying as the name itself. This is the quirk
+// that makes `b.m` type "Mystery" (NOT "<error>") when `struct B { m: Mystery }`.
+fn tc_struct_field_type(arena: Arena, sindex: Int, field: String) -> String {
+  let start: Int = arena.struct_field_start[sindex];
+  let count: Int = arena.struct_field_count[sindex];
+  let mut i: Int = count - 1;
+  while i >= 0 {
+    if arena.field_name[start + i] == field {
+      return arena.field_type[start + i];
+    }
+    i = i - 1;
+  }
+  return "";
+}
+
+// Is `name` a user-defined enum? (Std enums are slice-4 territory.)
+fn tc_is_enum_name(arena: Arena, name: String) -> Bool {
+  let mut i: Int = 0;
+  while i < arena.enum_name.len {
+    if arena.enum_name[i] == name {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// Does `text` end with `suffix`? Used to recognize Array display strings.
+fn string_ends_with(text: String, suffix: String) -> Bool {
+  let tlen: Int = string_len(text);
+  let slen: Int = string_len(suffix);
+  if tlen < slen {
+    return false;
+  }
+  let mut i: Int = 0;
+  while i < slen {
+    if string_byte_at(text, tlen - slen + i) != string_byte_at(suffix, i) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// Does `text` contain a '.' (byte 46)? Dotted callees never hit the function
+// table (and enum-variant calls are a slice-4 gap).
+fn string_has_dot(text: String) -> Bool {
+  let len: Int = string_len(text);
+  let mut i: Int = 0;
+  while i < len {
+    if string_byte_at(text, i) == 46 {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
 }
 
 // Mirror of expect_type: equal types pass; an "<error>" on EITHER side is
@@ -3667,33 +3896,75 @@ fn tc_report_fixed(state: TcState, code: String, span_start: Int, span_end: Int)
   return s;
 }
 
-// Push a (name, type) binding onto the logical scope stack — same overwrite-
-// at-count discipline as bind_local_silent, kept in lockstep across BOTH
-// parallel arrays.
-fn tc_bind(state: TcState, name: String, ty: String) -> TcState {
+// Name-carrying diagnostics (TYPE_UNKNOWN_STRUCT / TYPE_DUPLICATE_FIELD /
+// TYPE_UNKNOWN_FIELD / TYPE_MISSING_FIELD / TYPE_ARRAY_FIELD /
+// TYPE_ASSIGN_IMMUTABLE / TYPE_UNKNOWN_NAME): one line `CODE name=N span=S..E`.
+fn tc_report_name(state: TcState, code: String, name: String,
+                  span_start: Int, span_end: Int) -> TcState {
+  let mut s: TcState = state;
+  s.report = string_concat(s.report, code);
+  s.report = string_concat(s.report, " name=");
+  s.report = string_concat(s.report, name);
+  s.report = string_concat(s.report, span_suffix(span_start, span_end));
+  s.report = string_concat(s.report, "\n");
+  return s;
+}
+
+// TYPE_CALL_ARITY carries the callee plus two argument COUNTS:
+// `TYPE_CALL_ARITY name=F expected=N found=M span=S..E`.
+fn tc_report_arity(state: TcState, callee: String, expected: Int, found: Int,
+                   span_start: Int, span_end: Int) -> TcState {
+  let mut s: TcState = state;
+  s.report = string_concat(s.report, "TYPE_CALL_ARITY name=");
+  s.report = string_concat(s.report, callee);
+  s.report = string_concat(s.report, " expected=");
+  s.report = string_concat(s.report, int_to_string(expected));
+  s.report = string_concat(s.report, " found=");
+  s.report = string_concat(s.report, int_to_string(found));
+  s.report = string_concat(s.report, span_suffix(span_start, span_end));
+  s.report = string_concat(s.report, "\n");
+  return s;
+}
+
+// Push a (name, type, mutability) binding onto the logical scope stack — same
+// overwrite-at-count discipline as bind_local_silent, kept in lockstep across
+// all THREE parallel arrays. is_mut is 1 only for `let mut` (params and
+// for-in/match bindings are immutable in the oracle).
+fn tc_bind(state: TcState, name: String, ty: String, is_mut: Int) -> TcState {
   let mut s: TcState = state;
   if s.count < s.local_names.len {
     s.local_names[s.count] = name;
     s.local_types[s.count] = ty;
+    s.local_muts[s.count] = is_mut;
   } else {
     s.local_names = string_array_push(s.local_names, name);
     s.local_types = string_array_push(s.local_types, ty);
+    s.local_muts = int_array_push(s.local_muts, is_mut);
   }
   s.count = s.count + 1;
   return s;
 }
 
-// Look a name up in the scope stack, NEWEST binding first (reverse scan) — an
+// Find a name's scope-stack slot, NEWEST binding first (reverse scan) — an
 // inner shadowing `let` must win over the outer binding, exactly like the
-// Rust HashMap clone where the inner insert overwrote the entry. A miss is
-// "<error>" WITHOUT a diagnostic (unknown names are the resolver's job).
-fn tc_lookup(state: TcState, name: String) -> String {
+// Rust HashMap clone where the inner insert overwrote the entry. -1 on miss.
+fn tc_lookup_slot(state: TcState, name: String) -> Int {
   let mut i: Int = state.count - 1;
   while i >= 0 {
     if state.local_names[i] == name {
-      return state.local_types[i];
+      return i;
     }
     i = i - 1;
+  }
+  return 0 - 1;
+}
+
+// A name's bound type; a miss is "<error>" WITHOUT a diagnostic (unknown names
+// are the resolver's job).
+fn tc_lookup(state: TcState, name: String) -> String {
+  let slot: Int = tc_lookup_slot(state, name);
+  if slot >= 0 {
+    return state.local_types[slot];
   }
   return "<error>";
 }
@@ -3723,8 +3994,9 @@ fn tc_function(state: TcState, ref: Int) -> TcState {
   let pcount: Int = arena.fn_param_count[ref];
   let mut pi: Int = 0;
   while pi < pcount {
+    // Parameters are immutable (Rust binds them with mutable: false).
     s = tc_bind(s, arena.param_name[pstart + pi],
-                tc_declared_type(s.types, arena.param_type[pstart + pi]));
+                tc_declared_type(s.types, arena.param_type[pstart + pi]), 0);
     pi = pi + 1;
   }
   return tc_block(s, arena.fn_body_start[ref], arena.fn_body_count[ref]);
@@ -3763,10 +4035,10 @@ fn tc_stmt(state: TcState, index: Int) -> TcState {
       s = tc_expect(s, value.ty, declared, "TYPE_LET_MISMATCH",
                     arena.node_full_start[arena.stmt_expr[index]],
                     arena.node_full_end[arena.stmt_expr[index]]);
-      return tc_bind(s, arena.stmt_name[index], declared);
+      return tc_bind(s, arena.stmt_name[index], declared, arena.stmt_mut[index]);
     }
     // Untyped let: the binding takes the inferred type.
-    return tc_bind(s, arena.stmt_name[index], value.ty);
+    return tc_bind(s, arena.stmt_name[index], value.ty, arena.stmt_mut[index]);
   }
   if kind == return_stmt() {
     if arena.stmt_expr[index] >= 0 {
@@ -3785,10 +4057,60 @@ fn tc_stmt(state: TcState, index: Int) -> TcState {
     return value.st;
   }
   if kind == assign_stmt() {
-    // Slice gap: only the value is inferred (its inner diagnostics still
-    // report); target mutability/type checks are slice 3.
+    // Value first (Rust infers it before any target handling), then the target.
     let value: InferResult = tc_infer(s, arena.stmt_expr[index]);
-    return value.st;
+    s = value.st;
+    let vs: Int = arena.node_full_start[arena.stmt_expr[index]];
+    let ve: Int = arena.node_full_end[arena.stmt_expr[index]];
+    let target: Int = arena.stmt_target[index];
+    if target < 0 {
+      // Simple `name = value` (the Rust Expr::Name arm): mutable binding ->
+      // value must match the BINDING type; immutable -> TYPE_ASSIGN_IMMUTABLE
+      // at the target ident; unbound -> TYPE_UNKNOWN_NAME at the target ident.
+      let name: String = arena.stmt_name[index];
+      let slot: Int = tc_lookup_slot(s, name);
+      let nspan: Int = arena.stmt_name_span_start[index];
+      if slot >= 0 {
+        if s.local_muts[slot] == 1 {
+          return tc_expect(s, value.ty, s.local_types[slot], "TYPE_ASSIGN_MISMATCH", vs, ve);
+        }
+        return tc_report_name(s, "TYPE_ASSIGN_IMMUTABLE", name,
+                              nspan, nspan + string_len(name));
+      }
+      return tc_report_name(s, "TYPE_UNKNOWN_NAME", name,
+                            nspan, nspan + string_len(name));
+    }
+    let tkind: Int = arena.node_kind[target];
+    if tkind == field_node() || tkind == index_node() {
+      // Field/index target: infer the WHOLE target expression (its inner
+      // diagnostics — e.g. an unknown field — still report), then walk the
+      // node_a chain to the root (Rust's assign_root). A Name root is checked
+      // for mutability; an UNBOUND root is silent (unlike the simple-name
+      // case), and so is a broken chain (assign_root returned None).
+      let tres: InferResult = tc_infer(s, target);
+      s = tres.st;
+      let mut root: Int = target;
+      while arena.node_kind[root] == field_node() || arena.node_kind[root] == index_node() {
+        root = arena.node_a[root];
+      }
+      if arena.node_kind[root] == name_node() {
+        let rname: String = arena.node_text[root];
+        let slot: Int = tc_lookup_slot(s, rname);
+        if slot >= 0 {
+          if s.local_muts[slot] == 1 {
+            return tc_expect(s, value.ty, tres.ty, "TYPE_ASSIGN_MISMATCH", vs, ve);
+          }
+          return tc_report_name(s, "TYPE_ASSIGN_IMMUTABLE", rname,
+                                arena.node_span_start[root], arena.node_span_end[root]);
+        }
+      }
+      return s;
+    }
+    // Any other target shape is not an lvalue: fixed message at the target
+    // span. (The corpus never reaches this — our parser collapses every Name
+    // target, parenthesized or not, into the simple form, just like Rust.)
+    return tc_report_fixed(s, "TYPE_ASSIGN_TARGET",
+                           arena.node_full_start[target], arena.node_full_end[target]);
   }
   if kind == if_stmt() {
     let cond: InferResult = tc_infer(s, arena.stmt_expr[index]);
@@ -3812,21 +4134,15 @@ fn tc_stmt(state: TcState, index: Int) -> TcState {
   if kind == for_in_stmt() {
     let iter: InferResult = tc_infer(s, arena.stmt_expr[index]);
     s = iter.st;
-    // Element type per the oracle: builtin arrays -> their element, Range ->
-    // Int, "<error>" stays silent, anything else reports TYPE_FOR_ITERABLE
-    // (fixed message, span = the iterable) and degrades to "<error>".
+    // Element type per the oracle: ANY array (display string ending in
+    // "Array", e.g. "IntArray" or "PointArray") -> the element prefix,
+    // Range -> Int, "<error>" stays silent, anything else reports
+    // TYPE_FOR_ITERABLE (fixed message, span = the iterable) and degrades to
+    // "<error>".
     let mut elem: String = "";
     let mut matched: Bool = false;
-    if iter.ty == "IntArray" {
-      elem = "Int";
-      matched = true;
-    }
-    if iter.ty == "StringArray" {
-      elem = "String";
-      matched = true;
-    }
-    if iter.ty == "BoolArray" {
-      elem = "Bool";
+    if string_ends_with(iter.ty, "Array") {
+      elem = string_byte_slice(iter.ty, 0, string_len(iter.ty) - 5);
       matched = true;
     }
     if iter.ty == "Range" {
@@ -3844,7 +4160,7 @@ fn tc_stmt(state: TcState, index: Int) -> TcState {
       elem = "<error>";
     }
     let saved: Int = s.count;
-    s = tc_bind(s, arena.stmt_name[index], elem);
+    s = tc_bind(s, arena.stmt_name[index], elem, 0);
     s.loop_depth = s.loop_depth + 1;
     s = tc_block(s, arena.stmt_then_start[index], arena.stmt_then_count[index]);
     s.loop_depth = s.loop_depth - 1;
@@ -3882,9 +4198,9 @@ fn tc_stmt(state: TcState, index: Int) -> TcState {
       let binding: String = pattern_binding(pattern);
       if binding != "" {
         if string_starts_with(pattern, "name:") {
-          s = tc_bind(s, binding, value.ty);
+          s = tc_bind(s, binding, value.ty, 0);
         } else {
-          s = tc_bind(s, binding, "<error>");
+          s = tc_bind(s, binding, "<error>", 0);
         }
       }
       s = tc_block(s, arena.arm_body_start[astart + ai], arena.arm_body_count[astart + ai]);
@@ -3983,8 +4299,211 @@ fn tc_infer(state: TcState, node: Int) -> InferResult {
                   arena.node_full_end[arena.node_b[node]]);
     return InferResult { st: s, ty: "Range" };
   }
-  // Call / Index / FieldAccess / ArrayLiteral / StructLiteral: slice-3 gap —
-  // infer to "<error>" without reporting or visiting children, so every
-  // surrounding expect stays silent.
+  if kind == call_node() {
+    let callee: String = arena.node_text[node];
+    // A dotted callee never hits the function table: in Rust an enum-variant
+    // call (`E.V(x)`) takes the infer_enum_variant_call path — a slice-4 gap
+    // the corpus must not touch — and any OTHER dotted path misses the map
+    // (its keys are plain idents) and returns Error silently, arguments
+    // unvisited. Either way: silent "<error>", children unvisited.
+    if string_has_dot(callee) {
+      return InferResult { st: s, ty: "<error>" };
+    }
+    let sig: Int = tc_sig_index(s.sigs, callee);
+    if sig < 0 {
+      // Unknown callee: silent "<error>", arguments NOT visited (the Rust
+      // `let else` returns before the argument loop).
+      return InferResult { st: s, ty: "<error>" };
+    }
+    let pcount: Int = s.sigs.param_count[sig];
+    let acount: Int = arena.node_b[node];
+    if acount != pcount {
+      // Arity mismatch reports at the callee path and returns the signature's
+      // return type IMMEDIATELY — the arguments are never visited.
+      s = tc_report_arity(s, callee, pcount, acount,
+                          arena.node_span_start[node], arena.node_span_end[node]);
+      return InferResult { st: s, ty: s.sigs.rets[sig] };
+    }
+    let astart: Int = arena.node_a[node];
+    let pstart: Int = s.sigs.param_start[sig];
+    let mut ai: Int = 0;
+    while ai < pcount {
+      // Interleaved like the Rust zip loop: infer argument i, expect it
+      // against parameter i (span = the argument), then move on.
+      let argn: Int = arena.child_list[astart + ai];
+      let arg: InferResult = tc_infer(s, argn);
+      s = tc_expect(arg.st, arg.ty, s.sigs.params[pstart + ai], "TYPE_CALL_ARGUMENT",
+                    arena.node_full_start[argn], arena.node_full_end[argn]);
+      ai = ai + 1;
+    }
+    return InferResult { st: s, ty: s.sigs.rets[sig] };
+  }
+  if kind == struct_lit_node() {
+    let ty: String = arena.node_text[node];
+    let fstart: Int = arena.node_a[node];
+    let fcount: Int = arena.node_b[node];
+    let sidx: Int = tc_struct_index(arena, ty);
+    if sidx < 0 {
+      // Unknown struct: report at the type-name token, still infer every
+      // field value (their inner diagnostics report), and return the name
+      // VERBATIM — Rust recovers with Named(ty), not Error.
+      s = tc_report_name(s, "TYPE_UNKNOWN_STRUCT", ty,
+                         arena.node_span_start[node], arena.node_span_end[node]);
+      let mut ui: Int = 0;
+      while ui < fcount {
+        let uv: InferResult = tc_infer(s, arena.sl_field_value[fstart + ui]);
+        s = uv.st;
+        ui = ui + 1;
+      }
+      return InferResult { st: s, ty: ty };
+    }
+    // Literal fields in source order: duplicate check (against the already-
+    // seen list, reporting the SECOND occurrence at ITS name token), then the
+    // value's inference, then the declared-field check.
+    let mut seen: StringArray = string_array_empty();
+    let mut fi: Int = 0;
+    while fi < fcount {
+      let fname: String = arena.sl_field_name[fstart + fi];
+      let nspan: Int = arena.sl_field_name_span_start[fstart + fi];
+      if name_in_list(seen, seen.len, fname) {
+        s = tc_report_name(s, "TYPE_DUPLICATE_FIELD", fname,
+                           nspan, nspan + string_len(fname));
+      }
+      seen = string_array_push(seen, fname);
+      let vnode: Int = arena.sl_field_value[fstart + fi];
+      let v: InferResult = tc_infer(s, vnode);
+      s = v.st;
+      let decl: String = tc_struct_field_type(arena, sidx, fname);
+      if decl != "" {
+        s = tc_expect(s, v.ty, decl, "TYPE_STRUCT_FIELD",
+                      arena.node_full_start[vnode], arena.node_full_end[vnode]);
+      } else {
+        s = tc_report_name(s, "TYPE_UNKNOWN_FIELD", fname,
+                           nspan, nspan + string_len(fname));
+      }
+      fi = fi + 1;
+    }
+    // Declared fields absent from the literal, each at the type-name token.
+    // CAUTION: Rust iterates fields.keys() in HashMap RANDOM order here while
+    // we iterate declaration order — the corpus keeps at most ONE missing
+    // field per literal so the orders cannot diverge.
+    let dstart: Int = arena.struct_field_start[sidx];
+    let dcount: Int = arena.struct_field_count[sidx];
+    let mut di: Int = 0;
+    while di < dcount {
+      if !name_in_list(seen, seen.len, arena.field_name[dstart + di]) {
+        s = tc_report_name(s, "TYPE_MISSING_FIELD", arena.field_name[dstart + di],
+                           arena.node_span_start[node], arena.node_span_end[node]);
+      }
+      di = di + 1;
+    }
+    return InferResult { st: s, ty: ty };
+  }
+  if kind == array_node() {
+    let estart: Int = arena.node_a[node];
+    let ecount: Int = arena.node_b[node];
+    if ecount == 0 {
+      // Stage 0 cannot type an empty literal: fixed message over the whole
+      // `[]`, then "<error>".
+      s = tc_report_fixed(s, "TYPE_ARRAY_EMPTY",
+                          arena.node_full_start[node], arena.node_full_end[node]);
+      return InferResult { st: s, ty: "<error>" };
+    }
+    // The FIRST element fixes the element type; every later element is
+    // expected against it (span = that element).
+    let first: InferResult = tc_infer(s, arena.child_list[estart]);
+    s = first.st;
+    let elem: String = first.ty;
+    let mut ei: Int = 1;
+    while ei < ecount {
+      let enode: Int = arena.child_list[estart + ei];
+      let el: InferResult = tc_infer(s, enode);
+      s = tc_expect(el.st, el.ty, elem, "TYPE_ARRAY_ELEMENT",
+                    arena.node_full_start[enode], arena.node_full_end[enode]);
+      ei = ei + 1;
+    }
+    if elem == "<error>" {
+      return InferResult { st: s, ty: "<error>" };
+    }
+    // The general display rule: Array(T) renders as T's display + "Array"
+    // ("Int" -> "IntArray", "Point" -> "PointArray").
+    return InferResult { st: s, ty: string_concat(elem, "Array") };
+  }
+  if kind == index_node() {
+    // Oracle order: infer base, infer index, expect the index to be Int.
+    let base: InferResult = tc_infer(s, arena.node_a[node]);
+    let idx: InferResult = tc_infer(base.st, arena.node_b[node]);
+    s = tc_expect(idx.st, idx.ty, "Int", "TYPE_INDEX",
+                  arena.node_full_start[arena.node_b[node]],
+                  arena.node_full_end[arena.node_b[node]]);
+    if string_ends_with(base.ty, "Array") {
+      // Strip the 5-byte "Array" suffix to recover the element display.
+      return InferResult {
+        st: s,
+        ty: string_byte_slice(base.ty, 0, string_len(base.ty) - 5),
+      };
+    }
+    if base.ty == "<error>" {
+      return InferResult { st: s, ty: "<error>" };
+    }
+    s = tc_report_fixed(s, "TYPE_INDEX_BASE",
+                        arena.node_full_start[arena.node_a[node]],
+                        arena.node_full_end[arena.node_a[node]]);
+    return InferResult { st: s, ty: "<error>" };
+  }
+  if kind == field_node() {
+    let field: String = arena.node_text[node];
+    let bnode: Int = arena.node_a[node];
+    // Enum VALUE access (`E.V` where E is a Name that is no local but IS an
+    // enum) takes Rust's enum branch — a slice-4 gap the corpus must not
+    // touch. Silent "<error>", base uninferred. (Std-import enums are slice-4
+    // territory too and equally corpus-forbidden.)
+    if arena.node_kind[bnode] == name_node()
+        && tc_lookup_slot(s, arena.node_text[bnode]) < 0
+        && tc_is_enum_name(arena, arena.node_text[bnode]) {
+      return InferResult { st: s, ty: "<error>" };
+    }
+    let base: InferResult = tc_infer(s, bnode);
+    s = base.st;
+    if string_ends_with(base.ty, "Array") {
+      // Arrays expose exactly one field: `len`.
+      if field == "len" {
+        return InferResult { st: s, ty: "Int" };
+      }
+      s = tc_report_name(s, "TYPE_ARRAY_FIELD", field,
+                         arena.node_span_start[node], arena.node_span_end[node]);
+      return InferResult { st: s, ty: "<error>" };
+    }
+    if base.ty == "Int" || base.ty == "String" || base.ty == "Bool"
+        || base.ty == "Unit" || base.ty == "Range" || base.ty == "<error>" {
+      // QUIRK: Rust's `let Type::Named(..) = base_type else` catches Error
+      // too — an "<error>" base is NOT suppressed here. It reports
+      // TYPE_FIELD_BASE at the base expression and recovers with
+      // Named(field): the FIELD NAME becomes the result type.
+      s = tc_report_fixed(s, "TYPE_FIELD_BASE",
+                          arena.node_full_start[bnode], arena.node_full_end[bnode]);
+      return InferResult { st: s, ty: field };
+    }
+    // Named base: a struct gives the field's declared type verbatim (see
+    // tc_struct_field_type for the parse_type identity quirk); a non-struct
+    // name (e.g. an enum) is TYPE_UNKNOWN_STRUCT at the base expression; a
+    // missing field is TYPE_UNKNOWN_FIELD at the field ident. Both recover
+    // with Named(field).
+    let sidx: Int = tc_struct_index(arena, base.ty);
+    if sidx < 0 {
+      s = tc_report_name(s, "TYPE_UNKNOWN_STRUCT", base.ty,
+                         arena.node_full_start[bnode], arena.node_full_end[bnode]);
+      return InferResult { st: s, ty: field };
+    }
+    let decl: String = tc_struct_field_type(arena, sidx, field);
+    if decl != "" {
+      return InferResult { st: s, ty: decl };
+    }
+    s = tc_report_name(s, "TYPE_UNKNOWN_FIELD", field,
+                       arena.node_span_start[node], arena.node_span_end[node]);
+    return InferResult { st: s, ty: field };
+  }
+  // Unreachable: every node kind is handled above. Keep the "<error>" fallback
+  // so the function always returns.
   return InferResult { st: s, ty: "<error>" };
 }
