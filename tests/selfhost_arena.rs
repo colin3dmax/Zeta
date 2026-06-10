@@ -208,10 +208,107 @@ fn arena_matches_oracle_on_while_inside_if_else() {
     );
 }
 
+// --- Batch 3: top-level items (import/struct/enum) + postfix/compound
+// expressions (call/index/field-access/array & struct literals/strings) ---
+
+#[test]
+fn arena_matches_oracle_on_imports() {
+    assert_matches_oracle("import a.b.c;");
+    assert_matches_oracle("import a.b as x;");
+    assert_matches_oracle("export import a.b;");
+    assert_matches_oracle("export import a.b as y;");
+    assert_matches_oracle(
+        "import std.core; import demo.util as u; export import shared.api; export import shared.io as io;",
+    );
+}
+
+#[test]
+fn arena_matches_oracle_on_structs() {
+    assert_matches_oracle("struct Point { x: Int, y: Int, }");
+    assert_matches_oracle("export struct Pair { a: String, b: Bool, }");
+    assert_matches_oracle("struct Empty { }");
+}
+
+#[test]
+fn arena_matches_oracle_on_enums() {
+    assert_matches_oracle("enum Color { Red, Green, Blue, }");
+    assert_matches_oracle("enum Shape { Dot, Box(Int), Tagged(String), }");
+    assert_matches_oracle("export enum Mixed { A, B(Int), C, }");
+}
+
+#[test]
+fn arena_matches_oracle_on_mixed_items() {
+    assert_matches_oracle(
+        "module demo.app; import std.core; struct P { x: Int, } enum E { A, B(Int), } fn main() -> Int { return 1; }",
+    );
+}
+
+#[test]
+fn arena_matches_oracle_on_string_literals() {
+    assert_matches_oracle("fn f() -> String { let s: String = \"hello\"; return s; }");
+    assert_matches_oracle("fn f() -> String { let s: String = \"a\\nb\\tc\\\\d\\\"e\"; return s; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_calls() {
+    assert_matches_oracle("fn f() -> Int { let a: Int = g(x, y); return a; }");
+    assert_matches_oracle("fn f() -> Int { let a: Int = k(); return a; }");
+    assert_matches_oracle("fn f() -> Int { let a: Int = a.b.h(p); return a; }");
+    assert_matches_oracle("fn f() -> Int { let a: Int = f(g(h())); return a; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_index() {
+    assert_matches_oracle("fn f() -> Int { let a: Int = arr[i]; return a; }");
+    assert_matches_oracle("fn f() -> Int { let a: Int = m[i][j]; return a; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_field_access() {
+    assert_matches_oracle("fn f() -> Int { let a: Int = x.b.c; return a; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_array_literals() {
+    assert_matches_oracle("fn f() -> Int { let a: Int = []; return a; }");
+    assert_matches_oracle("fn f() -> Int { let a: Int = [1, 2, 3]; return a; }");
+    assert_matches_oracle("fn f() -> Int { let a: Int = [g(x), y[0]]; return a; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_struct_literals() {
+    assert_matches_oracle("fn f() -> Int { let a: Int = Point { x: 1, y: 2 }; return a; }");
+    assert_matches_oracle("fn f() -> Int { let a: Int = X {}; return a; }");
+    assert_matches_oracle(
+        "fn f() -> Int { let a: Int = Outer { inner: Inner { v: 3 } }; return a; }",
+    );
+}
+
+#[test]
+fn arena_matches_oracle_on_interleaved_postfix() {
+    assert_matches_oracle("fn f() -> Int { let a: Int = a.b(c)[d].e; return a; }");
+    assert_matches_oracle("fn f() -> Int { let a: Int = f(x)[0]; return a; }");
+    assert_matches_oracle("fn f() -> Int { let a: Int = make().field; return a; }");
+    assert_matches_oracle("fn f() -> Int { let a: Int = make()[i][j]; return a; }");
+    assert_matches_oracle("fn f() -> Int { let a: Int = arr[i].field; return a; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_struct_literal_not_in_condition() {
+    // `if`/`while` conditions must NOT treat `Name {` as a struct literal.
+    assert_matches_oracle("fn f() -> Int { if x { return 1; } return 0; }");
+    assert_matches_oracle("fn f() -> Int { let a: Int = P { v: 1 }; if a { return 1; } return 0; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_empty_return_and_no_return_type() {
+    assert_matches_oracle("fn f() { return; }");
+    assert_matches_oracle("module it.basic; fn main() { return; }");
+}
+
 // --- Regression: existing stage1 parity probes that use only this batch's
-// constructs. Probes relying on calls/indexing/field-access/struct/array
-// literals/strings/break/continue/for are intentionally skipped (see the test
-// returned summary for the list).
+// constructs. Probes relying on break/continue/for/match/compound-assign are
+// intentionally skipped (see the test returned summary for the list).
 fn assert_probe(path: &str) {
     let source = std::fs::read_to_string(path).expect("probe source should read");
     assert_matches_oracle(&source);
@@ -219,12 +316,34 @@ fn assert_probe(path: &str) {
 
 #[test]
 fn arena_matches_oracle_on_operator_probes() {
-    // op_07 (parens), op_13 (call/index/field — skip), op_chain (call/string — skip).
+    // op_13 (call/index/field) and op_chain_boundaries (call/string) are now
+    // covered by this batch's postfix/string support.
     for name in [
         "op_01", "op_02", "op_03", "op_04", "op_05", "op_06", "op_07", "op_08", "op_09",
-        "op_10", "op_11", "op_12", "op_14", "op_15",
+        "op_10", "op_11", "op_12", "op_13", "op_14", "op_15", "op_chain_boundaries",
     ] {
         assert_probe(&format!("testdata/stage1_parity/{name}.zeta"));
+    }
+}
+
+#[test]
+fn arena_matches_oracle_on_item_probes() {
+    for n in 1..=12 {
+        assert_probe(&format!("testdata/stage1_parity/it_{n:02}.zeta"));
+    }
+}
+
+#[test]
+fn arena_matches_oracle_on_postfix_probes() {
+    for n in 1..=17 {
+        assert_probe(&format!("testdata/stage1_parity/px_{n:02}.zeta"));
+    }
+}
+
+#[test]
+fn arena_matches_oracle_on_literal_probes() {
+    for n in 1..=16 {
+        assert_probe(&format!("testdata/stage1_parity/ll_{n:02}.zeta"));
     }
 }
 
@@ -251,5 +370,12 @@ fn arena_matches_oracle_on_control_flow_probes() {
 fn arena_matches_oracle_on_review_kitchen_sink() {
     assert_matches_oracle(
         "fn f(a: Int, b: Int) -> Bool { let mut r: Int = a || b && a == b + a * b; if a < b { r = a; } else if a > b { r = b; } else { r = 0; } while r < a & b | a { r = r + 1; } return !r == false && -a < ~b; }",
+    );
+}
+
+#[test]
+fn arena_matches_oracle_on_items_and_postfix_kitchen_sink() {
+    assert_matches_oracle(
+        "module demo.app; import demo.math; import demo.text as txt; export struct User { id: Int, name: String } enum Result { Ok(Int), Err(String), None } export fn build(n: Int) -> User { let items: IntArray = [1, n + 1, compute(n)[0]]; let u: User = User { id: next(), name: \"a\\nb\" }; return User { id: u.child.items[0], name: txt.fmt(u.name, [n][0]) }; }",
     );
 }

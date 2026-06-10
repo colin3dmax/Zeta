@@ -37,6 +37,18 @@ fn name_node() -> Int { return 1; }
 fn binary_node() -> Int { return 2; }
 fn bool_node() -> Int { return 3; }
 fn unary_node() -> Int { return 4; }
+fn string_node() -> Int { return 5; }
+fn call_node() -> Int { return 6; }
+fn index_node() -> Int { return 7; }
+fn field_node() -> Int { return 8; }
+fn array_node() -> Int { return 9; }
+fn struct_lit_node() -> Int { return 10; }
+
+// Top-level item kinds (the item list is dumped in source order).
+fn item_import() -> Int { return 0; }
+fn item_struct() -> Int { return 1; }
+fn item_enum() -> Int { return 2; }
+fn item_function() -> Int { return 3; }
 
 // Statement kinds.
 fn let_stmt() -> Int { return 0; }
@@ -44,6 +56,7 @@ fn return_stmt() -> Int { return 1; }
 fn if_stmt() -> Int { return 2; }
 fn while_stmt() -> Int { return 3; }
 fn assign_stmt() -> Int { return 4; }
+fn expr_stmt() -> Int { return 5; }
 
 // ---------------------------------------------------------------------------
 // Arena: a bundle of parallel arrays threaded functionally through the parser.
@@ -57,11 +70,42 @@ struct Arena {
   node_a: IntArray,
   node_b: IntArray,
   node_text: StringArray,
+  // Variable-arity expr children (call args, array elements) sliced via
+  // (start, count) recorded in node_a/node_b of the owning node.
+  child_list: IntArray,
+  // Struct-literal field inits: parallel name/value arrays, sliced via
+  // (start, count) in node_a/node_b of the owning StructLiteral node.
+  sl_field_name: StringArray,
+  sl_field_value: IntArray,
   // Module decl: has_module=1 when a `module a.b.c;` was present.
   has_module: Int,
   module_name: String,
+  // Unified source-order item list. item_kind picks the per-kind table and
+  // item_ref is the row index inside that table.
+  item_kind: IntArray,
+  item_ref: IntArray,
+  // Import table.
+  import_path: StringArray,
+  import_alias: StringArray,
+  import_exported: IntArray,
+  // Struct table (fields sliced via field_start/field_count into the field arena).
+  struct_name: StringArray,
+  struct_exported: IntArray,
+  struct_field_start: IntArray,
+  struct_field_count: IntArray,
+  field_name: StringArray,
+  field_type: StringArray,
+  // Enum table (variants sliced via variant_start/variant_count).
+  enum_name: StringArray,
+  enum_exported: IntArray,
+  enum_variant_start: IntArray,
+  enum_variant_count: IntArray,
+  variant_name: StringArray,
+  variant_payload: StringArray,
   // Function list.
   fn_name: StringArray,
+  fn_exported: IntArray,
+  fn_has_ret: IntArray,
   fn_ret: StringArray,
   fn_param_start: IntArray,
   fn_param_count: IntArray,
@@ -74,6 +118,7 @@ struct Arena {
   stmt_kind: IntArray,
   stmt_name: StringArray,
   stmt_type: StringArray,
+  stmt_has_type: IntArray,
   stmt_mut: IntArray,
   stmt_expr: IntArray,
   stmt_then_start: IntArray,
@@ -90,9 +135,31 @@ fn arena_empty() -> Arena {
     node_a: int_array_empty(),
     node_b: int_array_empty(),
     node_text: string_array_empty(),
+    child_list: int_array_empty(),
+    sl_field_name: string_array_empty(),
+    sl_field_value: int_array_empty(),
     has_module: 0,
     module_name: "",
+    item_kind: int_array_empty(),
+    item_ref: int_array_empty(),
+    import_path: string_array_empty(),
+    import_alias: string_array_empty(),
+    import_exported: int_array_empty(),
+    struct_name: string_array_empty(),
+    struct_exported: int_array_empty(),
+    struct_field_start: int_array_empty(),
+    struct_field_count: int_array_empty(),
+    field_name: string_array_empty(),
+    field_type: string_array_empty(),
+    enum_name: string_array_empty(),
+    enum_exported: int_array_empty(),
+    enum_variant_start: int_array_empty(),
+    enum_variant_count: int_array_empty(),
+    variant_name: string_array_empty(),
+    variant_payload: string_array_empty(),
     fn_name: string_array_empty(),
+    fn_exported: int_array_empty(),
+    fn_has_ret: int_array_empty(),
     fn_ret: string_array_empty(),
     fn_param_start: int_array_empty(),
     fn_param_count: int_array_empty(),
@@ -103,6 +170,7 @@ fn arena_empty() -> Arena {
     stmt_kind: int_array_empty(),
     stmt_name: string_array_empty(),
     stmt_type: string_array_empty(),
+    stmt_has_type: int_array_empty(),
     stmt_mut: int_array_empty(),
     stmt_expr: int_array_empty(),
     stmt_then_start: int_array_empty(),
@@ -179,6 +247,68 @@ fn push_binary_node(arena: Arena, left: Int, right: Int, op: String) -> Arena {
   return a;
 }
 
+// String literal: text is the raw token slice (quotes included); the dump pass
+// normalizes escapes to match Rust's Debug formatting.
+fn push_string_node(arena: Arena, text: String) -> Arena {
+  let mut a: Arena = arena;
+  a.node_kind = int_array_push(a.node_kind, string_node());
+  a.node_a = int_array_push(a.node_a, 0);
+  a.node_b = int_array_push(a.node_b, 0);
+  a.node_text = string_array_push(a.node_text, text);
+  return a;
+}
+
+// Call: text is the dotted callee path; (arg_start, arg_count) slice child_list.
+fn push_call_node(arena: Arena, callee: String, arg_start: Int, arg_count: Int) -> Arena {
+  let mut a: Arena = arena;
+  a.node_kind = int_array_push(a.node_kind, call_node());
+  a.node_a = int_array_push(a.node_a, arg_start);
+  a.node_b = int_array_push(a.node_b, arg_count);
+  a.node_text = string_array_push(a.node_text, callee);
+  return a;
+}
+
+// Index: node_a is the base expr, node_b is the index expr.
+fn push_index_node(arena: Arena, base: Int, index: Int) -> Arena {
+  let mut a: Arena = arena;
+  a.node_kind = int_array_push(a.node_kind, index_node());
+  a.node_a = int_array_push(a.node_a, base);
+  a.node_b = int_array_push(a.node_b, index);
+  a.node_text = string_array_push(a.node_text, "");
+  return a;
+}
+
+// FieldAccess: node_a is the base expr, text is the field name.
+fn push_field_node(arena: Arena, base: Int, field: String) -> Arena {
+  let mut a: Arena = arena;
+  a.node_kind = int_array_push(a.node_kind, field_node());
+  a.node_a = int_array_push(a.node_a, base);
+  a.node_b = int_array_push(a.node_b, 0);
+  a.node_text = string_array_push(a.node_text, field);
+  return a;
+}
+
+// ArrayLiteral: (elem_start, elem_count) slice child_list.
+fn push_array_node(arena: Arena, elem_start: Int, elem_count: Int) -> Arena {
+  let mut a: Arena = arena;
+  a.node_kind = int_array_push(a.node_kind, array_node());
+  a.node_a = int_array_push(a.node_a, elem_start);
+  a.node_b = int_array_push(a.node_b, elem_count);
+  a.node_text = string_array_push(a.node_text, "");
+  return a;
+}
+
+// StructLiteral: text is the type name; (field_start, field_count) slice the
+// parallel sl_field_name / sl_field_value arrays.
+fn push_struct_lit_node(arena: Arena, type_name: String, field_start: Int, field_count: Int) -> Arena {
+  let mut a: Arena = arena;
+  a.node_kind = int_array_push(a.node_kind, struct_lit_node());
+  a.node_a = int_array_push(a.node_a, field_start);
+  a.node_b = int_array_push(a.node_b, field_count);
+  a.node_text = string_array_push(a.node_text, type_name);
+  return a;
+}
+
 // ---------------------------------------------------------------------------
 // Recursive-descent parser. Token streams come from the lexer below.
 // Grammar (the M2 slice):
@@ -226,15 +356,154 @@ fn parse_module(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> 
     a.has_module = 1;
     a.module_name = name;
   }
-  while p < kinds.len && kinds[p] == token_fn() {
-    let r: ParseResult = parse_function(a, kinds, texts, p);
+  while p < kinds.len && kinds[p] != token_eof() {
+    let r: ParseResult = parse_item(a, kinds, texts, p);
     a = r.arena;
     p = r.pos;
   }
   return ParseResult { arena: a, node: 0, pos: p };
 }
 
-fn parse_function(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+// Dispatch one top-level item: import / struct / enum / fn, each optionally
+// prefixed with `export`. Registers the item in the source-order item list.
+fn parse_item(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let mut p: Int = pos;
+  let mut exported: Int = 0;
+  if p < kinds.len && kinds[p] == token_export() {
+    exported = 1;
+    p = p + 1;
+  }
+  if p < kinds.len && kinds[p] == token_import() {
+    return parse_import(arena, kinds, texts, p, exported);
+  }
+  if p < kinds.len && kinds[p] == token_struct() {
+    return parse_struct(arena, kinds, texts, p, exported);
+  }
+  if p < kinds.len && kinds[p] == token_enum() {
+    return parse_enum(arena, kinds, texts, p, exported);
+  }
+  return parse_function(arena, kinds, texts, p, exported);
+}
+
+// import := "import" path ("as" alias)? ";"   path := name ("." name)*
+fn parse_import(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, exported: Int) -> ParseResult {
+  let mut a: Arena = arena;
+  let mut p: Int = pos;
+  // "import"
+  p = p + 1;
+  let mut path: String = "";
+  while p < kinds.len && (kinds[p] == token_ident() || kinds[p] == token_dot()) {
+    path = string_concat(path, texts[p]);
+    p = p + 1;
+  }
+  let mut alias: String = "";
+  if p < kinds.len && kinds[p] == token_as() {
+    p = p + 1;
+    alias = texts[p];
+    p = p + 1;
+  }
+  if p < kinds.len && kinds[p] == token_semicolon() {
+    p = p + 1;
+  }
+  let ref: Int = a.import_path.len;
+  a.import_path = string_array_push(a.import_path, path);
+  a.import_alias = string_array_push(a.import_alias, alias);
+  a.import_exported = int_array_push(a.import_exported, exported);
+  a.item_kind = int_array_push(a.item_kind, item_import());
+  a.item_ref = int_array_push(a.item_ref, ref);
+  return ParseResult { arena: a, node: 0, pos: p };
+}
+
+// struct := "struct" name "{" (field ("," field)* ","?)? "}"  field := name ":" type
+fn parse_struct(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, exported: Int) -> ParseResult {
+  let mut a: Arena = arena;
+  let mut p: Int = pos;
+  // "struct"
+  p = p + 1;
+  let name: String = texts[p];
+  p = p + 1;
+  if p < kinds.len && kinds[p] == token_lbrace() {
+    p = p + 1;
+  }
+  let field_start: Int = a.field_name.len;
+  let mut field_count: Int = 0;
+  while p < kinds.len && kinds[p] != token_rbrace() {
+    if kinds[p] == token_comma() {
+      p = p + 1;
+    } else {
+      let fname: String = texts[p];
+      p = p + 1;
+      if p < kinds.len && kinds[p] == token_colon() {
+        p = p + 1;
+      }
+      let ftype: String = texts[p];
+      p = p + 1;
+      a.field_name = string_array_push(a.field_name, fname);
+      a.field_type = string_array_push(a.field_type, ftype);
+      field_count = field_count + 1;
+    }
+  }
+  if p < kinds.len && kinds[p] == token_rbrace() {
+    p = p + 1;
+  }
+  let ref: Int = a.struct_name.len;
+  a.struct_name = string_array_push(a.struct_name, name);
+  a.struct_exported = int_array_push(a.struct_exported, exported);
+  a.struct_field_start = int_array_push(a.struct_field_start, field_start);
+  a.struct_field_count = int_array_push(a.struct_field_count, field_count);
+  a.item_kind = int_array_push(a.item_kind, item_struct());
+  a.item_ref = int_array_push(a.item_ref, ref);
+  return ParseResult { arena: a, node: 0, pos: p };
+}
+
+// enum := "enum" name "{" (variant ("," variant)* ","?)? "}"
+// variant := name ("(" type ")")?
+fn parse_enum(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, exported: Int) -> ParseResult {
+  let mut a: Arena = arena;
+  let mut p: Int = pos;
+  // "enum"
+  p = p + 1;
+  let name: String = texts[p];
+  p = p + 1;
+  if p < kinds.len && kinds[p] == token_lbrace() {
+    p = p + 1;
+  }
+  let variant_start: Int = a.variant_name.len;
+  let mut variant_count: Int = 0;
+  while p < kinds.len && kinds[p] != token_rbrace() {
+    if kinds[p] == token_comma() {
+      p = p + 1;
+    } else {
+      let vname: String = texts[p];
+      p = p + 1;
+      let mut payload: String = "";
+      if p < kinds.len && kinds[p] == token_lparen() {
+        p = p + 1;
+        payload = texts[p];
+        p = p + 1;
+        if p < kinds.len && kinds[p] == token_rparen() {
+          p = p + 1;
+        }
+      }
+      a.variant_name = string_array_push(a.variant_name, vname);
+      a.variant_payload = string_array_push(a.variant_payload, payload);
+      variant_count = variant_count + 1;
+    }
+  }
+  if p < kinds.len && kinds[p] == token_rbrace() {
+    p = p + 1;
+  }
+  let ref: Int = a.enum_name.len;
+  a.enum_name = string_array_push(a.enum_name, name);
+  a.enum_exported = int_array_push(a.enum_exported, exported);
+  a.enum_variant_start = int_array_push(a.enum_variant_start, variant_start);
+  a.enum_variant_count = int_array_push(a.enum_variant_count, variant_count);
+  a.item_kind = int_array_push(a.item_kind, item_enum());
+  a.item_ref = int_array_push(a.item_ref, ref);
+  return ParseResult { arena: a, node: 0, pos: p };
+}
+
+fn parse_function(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, exported: Int) -> ParseResult {
   let mut a: Arena = arena;
   let mut p: Int = pos;
   // "fn"
@@ -267,22 +536,31 @@ fn parse_function(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -
   if p < kinds.len && kinds[p] == token_rparen() {
     p = p + 1;
   }
-  // "->" type
+  // "->" type  (optional; when absent the function has no explicit return type
+  // and the dump omits the `Return type=` line entirely).
+  let mut has_ret: Int = 0;
+  let mut ret: String = "";
   if p < kinds.len && kinds[p] == token_arrow() {
     p = p + 1;
+    ret = texts[p];
+    p = p + 1;
+    has_ret = 1;
   }
-  let ret: String = texts[p];
-  p = p + 1;
   // "{" stmt* "}"
   let body: BlockResult = parse_block(a, kinds, texts, p);
   a = body.arena;
   p = body.pos;
+  let ref: Int = a.fn_name.len;
   a.fn_name = string_array_push(a.fn_name, name);
+  a.fn_exported = int_array_push(a.fn_exported, exported);
+  a.fn_has_ret = int_array_push(a.fn_has_ret, has_ret);
   a.fn_ret = string_array_push(a.fn_ret, ret);
   a.fn_param_start = int_array_push(a.fn_param_start, param_start);
   a.fn_param_count = int_array_push(a.fn_param_count, param_count);
   a.fn_body_start = int_array_push(a.fn_body_start, body.start);
   a.fn_body_count = int_array_push(a.fn_body_count, body.count);
+  a.item_kind = int_array_push(a.item_kind, item_function());
+  a.item_ref = int_array_push(a.item_ref, ref);
   return ParseResult { arena: a, node: 0, pos: p };
 }
 
@@ -333,12 +611,13 @@ fn parse_stmt(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> Pa
 }
 
 // Append a fully-described statement to the statement arena, returning its index.
-fn push_stmt(arena: Arena, kind: Int, name: String, ty: String, is_mut: Int, expr: Int,
+fn push_stmt(arena: Arena, kind: Int, name: String, ty: String, has_type: Int, is_mut: Int, expr: Int,
              then_start: Int, then_count: Int, else_start: Int, else_count: Int) -> Arena {
   let mut a: Arena = arena;
   a.stmt_kind = int_array_push(a.stmt_kind, kind);
   a.stmt_name = string_array_push(a.stmt_name, name);
   a.stmt_type = string_array_push(a.stmt_type, ty);
+  a.stmt_has_type = int_array_push(a.stmt_has_type, has_type);
   a.stmt_mut = int_array_push(a.stmt_mut, is_mut);
   a.stmt_expr = int_array_push(a.stmt_expr, expr);
   a.stmt_then_start = int_array_push(a.stmt_then_start, then_start);
@@ -361,12 +640,15 @@ fn parse_let(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> Par
   }
   let name: String = texts[p];
   p = p + 1;
-  // ":" type
+  // optional ":" type — an untyped `let` omits the `type=` field in the dump.
+  let mut has_type: Int = 0;
+  let mut ty: String = "";
   if p < kinds.len && kinds[p] == token_colon() {
     p = p + 1;
+    ty = texts[p];
+    p = p + 1;
+    has_type = 1;
   }
-  let ty: String = texts[p];
-  p = p + 1;
   // "="
   if p < kinds.len && kinds[p] == token_eq() {
     p = p + 1;
@@ -379,7 +661,7 @@ fn parse_let(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> Par
     p = p + 1;
   }
   let index: Int = a.stmt_kind.len;
-  a = push_stmt(a, let_stmt(), name, ty, is_mut, r.node, 0, 0, 0, 0);
+  a = push_stmt(a, let_stmt(), name, ty, has_type, is_mut, r.node, 0, 0, 0, 0);
   return ParseResult { arena: a, node: index, pos: p };
 }
 
@@ -388,6 +670,13 @@ fn parse_return(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> 
   let mut p: Int = pos;
   // "return"
   p = p + 1;
+  // Empty return (`return;`) carries no expression; -1 marks the missing child.
+  if p < kinds.len && kinds[p] == token_semicolon() {
+    p = p + 1;
+    let index: Int = a.stmt_kind.len;
+    a = push_stmt(a, return_stmt(), "", "", 0, 0, 0 - 1, 0, 0, 0, 0);
+    return ParseResult { arena: a, node: index, pos: p };
+  }
   let r: ParseResult = parse_expr(a, kinds, texts, p);
   a = r.arena;
   p = r.pos;
@@ -396,7 +685,7 @@ fn parse_return(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> 
     p = p + 1;
   }
   let index: Int = a.stmt_kind.len;
-  a = push_stmt(a, return_stmt(), "", "", 0, r.node, 0, 0, 0, 0);
+  a = push_stmt(a, return_stmt(), "", "", 0, 0, r.node, 0, 0, 0, 0);
   return ParseResult { arena: a, node: index, pos: p };
 }
 
@@ -408,7 +697,7 @@ fn parse_if(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> Pars
   let mut p: Int = pos;
   // "if"
   p = p + 1;
-  let cond: ParseResult = parse_expr(a, kinds, texts, p);
+  let cond: ParseResult = parse_expr_with(a, kinds, texts, p, 0);
   a = cond.arena;
   p = cond.pos;
   let then_block: BlockResult = parse_block(a, kinds, texts, p);
@@ -436,7 +725,7 @@ fn parse_if(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> Pars
     }
   }
   let index: Int = a.stmt_kind.len;
-  a = push_stmt(a, if_stmt(), "", "", 0, cond.node,
+  a = push_stmt(a, if_stmt(), "", "", 0, 0, cond.node,
                 then_block.start, then_block.count, else_start, else_count);
   return ParseResult { arena: a, node: index, pos: p };
 }
@@ -447,37 +736,51 @@ fn parse_while(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> P
   let mut p: Int = pos;
   // "while"
   p = p + 1;
-  let cond: ParseResult = parse_expr(a, kinds, texts, p);
+  let cond: ParseResult = parse_expr_with(a, kinds, texts, p, 0);
   a = cond.arena;
   p = cond.pos;
   let body: BlockResult = parse_block(a, kinds, texts, p);
   a = body.arena;
   p = body.pos;
   let index: Int = a.stmt_kind.len;
-  a = push_stmt(a, while_stmt(), "", "", 0, cond.node,
+  a = push_stmt(a, while_stmt(), "", "", 0, 0, cond.node,
                 body.start, body.count, 0, 0);
   return ParseResult { arena: a, node: index, pos: p };
 }
 
-// assign := name "=" expr ";"  (simple variable target only)
+// Statement starting with an expression: either a simple-name assignment
+//   assign   := NAME "=" expr ";"
+// or a bare expression statement (e.g. a call used for its effect)
+//   exprstmt := expr ";"
+// Complex assignment targets (a.b = / a[i] =) and compound assignment are out of
+// this slice; the simple-name lookahead below keeps us within it.
 fn parse_assign(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
-  let mut a: Arena = arena;
-  let mut p: Int = pos;
-  let name: String = texts[p];
-  p = p + 1;
-  // "="
-  if p < kinds.len && kinds[p] == token_eq() {
+  if pos + 1 < kinds.len && kinds[pos] == token_ident() && kinds[pos + 1] == token_eq() {
+    let mut a: Arena = arena;
+    let mut p: Int = pos;
+    let name: String = texts[p];
     p = p + 1;
+    // "="
+    p = p + 1;
+    let r: ParseResult = parse_expr(a, kinds, texts, p);
+    a = r.arena;
+    p = r.pos;
+    if p < kinds.len && kinds[p] == token_semicolon() {
+      p = p + 1;
+    }
+    let index: Int = a.stmt_kind.len;
+    a = push_stmt(a, assign_stmt(), name, "", 0, 0, r.node, 0, 0, 0, 0);
+    return ParseResult { arena: a, node: index, pos: p };
   }
-  let r: ParseResult = parse_expr(a, kinds, texts, p);
-  a = r.arena;
-  p = r.pos;
-  // ";"
+  // Bare expression statement.
+  let r: ParseResult = parse_expr(arena, kinds, texts, pos);
+  let mut a: Arena = r.arena;
+  let mut p: Int = r.pos;
   if p < kinds.len && kinds[p] == token_semicolon() {
     p = p + 1;
   }
   let index: Int = a.stmt_kind.len;
-  a = push_stmt(a, assign_stmt(), name, "", 0, r.node, 0, 0, 0, 0);
+  a = push_stmt(a, expr_stmt(), "", "", 0, 0, r.node, 0, 0, 0, 0);
   return ParseResult { arena: a, node: index, pos: p };
 }
 
@@ -494,8 +797,16 @@ fn parse_assign(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> 
 // Every binary tier folds left-associatively by the same post-order pattern as
 // the original `+ - * /` slice.
 // ---------------------------------------------------------------------------
+// allow_struct controls struct-literal recognition: it is 1 in normal value
+// positions and 0 throughout an if/while condition (matching the Rust parser's
+// no-struct-literal restriction, which — like the oracle — does NOT reset inside
+// parens, call args, or index brackets within the condition).
 fn parse_expr(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
-  return parse_or(arena, kinds, texts, pos);
+  return parse_or(arena, kinds, texts, pos, 1);
+}
+
+fn parse_expr_with(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, allow_struct: Int) -> ParseResult {
+  return parse_or(arena, kinds, texts, pos, allow_struct);
 }
 
 fn is_or_op(kind: Int) -> Bool {
@@ -519,14 +830,14 @@ fn is_mul_op(kind: Int) -> Bool {
   return kind == token_star() || kind == token_slash() || kind == token_percent();
 }
 
-fn parse_or(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
-  let left: ParseResult = parse_and(arena, kinds, texts, pos);
+fn parse_or(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, allow_struct: Int) -> ParseResult {
+  let left: ParseResult = parse_and(arena, kinds, texts, pos, allow_struct);
   let mut a: Arena = left.arena;
   let mut node: Int = left.node;
   let mut p: Int = left.pos;
   while p < kinds.len && is_or_op(kinds[p]) {
     let op: String = binary_op_name(kinds[p]);
-    let rhs: ParseResult = parse_and(a, kinds, texts, p + 1);
+    let rhs: ParseResult = parse_and(a, kinds, texts, p + 1, allow_struct);
     a = rhs.arena;
     p = rhs.pos;
     let new_index: Int = a.node_kind.len;
@@ -536,14 +847,14 @@ fn parse_or(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> Pars
   return ParseResult { arena: a, node: node, pos: p };
 }
 
-fn parse_and(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
-  let left: ParseResult = parse_bit(arena, kinds, texts, pos);
+fn parse_and(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, allow_struct: Int) -> ParseResult {
+  let left: ParseResult = parse_bit(arena, kinds, texts, pos, allow_struct);
   let mut a: Arena = left.arena;
   let mut node: Int = left.node;
   let mut p: Int = left.pos;
   while p < kinds.len && kinds[p] == token_andand() {
     let op: String = binary_op_name(kinds[p]);
-    let rhs: ParseResult = parse_bit(a, kinds, texts, p + 1);
+    let rhs: ParseResult = parse_bit(a, kinds, texts, p + 1, allow_struct);
     a = rhs.arena;
     p = rhs.pos;
     let new_index: Int = a.node_kind.len;
@@ -553,14 +864,14 @@ fn parse_and(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> Par
   return ParseResult { arena: a, node: node, pos: p };
 }
 
-fn parse_bit(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
-  let left: ParseResult = parse_cmp(arena, kinds, texts, pos);
+fn parse_bit(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, allow_struct: Int) -> ParseResult {
+  let left: ParseResult = parse_cmp(arena, kinds, texts, pos, allow_struct);
   let mut a: Arena = left.arena;
   let mut node: Int = left.node;
   let mut p: Int = left.pos;
   while p < kinds.len && is_bit_op(kinds[p]) {
     let op: String = binary_op_name(kinds[p]);
-    let rhs: ParseResult = parse_cmp(a, kinds, texts, p + 1);
+    let rhs: ParseResult = parse_cmp(a, kinds, texts, p + 1, allow_struct);
     a = rhs.arena;
     p = rhs.pos;
     let new_index: Int = a.node_kind.len;
@@ -570,14 +881,14 @@ fn parse_bit(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> Par
   return ParseResult { arena: a, node: node, pos: p };
 }
 
-fn parse_cmp(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
-  let left: ParseResult = parse_add(arena, kinds, texts, pos);
+fn parse_cmp(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, allow_struct: Int) -> ParseResult {
+  let left: ParseResult = parse_add(arena, kinds, texts, pos, allow_struct);
   let mut a: Arena = left.arena;
   let mut node: Int = left.node;
   let mut p: Int = left.pos;
   while p < kinds.len && is_cmp_op(kinds[p]) {
     let op: String = binary_op_name(kinds[p]);
-    let rhs: ParseResult = parse_add(a, kinds, texts, p + 1);
+    let rhs: ParseResult = parse_add(a, kinds, texts, p + 1, allow_struct);
     a = rhs.arena;
     p = rhs.pos;
     let new_index: Int = a.node_kind.len;
@@ -587,14 +898,14 @@ fn parse_cmp(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> Par
   return ParseResult { arena: a, node: node, pos: p };
 }
 
-fn parse_add(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
-  let left: ParseResult = parse_mul(arena, kinds, texts, pos);
+fn parse_add(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, allow_struct: Int) -> ParseResult {
+  let left: ParseResult = parse_mul(arena, kinds, texts, pos, allow_struct);
   let mut a: Arena = left.arena;
   let mut node: Int = left.node;
   let mut p: Int = left.pos;
   while p < kinds.len && is_add_op(kinds[p]) {
     let op: String = binary_op_name(kinds[p]);
-    let rhs: ParseResult = parse_mul(a, kinds, texts, p + 1);
+    let rhs: ParseResult = parse_mul(a, kinds, texts, p + 1, allow_struct);
     a = rhs.arena;
     p = rhs.pos;
     let new_index: Int = a.node_kind.len;
@@ -604,14 +915,14 @@ fn parse_add(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> Par
   return ParseResult { arena: a, node: node, pos: p };
 }
 
-fn parse_mul(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
-  let left: ParseResult = parse_unary(arena, kinds, texts, pos);
+fn parse_mul(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, allow_struct: Int) -> ParseResult {
+  let left: ParseResult = parse_unary(arena, kinds, texts, pos, allow_struct);
   let mut a: Arena = left.arena;
   let mut node: Int = left.node;
   let mut p: Int = left.pos;
   while p < kinds.len && is_mul_op(kinds[p]) {
     let op: String = binary_op_name(kinds[p]);
-    let rhs: ParseResult = parse_unary(a, kinds, texts, p + 1);
+    let rhs: ParseResult = parse_unary(a, kinds, texts, p + 1, allow_struct);
     a = rhs.arena;
     p = rhs.pos;
     let new_index: Int = a.node_kind.len;
@@ -621,32 +932,79 @@ fn parse_mul(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> Par
   return ParseResult { arena: a, node: node, pos: p };
 }
 
-// unary := ("!"|"-"|"~") unary | primary  — right-recursive, highest binding.
-fn parse_unary(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+// unary := ("!"|"-"|"~") unary | postfix  — right-recursive, highest binding.
+fn parse_unary(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, allow_struct: Int) -> ParseResult {
   if kinds[pos] == token_bang() || kinds[pos] == token_minus() || kinds[pos] == token_tilde() {
     let op: String = unary_op_name(kinds[pos]);
-    let operand: ParseResult = parse_unary(arena, kinds, texts, pos + 1);
+    let operand: ParseResult = parse_unary(arena, kinds, texts, pos + 1, allow_struct);
     let mut a: Arena = operand.arena;
     let new_index: Int = a.node_kind.len;
     a = push_unary_node(a, operand.node, op);
     return ParseResult { arena: a, node: new_index, pos: operand.pos };
   }
-  return parse_primary(arena, kinds, texts, pos);
+  return parse_postfix(arena, kinds, texts, pos, allow_struct);
 }
 
-// primary := INT | true | false | NAME | "(" expr ")"
-fn parse_primary(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+// postfix := primary ( "[" expr "]" | "." NAME )*
+// A leading identifier is special-cased into the primary parser: it greedily
+// consumes a dotted name path and, if a "(" follows that path, becomes a Call
+// whose callee is the joined path. Once any non-call suffix has been applied the
+// base is no longer a name path, so a subsequent "(" is not a call (the oracle
+// rejects e.g. `f(x)(y)` / `make().m()`); such inputs are out of this slice.
+fn parse_postfix(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, allow_struct: Int) -> ParseResult {
+  let prim: ParseResult = parse_primary(arena, kinds, texts, pos, allow_struct);
+  let mut a: Arena = prim.arena;
+  let mut node: Int = prim.node;
+  let mut p: Int = prim.pos;
+  while p < kinds.len && (kinds[p] == token_lbracket() || kinds[p] == token_dot()) {
+    if kinds[p] == token_lbracket() {
+      p = p + 1;
+      let idx: ParseResult = parse_expr_with(a, kinds, texts, p, allow_struct);
+      a = idx.arena;
+      p = idx.pos;
+      if p < kinds.len && kinds[p] == token_rbracket() {
+        p = p + 1;
+      }
+      let new_index: Int = a.node_kind.len;
+      a = push_index_node(a, node, idx.node);
+      node = new_index;
+    } else {
+      // "." NAME — field access (calls were already absorbed in parse_primary).
+      p = p + 1;
+      let field: String = texts[p];
+      p = p + 1;
+      let new_index: Int = a.node_kind.len;
+      a = push_field_node(a, node, field);
+      node = new_index;
+    }
+  }
+  return ParseResult { arena: a, node: node, pos: p };
+}
+
+// primary := INT | STRING | true | false | "[" array "]"
+//          | NAME-path ( "(" args ")" )?      (call when path is followed by "(")
+//          | NAME "{" struct-fields "}"        (struct literal, when allowed)
+//          | "(" expr ")"
+fn parse_primary(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, allow_struct: Int) -> ParseResult {
   if kinds[pos] == token_lparen() {
-    let inner: ParseResult = parse_expr(arena, kinds, texts, pos + 1);
+    let inner: ParseResult = parse_expr_with(arena, kinds, texts, pos + 1, allow_struct);
     let mut p: Int = inner.pos;
     if p < kinds.len && kinds[p] == token_rparen() {
       p = p + 1;
     }
     return ParseResult { arena: inner.arena, node: inner.node, pos: p };
   }
+  if kinds[pos] == token_lbracket() {
+    return parse_array_literal(arena, kinds, texts, pos, allow_struct);
+  }
   if kinds[pos] == token_int() {
     let index: Int = arena.node_kind.len;
     let a: Arena = push_int_node(arena, texts[pos]);
+    return ParseResult { arena: a, node: index, pos: pos + 1 };
+  }
+  if kinds[pos] == token_string() {
+    let index: Int = arena.node_kind.len;
+    let a: Arena = push_string_node(arena, texts[pos]);
     return ParseResult { arena: a, node: index, pos: pos + 1 };
   }
   if kinds[pos] == token_true() || kinds[pos] == token_false() {
@@ -654,10 +1012,136 @@ fn parse_primary(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) ->
     let a: Arena = push_bool_node(arena, texts[pos]);
     return ParseResult { arena: a, node: index, pos: pos + 1 };
   }
-  // identifier / name
-  let index: Int = arena.node_kind.len;
-  let a: Arena = push_name_node(arena, texts[pos]);
-  return ParseResult { arena: a, node: index, pos: pos + 1 };
+  // identifier: scan a dotted name path.
+  let mut path: String = texts[pos];
+  let mut p: Int = pos + 1;
+  while p + 1 < kinds.len && kinds[p] == token_dot() && kinds[p + 1] == token_ident() {
+    path = string_concat(path, ".");
+    path = string_concat(path, texts[p + 1]);
+    p = p + 2;
+  }
+  // "(" → qualified/simple call over the joined path.
+  if p < kinds.len && kinds[p] == token_lparen() {
+    return parse_call(arena, kinds, texts, p, path, allow_struct);
+  }
+  // NAME "{" → struct literal (only outside if/while condition contexts).
+  if allow_struct == 1 && p < kinds.len && kinds[p] == token_lbrace()
+      && p == pos + 1 {
+    return parse_struct_literal(arena, kinds, texts, p, texts[pos], allow_struct);
+  }
+  // Otherwise the dotted path is a Name (first segment) wrapped in FieldAccess
+  // nodes for each subsequent segment.
+  let mut a: Arena = arena;
+  let base_index: Int = a.node_kind.len;
+  a = push_name_node(a, texts[pos]);
+  let mut node: Int = base_index;
+  let mut q: Int = pos + 1;
+  while q + 1 < kinds.len && kinds[q] == token_dot() && kinds[q + 1] == token_ident() {
+    let new_index: Int = a.node_kind.len;
+    a = push_field_node(a, node, texts[q + 1]);
+    node = new_index;
+    q = q + 2;
+  }
+  return ParseResult { arena: a, node: node, pos: p };
+}
+
+// call := "(" (expr ("," expr)*)? ")"  — `pos` points at the "(".
+fn parse_call(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, callee: String, allow_struct: Int) -> ParseResult {
+  let mut a: Arena = arena;
+  let mut p: Int = pos + 1;
+  let mut args: IntArray = int_array_empty();
+  while p < kinds.len && kinds[p] != token_rparen() {
+    if kinds[p] == token_comma() {
+      p = p + 1;
+    } else {
+      let arg: ParseResult = parse_expr_with(a, kinds, texts, p, allow_struct);
+      a = arg.arena;
+      p = arg.pos;
+      args = int_array_push(args, arg.node);
+    }
+  }
+  if p < kinds.len && kinds[p] == token_rparen() {
+    p = p + 1;
+  }
+  let start: Int = a.child_list.len;
+  let count: Int = args.len;
+  let mut i: Int = 0;
+  while i < count {
+    a.child_list = int_array_push(a.child_list, args[i]);
+    i = i + 1;
+  }
+  let new_index: Int = a.node_kind.len;
+  a = push_call_node(a, callee, start, count);
+  return ParseResult { arena: a, node: new_index, pos: p };
+}
+
+// array := "[" (expr ("," expr)*)? "]"  — `pos` points at the "[".
+fn parse_array_literal(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, allow_struct: Int) -> ParseResult {
+  let mut a: Arena = arena;
+  let mut p: Int = pos + 1;
+  let mut elems: IntArray = int_array_empty();
+  while p < kinds.len && kinds[p] != token_rbracket() {
+    if kinds[p] == token_comma() {
+      p = p + 1;
+    } else {
+      let el: ParseResult = parse_expr_with(a, kinds, texts, p, allow_struct);
+      a = el.arena;
+      p = el.pos;
+      elems = int_array_push(elems, el.node);
+    }
+  }
+  if p < kinds.len && kinds[p] == token_rbracket() {
+    p = p + 1;
+  }
+  let start: Int = a.child_list.len;
+  let count: Int = elems.len;
+  let mut i: Int = 0;
+  while i < count {
+    a.child_list = int_array_push(a.child_list, elems[i]);
+    i = i + 1;
+  }
+  let new_index: Int = a.node_kind.len;
+  a = push_array_node(a, start, count);
+  return ParseResult { arena: a, node: new_index, pos: p };
+}
+
+// struct literal := NAME "{" (field ("," field)* ","?)? "}"   field := NAME ":" expr
+// `pos` points at the "{"; `type_name` is the preceding identifier.
+fn parse_struct_literal(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, type_name: String, allow_struct: Int) -> ParseResult {
+  let mut a: Arena = arena;
+  let mut p: Int = pos + 1;
+  let mut names: StringArray = string_array_empty();
+  let mut values: IntArray = int_array_empty();
+  while p < kinds.len && kinds[p] != token_rbrace() {
+    if kinds[p] == token_comma() {
+      p = p + 1;
+    } else {
+      let fname: String = texts[p];
+      p = p + 1;
+      if p < kinds.len && kinds[p] == token_colon() {
+        p = p + 1;
+      }
+      let val: ParseResult = parse_expr_with(a, kinds, texts, p, allow_struct);
+      a = val.arena;
+      p = val.pos;
+      names = string_array_push(names, fname);
+      values = int_array_push(values, val.node);
+    }
+  }
+  if p < kinds.len && kinds[p] == token_rbrace() {
+    p = p + 1;
+  }
+  let start: Int = a.sl_field_name.len;
+  let count: Int = values.len;
+  let mut i: Int = 0;
+  while i < count {
+    a.sl_field_name = string_array_push(a.sl_field_name, names[i]);
+    a.sl_field_value = int_array_push(a.sl_field_value, values[i]);
+    i = i + 1;
+  }
+  let new_index: Int = a.node_kind.len;
+  a = push_struct_lit_node(a, type_name, start, count);
+  return ParseResult { arena: a, node: new_index, pos: p };
 }
 
 fn binary_op_name(kind: Int) -> String {
@@ -696,35 +1180,121 @@ fn dump_from_arena(arena: Arena) -> String {
     out = string_concat(out, arena.module_name);
     out = string_concat(out, "\n");
   }
-  let mut fi: Int = 0;
-  while fi < arena.fn_name.len {
-    out = string_concat(out, "  Function name=");
-    out = string_concat(out, arena.fn_name[fi]);
-    out = string_concat(out, " exported=false\n");
-    let pstart: Int = arena.fn_param_start[fi];
-    let pcount: Int = arena.fn_param_count[fi];
-    let mut pi: Int = 0;
-    while pi < pcount {
-      out = string_concat(out, "    Param name=");
-      out = string_concat(out, arena.param_name[pstart + pi]);
-      out = string_concat(out, " type=");
-      out = string_concat(out, arena.param_type[pstart + pi]);
-      out = string_concat(out, "\n");
-      pi = pi + 1;
+  let mut ii: Int = 0;
+  while ii < arena.item_kind.len {
+    let kind: Int = arena.item_kind[ii];
+    let ref: Int = arena.item_ref[ii];
+    if kind == item_import() {
+      out = dump_import(out, arena, ref);
+    } else {
+      if kind == item_struct() {
+        out = dump_struct(out, arena, ref);
+      } else {
+        if kind == item_enum() {
+          out = dump_enum(out, arena, ref);
+        } else {
+          out = dump_function(out, arena, ref);
+        }
+      }
     }
-    out = string_concat(out, "    Return type=");
-    out = string_concat(out, arena.fn_ret[fi]);
-    out = string_concat(out, "\n");
-    let start: Int = arena.fn_body_start[fi];
-    let count: Int = arena.fn_body_count[fi];
-    let mut si: Int = 0;
-    while si < count {
-      out = dump_stmt(out, arena, arena.block_list[start + si], 2);
-      si = si + 1;
-    }
-    fi = fi + 1;
+    ii = ii + 1;
   }
   return out;
+}
+
+fn dump_import(out: String, arena: Arena, ref: Int) -> String {
+  let mut next: String = string_concat(out, "  Import path=");
+  next = string_concat(next, arena.import_path[ref]);
+  if arena.import_alias[ref] != "" {
+    next = string_concat(next, " alias=");
+    next = string_concat(next, arena.import_alias[ref]);
+  }
+  if arena.import_exported[ref] == 1 {
+    next = string_concat(next, " exported=true");
+  }
+  next = string_concat(next, "\n");
+  return next;
+}
+
+fn dump_struct(out: String, arena: Arena, ref: Int) -> String {
+  let mut next: String = string_concat(out, "  Struct name=");
+  next = string_concat(next, arena.struct_name[ref]);
+  next = string_concat(next, " exported=");
+  next = string_concat(next, bool_text(arena.struct_exported[ref]));
+  next = string_concat(next, "\n");
+  let start: Int = arena.struct_field_start[ref];
+  let count: Int = arena.struct_field_count[ref];
+  let mut i: Int = 0;
+  while i < count {
+    next = string_concat(next, "    Field name=");
+    next = string_concat(next, arena.field_name[start + i]);
+    next = string_concat(next, " type=");
+    next = string_concat(next, arena.field_type[start + i]);
+    next = string_concat(next, "\n");
+    i = i + 1;
+  }
+  return next;
+}
+
+fn dump_enum(out: String, arena: Arena, ref: Int) -> String {
+  let mut next: String = string_concat(out, "  Enum name=");
+  next = string_concat(next, arena.enum_name[ref]);
+  next = string_concat(next, " exported=");
+  next = string_concat(next, bool_text(arena.enum_exported[ref]));
+  next = string_concat(next, "\n");
+  let start: Int = arena.enum_variant_start[ref];
+  let count: Int = arena.enum_variant_count[ref];
+  let mut i: Int = 0;
+  while i < count {
+    next = string_concat(next, "    Variant name=");
+    next = string_concat(next, arena.variant_name[start + i]);
+    if arena.variant_payload[start + i] != "" {
+      next = string_concat(next, " payload=");
+      next = string_concat(next, arena.variant_payload[start + i]);
+    }
+    next = string_concat(next, "\n");
+    i = i + 1;
+  }
+  return next;
+}
+
+fn dump_function(out: String, arena: Arena, fi: Int) -> String {
+  let mut next: String = string_concat(out, "  Function name=");
+  next = string_concat(next, arena.fn_name[fi]);
+  next = string_concat(next, " exported=");
+  next = string_concat(next, bool_text(arena.fn_exported[fi]));
+  next = string_concat(next, "\n");
+  let pstart: Int = arena.fn_param_start[fi];
+  let pcount: Int = arena.fn_param_count[fi];
+  let mut pi: Int = 0;
+  while pi < pcount {
+    next = string_concat(next, "    Param name=");
+    next = string_concat(next, arena.param_name[pstart + pi]);
+    next = string_concat(next, " type=");
+    next = string_concat(next, arena.param_type[pstart + pi]);
+    next = string_concat(next, "\n");
+    pi = pi + 1;
+  }
+  if arena.fn_has_ret[fi] == 1 {
+    next = string_concat(next, "    Return type=");
+    next = string_concat(next, arena.fn_ret[fi]);
+    next = string_concat(next, "\n");
+  }
+  let start: Int = arena.fn_body_start[fi];
+  let count: Int = arena.fn_body_count[fi];
+  let mut si: Int = 0;
+  while si < count {
+    next = dump_stmt(next, arena, arena.block_list[start + si], 2);
+    si = si + 1;
+  }
+  return next;
+}
+
+fn bool_text(flag: Int) -> String {
+  if flag == 1 {
+    return "true";
+  }
+  return "false";
 }
 
 // Walk one statement. `depth` is the indentation level (in 2-space units) at
@@ -736,8 +1306,10 @@ fn dump_stmt(out: String, arena: Arena, index: Int, depth: Int) -> String {
     let mut next: String = string_concat(out, pad);
     next = string_concat(next, "Let name=");
     next = string_concat(next, arena.stmt_name[index]);
-    next = string_concat(next, " type=");
-    next = string_concat(next, arena.stmt_type[index]);
+    if arena.stmt_has_type[index] == 1 {
+      next = string_concat(next, " type=");
+      next = string_concat(next, arena.stmt_type[index]);
+    }
     if arena.stmt_mut[index] == 1 {
       next = string_concat(next, " mutable=true");
     }
@@ -748,7 +1320,9 @@ fn dump_stmt(out: String, arena: Arena, index: Int, depth: Int) -> String {
   if kind == return_stmt() {
     let mut next: String = string_concat(out, pad);
     next = string_concat(next, "Return\n");
-    next = dump_expr(next, arena, arena.stmt_expr[index], depth + 1);
+    if arena.stmt_expr[index] >= 0 {
+      next = dump_expr(next, arena, arena.stmt_expr[index], depth + 1);
+    }
     return next;
   }
   if kind == assign_stmt() {
@@ -756,6 +1330,12 @@ fn dump_stmt(out: String, arena: Arena, index: Int, depth: Int) -> String {
     next = string_concat(next, "Assign name=");
     next = string_concat(next, arena.stmt_name[index]);
     next = string_concat(next, "\n");
+    next = dump_expr(next, arena, arena.stmt_expr[index], depth + 1);
+    return next;
+  }
+  if kind == expr_stmt() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "ExprStmt\n");
     next = dump_expr(next, arena, arena.stmt_expr[index], depth + 1);
     return next;
   }
@@ -828,12 +1408,84 @@ fn dump_expr(out: String, arena: Arena, node: Int, depth: Int) -> String {
     next = string_concat(next, "\n");
     return next;
   }
+  if kind == string_node() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "String ");
+    next = string_concat(next, normalize_string_escapes(arena.node_text[node]));
+    next = string_concat(next, "\n");
+    return next;
+  }
   if kind == unary_node() {
     let mut next: String = string_concat(out, pad);
     next = string_concat(next, "Unary op=");
     next = string_concat(next, arena.node_text[node]);
     next = string_concat(next, "\n");
     next = dump_expr(next, arena, arena.node_a[node], depth + 1);
+    return next;
+  }
+  if kind == call_node() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "Call callee=");
+    next = string_concat(next, arena.node_text[node]);
+    next = string_concat(next, "\n");
+    let start: Int = arena.node_a[node];
+    let count: Int = arena.node_b[node];
+    let mut i: Int = 0;
+    while i < count {
+      next = dump_expr(next, arena, arena.child_list[start + i], depth + 1);
+      i = i + 1;
+    }
+    return next;
+  }
+  if kind == index_node() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "Index\n");
+    let cpad: String = indent_of(depth + 1);
+    next = string_concat(next, cpad);
+    next = string_concat(next, "Base\n");
+    next = dump_expr(next, arena, arena.node_a[node], depth + 2);
+    next = string_concat(next, cpad);
+    next = string_concat(next, "Index\n");
+    next = dump_expr(next, arena, arena.node_b[node], depth + 2);
+    return next;
+  }
+  if kind == field_node() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "FieldAccess field=");
+    next = string_concat(next, arena.node_text[node]);
+    next = string_concat(next, "\n");
+    next = dump_expr(next, arena, arena.node_a[node], depth + 1);
+    return next;
+  }
+  if kind == array_node() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "ArrayLiteral\n");
+    let start: Int = arena.node_a[node];
+    let count: Int = arena.node_b[node];
+    let mut i: Int = 0;
+    while i < count {
+      next = dump_expr(next, arena, arena.child_list[start + i], depth + 1);
+      i = i + 1;
+    }
+    return next;
+  }
+  if kind == struct_lit_node() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "StructLiteral type=");
+    next = string_concat(next, arena.node_text[node]);
+    next = string_concat(next, "\n");
+    let cpad: String = indent_of(depth + 1);
+    let start: Int = arena.node_a[node];
+    let count: Int = arena.node_b[node];
+    let mut i: Int = 0;
+    while i < count {
+      next = string_concat(next, cpad);
+      next = string_concat(next, "FieldInit name=");
+      next = string_concat(next, arena.sl_field_name[start + i]);
+      next = string_concat(next, "\n");
+      next = dump_expr(next, arena, arena.sl_field_value[start + i], depth + 2);
+      i = i + 1;
+    }
     return next;
   }
   // binary
@@ -852,6 +1504,44 @@ fn indent_of(depth: Int) -> String {
   while i < depth {
     out = string_concat(out, "  ");
     i = i + 1;
+  }
+  return out;
+}
+
+// Replicate the Rust lexer's string-escape contract: `\"`, `\n`, `\\` keep their
+// backslash (re-emitted by Rust's Debug formatting); every other `\<x>` drops the
+// backslash and keeps x; real TAB/CR/LF bytes render as `\t`/`\r`/`\n`. The input
+// `text` is the raw token slice including its surrounding quotes.
+fn normalize_string_escapes(text: String) -> String {
+  let len: Int = string_len(text);
+  let mut out: String = "";
+  let mut i: Int = 0;
+  while i < len {
+    let byte: Int = string_byte_at(text, i);
+    if byte == 92 && i + 1 < len {
+      let nextb: Int = string_byte_at(text, i + 1);
+      if nextb == 110 || nextb == 92 || nextb == 34 {
+        out = string_concat(out, string_byte_slice(text, i, 2));
+      } else {
+        out = string_concat(out, string_byte_slice(text, i + 1, 1));
+      }
+      i = i + 2;
+    } else {
+      if byte == 9 {
+        out = string_concat(out, "\\t");
+      } else {
+        if byte == 13 {
+          out = string_concat(out, "\\r");
+        } else {
+          if byte == 10 {
+            out = string_concat(out, "\\n");
+          } else {
+            out = string_concat(out, string_byte_slice(text, i, 1));
+          }
+        }
+      }
+      i = i + 1;
+    }
   }
   return out;
 }
@@ -896,6 +1586,21 @@ fn lex_kinds(source: String) -> IntArray {
       kinds = int_array_push(kinds, token_int());
       handled = true;
     }
+    if !handled && byte == 34 {
+      index = index + 1;
+      while index < len && string_byte_at(source, index) != 34 {
+        if string_byte_at(source, index) == 92 && index + 1 < len {
+          index = index + 2;
+        } else {
+          index = index + 1;
+        }
+      }
+      if index < len {
+        index = index + 1;
+      }
+      kinds = int_array_push(kinds, token_string());
+      handled = true;
+    }
     if !handled {
       kinds = int_array_push(kinds, symbol_kind(source, index));
       index = index + symbol_width(source, index);
@@ -935,6 +1640,22 @@ fn lex_texts(source: String) -> StringArray {
       let start: Int = index;
       index = index + 1;
       while index < len && ascii_is_digit(string_byte_at(source, index)) {
+        index = index + 1;
+      }
+      texts = string_array_push(texts, string_byte_slice(source, start, index - start));
+      handled = true;
+    }
+    if !handled && byte == 34 {
+      let start: Int = index;
+      index = index + 1;
+      while index < len && string_byte_at(source, index) != 34 {
+        if string_byte_at(source, index) == 92 && index + 1 < len {
+          index = index + 2;
+        } else {
+          index = index + 1;
+        }
+      }
+      if index < len {
         index = index + 1;
       }
       texts = string_array_push(texts, string_byte_slice(source, start, index - start));
@@ -989,6 +1710,21 @@ fn keyword_or_ident(text: String) -> Int {
   if text == "module" {
     return token_module();
   }
+  if text == "import" {
+    return token_import();
+  }
+  if text == "export" {
+    return token_export();
+  }
+  if text == "as" {
+    return token_as();
+  }
+  if text == "struct" {
+    return token_struct();
+  }
+  if text == "enum" {
+    return token_enum();
+  }
   if text == "fn" {
     return token_fn();
   }
@@ -1033,6 +1769,12 @@ fn symbol_kind(source: String, index: Int) -> Int {
   }
   if byte == 125 {
     return token_rbrace();
+  }
+  if byte == 91 {
+    return token_lbracket();
+  }
+  if byte == 93 {
+    return token_rbracket();
   }
   if byte == 58 {
     return token_colon();
@@ -1115,7 +1857,13 @@ fn symbol_kind(source: String, index: Int) -> Int {
 fn token_eof() -> Int { return 0; }
 fn token_ident() -> Int { return 1; }
 fn token_int() -> Int { return 2; }
+fn token_string() -> Int { return 3; }
 fn token_module() -> Int { return 10; }
+fn token_import() -> Int { return 11; }
+fn token_export() -> Int { return 12; }
+fn token_as() -> Int { return 13; }
+fn token_struct() -> Int { return 23; }
+fn token_enum() -> Int { return 24; }
 fn token_fn() -> Int { return 14; }
 fn token_let() -> Int { return 15; }
 fn token_mut() -> Int { return 16; }
@@ -1129,6 +1877,8 @@ fn token_lparen() -> Int { return 30; }
 fn token_rparen() -> Int { return 31; }
 fn token_lbrace() -> Int { return 32; }
 fn token_rbrace() -> Int { return 33; }
+fn token_lbracket() -> Int { return 34; }
+fn token_rbracket() -> Int { return 35; }
 fn token_colon() -> Int { return 36; }
 fn token_semicolon() -> Int { return 37; }
 fn token_comma() -> Int { return 38; }
