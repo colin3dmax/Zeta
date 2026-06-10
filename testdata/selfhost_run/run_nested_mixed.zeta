@@ -1,0 +1,16 @@
+// Mixed nesting: a struct that holds an array field. Display renders the struct
+// shell with its nested array, and a for-in over an inline Int array drives the
+// values written into that field plus an index read-back.
+struct Bag {
+  total: Int,
+  items: IntArray,
+}
+
+fn main() -> Bag {
+  let mut sum: Int = 0;
+  for n in [3, 4, 5] {
+    sum = sum + n;
+  }
+  let bag: Bag = Bag { total: sum, items: [sum, sum + 1, sum + 2] };
+  return Bag { total: bag.items[1], items: bag.items };
+}

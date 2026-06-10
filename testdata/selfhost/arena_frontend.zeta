@@ -6203,12 +6203,157 @@ fn vmake_unit(vals: Values) -> ValuesH {
   return vpush(vals, 6, 0, "", "", 0, 0);
 }
 
-// Structural equality on values. Slice 1 only needs Int/Bool (kind + intval);
-// String/Struct/Enum/Array recursion is reserved for slice 2/3 (the fallback
-// keeps unequal handles unequal unless kind+intval coincide).
+fn vmake_string(vals: Values, text: String) -> ValuesH {
+  return vpush(vals, 1, 0, text, "", 0, 0);
+}
+
+// Build an Array value: push each element handle into the flat `elems` pool,
+// recording the slice (a=start, b=count) on the new value row.
+fn vmake_array(vals: Values, elem_handles: IntArray) -> ValuesH {
+  let mut v: Values = vals;
+  let start: Int = v.elems.len;
+  let count: Int = elem_handles.len;
+  let mut i: Int = 0;
+  while i < count {
+    v.elems = int_array_push(v.elems, elem_handles[i]);
+    i = i + 1;
+  }
+  return vpush(v, 5, 0, "", "", start, count);
+}
+
+// Lexicographic byte comparison: returns true iff `a` sorts strictly before
+// `b`. A shorter string that is a prefix of the longer sorts first.
+fn string_less(a: String, b: String) -> Bool {
+  let la: Int = string_len(a);
+  let lb: Int = string_len(b);
+  let mut i: Int = 0;
+  while i < la {
+    if i >= lb {
+      return false;
+    }
+    let ca: Int = string_byte_at(a, i);
+    let cb: Int = string_byte_at(b, i);
+    if ca < cb {
+      return true;
+    }
+    if ca > cb {
+      return false;
+    }
+    i = i + 1;
+  }
+  // `a` is a (possibly equal) prefix of `b`: smaller iff strictly shorter.
+  return la < lb;
+}
+
+// Build a Struct value. Fields arrive in source order; the Rust runtime keeps
+// them in a BTreeMap, so Display and equality observe field-name sorted order.
+// We insertion-sort (name, handle) pairs by name into the flat fnames/fvals
+// pools and record the slice (a=start, b=n) on the new row.
+fn vmake_struct(vals: Values, type_name: String, names: StringArray,
+                handles: IntArray, n: Int) -> ValuesH {
+  // Insertion sort into local sorted arrays.
+  let mut snames: StringArray = string_array_empty();
+  let mut shandles: IntArray = int_array_empty();
+  let mut i: Int = 0;
+  while i < n {
+    let nm: String = names[i];
+    let hd: Int = handles[i];
+    // Find insertion point: first j whose name is greater than nm.
+    let mut j: Int = 0;
+    let mut placed: Int = 0;
+    while placed == 0 {
+      if j >= snames.len {
+        snames = string_array_push(snames, nm);
+        shandles = int_array_push(shandles, hd);
+        placed = 1;
+      } else {
+        if string_less(nm, snames[j]) {
+          // Shift everything from j right by one by rebuilding the tail.
+          let mut nn: StringArray = string_array_empty();
+          let mut nh: IntArray = int_array_empty();
+          let mut k: Int = 0;
+          while k < j {
+            nn = string_array_push(nn, snames[k]);
+            nh = int_array_push(nh, shandles[k]);
+            k = k + 1;
+          }
+          nn = string_array_push(nn, nm);
+          nh = int_array_push(nh, hd);
+          while k < snames.len {
+            nn = string_array_push(nn, snames[k]);
+            nh = int_array_push(nh, shandles[k]);
+            k = k + 1;
+          }
+          snames = nn;
+          shandles = nh;
+          placed = 1;
+        } else {
+          j = j + 1;
+        }
+      }
+    }
+    i = i + 1;
+  }
+  // Append the sorted pairs to the flat pools.
+  let mut v: Values = vals;
+  let start: Int = v.fnames.len;
+  let mut p: Int = 0;
+  while p < n {
+    v.fnames = string_array_push(v.fnames, snames[p]);
+    v.fvals = int_array_push(v.fvals, shandles[p]);
+    p = p + 1;
+  }
+  return vpush(v, 3, 0, type_name, "", start, n);
+}
+
+// Structural equality on values. Int/Bool compare via kind+intval. String
+// compares text. Struct/Array recurse (fields already sorted, so positional
+// comparison is order-stable). Enum is reserved for slice 3.
 fn value_equal(vals: Values, h1: Int, h2: Int) -> Bool {
   if vals.kind[h1] != vals.kind[h2] {
     return false;
+  }
+  let kind: Int = vals.kind[h1];
+  if kind == 1 {
+    return vals.text[h1] == vals.text[h2];
+  }
+  if kind == 3 {
+    if vals.text[h1] != vals.text[h2] {
+      return false;
+    }
+    if vals.b[h1] != vals.b[h2] {
+      return false;
+    }
+    let a1: Int = vals.a[h1];
+    let a2: Int = vals.a[h2];
+    let n: Int = vals.b[h1];
+    let mut i: Int = 0;
+    while i < n {
+      if vals.fnames[a1 + i] != vals.fnames[a2 + i] {
+        return false;
+      }
+      if !value_equal(vals, vals.fvals[a1 + i], vals.fvals[a2 + i]) {
+        return false;
+      }
+      i = i + 1;
+    }
+    return true;
+  }
+  if kind == 5 {
+    if vals.b[h1] != vals.b[h2] {
+      return false;
+    }
+    let a1: Int = vals.a[h1];
+    let a2: Int = vals.a[h2];
+    let n: Int = vals.b[h1];
+    let mut i: Int = 0;
+    while i < n {
+      if !value_equal(vals, vals.elems[a1 + i], vals.elems[a2 + i]) {
+        return false;
+      }
+      i = i + 1;
+    }
+    return true;
   }
   return vals.intval[h1] == vals.intval[h2];
 }
@@ -6230,7 +6375,44 @@ fn value_to_string(vals: Values, h: Int) -> String {
   if kind == 1 {
     return vals.text[h];
   }
-  // Struct / Enum / Array: placeholder until slice 2/3.
+  if kind == 3 {
+    // `{ty} {{ {fields} }}` with fields = "name: value" joined by ", ".
+    let start: Int = vals.a[h];
+    let n: Int = vals.b[h];
+    let mut fields: String = "";
+    let mut i: Int = 0;
+    while i < n {
+      if i > 0 {
+        fields = string_concat(fields, ", ");
+      }
+      fields = string_concat(fields, vals.fnames[start + i]);
+      fields = string_concat(fields, ": ");
+      fields = string_concat(fields, value_to_string(vals, vals.fvals[start + i]));
+      i = i + 1;
+    }
+    let mut out: String = vals.text[h];
+    out = string_concat(out, " { ");
+    out = string_concat(out, fields);
+    out = string_concat(out, " }");
+    return out;
+  }
+  if kind == 5 {
+    // `[elem, elem, ...]`.
+    let start: Int = vals.a[h];
+    let n: Int = vals.b[h];
+    let mut out: String = "[";
+    let mut i: Int = 0;
+    while i < n {
+      if i > 0 {
+        out = string_concat(out, ", ");
+      }
+      out = string_concat(out, value_to_string(vals, vals.elems[start + i]));
+      i = i + 1;
+    }
+    out = string_concat(out, "]");
+    return out;
+  }
+  // Enum: placeholder until slice 3.
   return "";
 }
 
@@ -6509,11 +6691,209 @@ fn ev_expr(ex: Exec, node: Int) -> EvalResult {
     e.retval = 0 - 1;
     return EvalResult { ex: e, h: result };
   }
-  // string / enum / struct / field / array / index reserved for slice 2/3.
+  if kind == mir_array_expr() {
+    // me_a=start, me_b=count slice of mchild_list; evaluate each element.
+    let start: Int = ex.mir.me_a[node];
+    let count: Int = ex.mir.me_b[node];
+    let mut e: Exec = ex;
+    let mut handles: IntArray = int_array_empty();
+    let mut i: Int = 0;
+    while i < count {
+      let r: EvalResult = ev_expr(e, e.mir.mchild_list[start + i]);
+      e = r.ex;
+      handles = int_array_push(handles, r.h);
+      i = i + 1;
+    }
+    let arr: ValuesH = vmake_array(e.vals, handles);
+    e.vals = arr.vals;
+    return EvalResult { ex: e, h: arr.h };
+  }
+  if kind == mir_index_expr() {
+    // me_a=base (Array), me_b=index (Int). Corpus never indexes out of range.
+    let baser: EvalResult = ev_expr(ex, ex.mir.me_a[node]);
+    let idxr: EvalResult = ev_expr(baser.ex, ex.mir.me_b[node]);
+    let e: Exec = idxr.ex;
+    let abase: Int = e.vals.a[baser.h];
+    let i: Int = e.vals.intval[idxr.h];
+    return EvalResult { ex: e, h: e.vals.elems[abase + i] };
+  }
+  if kind == mir_struct_expr() {
+    // me_text=type name; me_a=start, me_b=count of msl_field_name/value.
+    let type_name: String = ex.mir.me_text[node];
+    let start: Int = ex.mir.me_a[node];
+    let count: Int = ex.mir.me_b[node];
+    let mut e: Exec = ex;
+    let mut names: StringArray = string_array_empty();
+    let mut handles: IntArray = int_array_empty();
+    let mut i: Int = 0;
+    while i < count {
+      let r: EvalResult = ev_expr(e, e.mir.msl_field_value[start + i]);
+      e = r.ex;
+      names = string_array_push(names, e.mir.msl_field_name[start + i]);
+      handles = int_array_push(handles, r.h);
+      i = i + 1;
+    }
+    let st: ValuesH = vmake_struct(e.vals, type_name, names, handles, count);
+    e.vals = st.vals;
+    return EvalResult { ex: e, h: st.h };
+  }
+  if kind == mir_field_expr() {
+    // me_a=base, me_text=field name. Enum FieldAccess is already lowered to
+    // EnumVariant, so the base is always an Array (.len) or a Struct here.
+    let baser: EvalResult = ev_expr(ex, ex.mir.me_a[node]);
+    let mut e: Exec = baser.ex;
+    let field: String = e.mir.me_text[node];
+    let bkind: Int = e.vals.kind[baser.h];
+    if bkind == 5 {
+      // Array: only `.len` is valid (typecheck guarantees this).
+      let r: ValuesH = vmake_int(e.vals, e.vals.b[baser.h]);
+      e.vals = r.vals;
+      return EvalResult { ex: e, h: r.h };
+    }
+    // Struct: locate the field by name in the sorted fnames slice.
+    let abase: Int = e.vals.a[baser.h];
+    let n: Int = e.vals.b[baser.h];
+    let mut found: Int = 0 - 1;
+    let mut j: Int = 0;
+    while j < n {
+      if e.vals.fnames[abase + j] == field {
+        found = abase + j;
+        j = n;
+      } else {
+        j = j + 1;
+      }
+    }
+    return EvalResult { ex: e, h: e.vals.fvals[found] };
+  }
+  // string / enum reserved for slice 3.
   let u: ValuesH = vmake_unit(ex.vals);
   let mut e: Exec = ex;
   e.vals = u.vals;
   return EvalResult { ex: e, h: u.h };
+}
+
+// A place flattened from leaf->root into a root name plus an ordered list of
+// steps (root->leaf). step_kind: 0 = field, 1 = index. step_field holds the
+// field name for field steps; step_index holds the already-evaluated index for
+// index steps. `ex` carries any value-arena growth from evaluating index exprs.
+struct FlatPlace {
+  ex: Exec,
+  root_name: String,
+  step_kind: IntArray,
+  step_field: StringArray,
+  step_index: IntArray,
+  n: Int,
+}
+
+// Walk a place row chain (mpl_base links leaf->root), evaluating index
+// expressions in the current scope, then reverse to root->leaf order.
+fn flatten_place(ex: Exec, place_row: Int) -> FlatPlace {
+  let mut e: Exec = ex;
+  // Collect leaf->root.
+  let mut rkind: IntArray = int_array_empty();
+  let mut rfield: StringArray = string_array_empty();
+  let mut rindex: IntArray = int_array_empty();
+  let mut root: String = "";
+  let mut row: Int = place_row;
+  let mut walking: Int = 1;
+  while walking == 1 {
+    let pk: Int = e.mir.mpl_kind[row];
+    if pk == mir_place_local() {
+      root = e.mir.mpl_name[row];
+      walking = 0;
+    } else {
+      if pk == mir_place_field() {
+        rkind = int_array_push(rkind, 0);
+        rfield = string_array_push(rfield, e.mir.mpl_name[row]);
+        rindex = int_array_push(rindex, 0 - 1);
+      } else {
+        // index place: evaluate the index expr in the current scope.
+        let r: EvalResult = ev_expr(e, e.mir.mpl_index[row]);
+        e = r.ex;
+        rkind = int_array_push(rkind, 1);
+        rfield = string_array_push(rfield, "");
+        rindex = int_array_push(rindex, e.vals.intval[r.h]);
+      }
+      row = e.mir.mpl_base[row];
+    }
+  }
+  // Reverse into root->leaf order.
+  let n: Int = rkind.len;
+  let mut sk: IntArray = int_array_empty();
+  let mut sf: StringArray = string_array_empty();
+  let mut si: IntArray = int_array_empty();
+  let mut i: Int = n - 1;
+  while i >= 0 {
+    sk = int_array_push(sk, rkind[i]);
+    sf = string_array_push(sf, rfield[i]);
+    si = int_array_push(si, rindex[i]);
+    i = i - 1;
+  }
+  return FlatPlace { ex: e, root_name: root, step_kind: sk, step_field: sf,
+                     step_index: si, n: n };
+}
+
+// Copy-on-write write-through: rebuild the value at handle `h` so that the
+// path sk/sf/si[depth..n] is replaced by `newval`, returning the new root
+// handle. Each struct/array node along the path is reconstructed (old nodes
+// become garbage).
+fn store_through(vals: Values, h: Int, sk: IntArray, sf: StringArray,
+                 si: IntArray, depth: Int, n: Int, newval: Int) -> ValuesH {
+  if depth == n {
+    return ValuesH { vals: vals, h: newval };
+  }
+  if sk[depth] == 0 {
+    // field step: h is a Struct.
+    let abase: Int = vals.a[h];
+    let count: Int = vals.b[h];
+    let type_name: String = vals.text[h];
+    // Recurse into the matching child first.
+    let mut j: Int = 0;
+    let mut target: Int = 0 - 1;
+    while j < count {
+      if vals.fnames[abase + j] == sf[depth] {
+        target = abase + j;
+        j = count;
+      } else {
+        j = j + 1;
+      }
+    }
+    let child: ValuesH = store_through(vals, vals.fvals[target], sk, sf, si,
+                                       depth + 1, n, newval);
+    // Rebuild the struct with the child handle replaced (fields stay sorted,
+    // so reuse the stored order rather than re-sorting).
+    let mut v: Values = child.vals;
+    let start: Int = v.fnames.len;
+    let mut k: Int = 0;
+    while k < count {
+      v.fnames = string_array_push(v.fnames, v.fnames[abase + k]);
+      if k == target - abase {
+        v.fvals = int_array_push(v.fvals, child.h);
+      } else {
+        v.fvals = int_array_push(v.fvals, v.fvals[abase + k]);
+      }
+      k = k + 1;
+    }
+    return vpush(v, 3, 0, type_name, "", start, count);
+  }
+  // index step: h is an Array.
+  let abase: Int = vals.a[h];
+  let count: Int = vals.b[h];
+  let idx: Int = si[depth];
+  let child: ValuesH = store_through(vals, vals.elems[abase + idx], sk, sf, si,
+                                     depth + 1, n, newval);
+  let mut v: Values = child.vals;
+  let start: Int = v.elems.len;
+  let mut k: Int = 0;
+  while k < count {
+    if k == idx {
+      v.elems = int_array_push(v.elems, child.h);
+    } else {
+      v.elems = int_array_push(v.elems, v.elems[abase + k]);
+    }
+    k = k + 1;
+  }
+  return vpush(v, 5, 0, "", "", start, count);
 }
 
 fn ev_block(ex: Exec, start: Int, count: Int) -> Exec {
@@ -6544,13 +6924,29 @@ fn ev_stmt(ex: Exec, index: Int) -> Exec {
     return e;
   }
   if kind == mir_store_stmt() {
+    // Evaluate the RHS first, then flatten the place (which may evaluate index
+    // expressions in the current scope), matching the Rust runtime order.
     let r: EvalResult = ev_expr(ex, ex.mir.ms_expr[index]);
     let mut e: Exec = r.ex;
-    // Slice 1 places are always Local; field/index reserved for slice 2.
     let place: Int = e.mir.ms_place[index];
-    let root: String = e.mir.mpl_name[place];
-    let slot: Int = local_slot(e, root);
-    e = local_set(e, slot, r.h);
+    if e.mir.mpl_kind[place] == mir_place_local() {
+      // Fast path: plain local assignment, no write-through.
+      let root: String = e.mir.mpl_name[place];
+      let slot: Int = local_slot(e, root);
+      e = local_set(e, slot, r.h);
+      e.signal = 0;
+      return e;
+    }
+    // Nested place: flatten root->leaf, then COW write-through from the root.
+    let flat: FlatPlace = flatten_place(e, place);
+    e = flat.ex;
+    let slot: Int = local_slot(e, flat.root_name);
+    let rooth: Int = e.lhandles[slot];
+    let built: ValuesH = store_through(e.vals, rooth, flat.step_kind,
+                                       flat.step_field, flat.step_index, 0,
+                                       flat.n, r.h);
+    e.vals = built.vals;
+    e = local_set(e, slot, built.h);
     e.signal = 0;
     return e;
   }
@@ -6689,7 +7085,42 @@ fn ev_stmt(ex: Exec, index: Int) -> Exec {
     e.signal = 0;
     return e;
   }
-  // for_in / match reserved for slice 2/3.
+  if kind == mir_for_in_stmt() {
+    // ms_expr=iterable (Array), ms_name=binding, ms_then_*=body. Iterate the
+    // array's element handles, mirroring for_range's stack discipline.
+    let iterr: EvalResult = ev_expr(ex, ex.mir.ms_expr[index]);
+    let mut e: Exec = iterr.ex;
+    let abase: Int = e.vals.a[iterr.h];
+    let n: Int = e.vals.b[iterr.h];
+    let binding: String = e.mir.ms_name[index];
+    let mut i: Int = 0;
+    let mut looping: Int = 1;
+    while looping == 1 {
+      if i >= n {
+        looping = 0;
+      } else {
+        let saved: Int = e.count;
+        e = local_push(e, binding, e.vals.elems[abase + i]);
+        e = ev_block(e, e.mir.ms_then_start[index], e.mir.ms_then_count[index]);
+        e.count = saved;
+        if e.signal == 1 {
+          e.signal = 0;
+          looping = 0;
+        } else {
+          if e.signal == 2 {
+            e.signal = 0;
+          } else {
+            if e.signal == 3 {
+              looping = 0;
+            }
+          }
+        }
+        i = i + 1;
+      }
+    }
+    return e;
+  }
+  // match reserved for slice 3.
   let mut e: Exec = ex;
   e.signal = 0;
   return e;

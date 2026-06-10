@@ -149,6 +149,21 @@ fn run_matches_oracle_on_forc() {
     assert_runs(include_str!("../testdata/run_forc.zeta"));
 }
 
+#[test]
+fn run_matches_oracle_on_array() {
+    assert_runs(include_str!("../testdata/run_array.zeta"));
+}
+
+#[test]
+fn run_matches_oracle_on_assign() {
+    assert_runs(include_str!("../testdata/run_assign.zeta"));
+}
+
+#[test]
+fn run_matches_oracle_on_for() {
+    assert_runs(include_str!("../testdata/run_for.zeta"));
+}
+
 // --- Self-built slice-1 probes (testdata/selfhost_run/): recursion + call
 // frame isolation, nested loop control, multi-param chains, short-circuit,
 // negation/bitwise mix, deep nested loops. ---
@@ -166,7 +181,7 @@ fn zeta_paths(dir: &str) -> Vec<std::path::PathBuf> {
 #[test]
 fn run_matches_oracle_on_selfhost_run_probes() {
     let paths = zeta_paths("testdata/selfhost_run");
-    assert_eq!(paths.len(), 6, "expected 6 selfhost_run probes");
+    assert_eq!(paths.len(), 12, "expected 12 selfhost_run probes");
     let mut failures = Vec::new();
     for path in &paths {
         let source = std::fs::read_to_string(path).expect("probe source should read");

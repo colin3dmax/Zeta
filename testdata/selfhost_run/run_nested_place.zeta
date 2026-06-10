@@ -1,0 +1,18 @@
+// Multi-level place write-through: a Field step into a nested struct, then an
+// Index step into an array field, the latter reading back the just-written
+// nested field. Exercises COW rebuild across both step kinds.
+struct Inner {
+  v: Int,
+}
+
+struct Outer {
+  a: Inner,
+  xs: IntArray,
+}
+
+fn main() -> Int {
+  let mut o: Outer = Outer { a: Inner { v: 1 }, xs: [4, 5, 6] };
+  o.a.v = 9;
+  o.xs[1] = o.a.v;
+  return o.a.v + o.xs[0] + o.xs[1] + o.xs[2];
+}

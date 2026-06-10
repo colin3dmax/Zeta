@@ -1,0 +1,16 @@
+// for-in over an array with interior break/continue plus accumulation. The
+// continue skips one element; the break stops before the tail, so only a
+// prefix contributes.
+fn main() -> Int {
+  let mut sum: Int = 0;
+  for x in [1, 2, 3, 4, 5, 6] {
+    if x == 2 {
+      continue;
+    }
+    if x == 5 {
+      break;
+    }
+    sum = sum + x;
+  }
+  return sum;
+}

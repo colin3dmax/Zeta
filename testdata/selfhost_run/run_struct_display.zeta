@@ -1,0 +1,15 @@
+// Struct Display with fields declared in reverse alphabetical order. The Rust
+// runtime stores fields in a BTreeMap, so Display emits them sorted by name
+// (x before y) regardless of declaration order.
+struct Point {
+  y: Int,
+  x: Int,
+}
+
+fn make() -> Point {
+  return Point { y: 20, x: 10 };
+}
+
+fn main() -> Point {
+  return make();
+}

@@ -1,0 +1,5 @@
+// Array Display: an unsorted integer array returned directly so the result
+// string is `[3, 1, 2]`.
+fn main() -> IntArray {
+  return [3, 1, 2];
+}

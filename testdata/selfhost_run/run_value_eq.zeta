@@ -1,0 +1,22 @@
+// Structural equality: two structs (equal + unequal) and two arrays (equal +
+// unequal). Field order in the literal differs from declaration order to prove
+// the sorted positional comparison is order-stable. Returns true only if every
+// expected relation holds.
+struct Point {
+  x: Int,
+  y: Int,
+}
+
+fn main() -> Bool {
+  let p1: Point = Point { x: 1, y: 2 };
+  let p2: Point = Point { y: 2, x: 1 };
+  let p3: Point = Point { x: 1, y: 9 };
+  let a1: IntArray = [1, 2, 3];
+  let a2: IntArray = [1, 2, 3];
+  let a3: IntArray = [1, 2, 4];
+  let struct_eq: Bool = p1 == p2;
+  let struct_ne: Bool = p1 != p3;
+  let array_eq: Bool = a1 == a2;
+  let array_ne: Bool = a1 != a3;
+  return struct_eq && struct_ne && array_eq && array_ne;
+}
