@@ -1,0 +1,611 @@
+module selfhost.arena_frontend;
+import std.core;
+
+// ---------------------------------------------------------------------------
+// Self-hosting milestone M2 vertical slice.
+//
+// Unlike the Stage1 frontend (which concatenates dump text directly while
+// scanning tokens), this module builds a *real* AST as an index-based arena and
+// then walks that arena to produce the dump. This is the范式 that later stages
+// (resolver / typecheck / MIR / interpreter) will reuse, so clarity and
+// correctness matter more than speed.
+//
+// Two cooperating arenas:
+//   * Expr arena  — parallel arrays (node_kind / node_a / node_b / node_text).
+//                   Built post-order so a parent is allocated only after its
+//                   children, letting it reference their already-known indices
+//                   without any back-patching.
+//   * Item arenas — parallel arrays describing the structural skeleton
+//                   (function list + statement list), each pointing into the
+//                   expr arena for its expression children.
+//
+// Pipeline: lex -> recursive descent that *constructs* the arena -> walk the
+// arena to emit dump text byte-for-byte identical to the Rust `ast-dump`.
+// ---------------------------------------------------------------------------
+
+// Expr node kinds.
+fn int_node() -> Int { return 0; }
+fn name_node() -> Int { return 1; }
+fn binary_node() -> Int { return 2; }
+
+// Statement kinds.
+fn let_stmt() -> Int { return 0; }
+fn return_stmt() -> Int { return 1; }
+
+// ---------------------------------------------------------------------------
+// Arena: a bundle of parallel arrays threaded functionally through the parser.
+// Every parse_* helper takes a ParseResult-shaped struct in and returns an
+// updated one out (Zeta has no mutable aliasing across calls, so we accumulate
+// by value).
+// ---------------------------------------------------------------------------
+struct Arena {
+  // Expr arena.
+  node_kind: IntArray,
+  node_a: IntArray,
+  node_b: IntArray,
+  node_text: StringArray,
+  // Module decl: has_module=1 when a `module a.b.c;` was present.
+  has_module: Int,
+  module_name: String,
+  // Function list.
+  fn_name: StringArray,
+  fn_ret: StringArray,
+  fn_stmt_start: IntArray,
+  fn_stmt_count: IntArray,
+  // Statement list (shared, sliced per function via start/count above).
+  stmt_kind: IntArray,
+  stmt_name: StringArray,
+  stmt_type: StringArray,
+  stmt_expr: IntArray,
+}
+
+fn arena_empty() -> Arena {
+  return Arena {
+    node_kind: int_array_empty(),
+    node_a: int_array_empty(),
+    node_b: int_array_empty(),
+    node_text: string_array_empty(),
+    has_module: 0,
+    module_name: "",
+    fn_name: string_array_empty(),
+    fn_ret: string_array_empty(),
+    fn_stmt_start: int_array_empty(),
+    fn_stmt_count: int_array_empty(),
+    stmt_kind: int_array_empty(),
+    stmt_name: string_array_empty(),
+    stmt_type: string_array_empty(),
+    stmt_expr: int_array_empty(),
+  };
+}
+
+// ParseResult packs the threaded arena plus the index of the node just built
+// and the token cursor consumed so far.
+struct ParseResult {
+  arena: Arena,
+  node: Int,
+  pos: Int,
+}
+
+// ---------------------------------------------------------------------------
+// Node allocation (post-order). Each pusher appends to every parallel array so
+// the arrays stay the same length and the new node's index is the pre-push len.
+// ---------------------------------------------------------------------------
+fn push_int_node(arena: Arena, text: String) -> Arena {
+  let mut a: Arena = arena;
+  a.node_kind = int_array_push(a.node_kind, int_node());
+  a.node_a = int_array_push(a.node_a, 0);
+  a.node_b = int_array_push(a.node_b, 0);
+  a.node_text = string_array_push(a.node_text, text);
+  return a;
+}
+
+fn push_name_node(arena: Arena, text: String) -> Arena {
+  let mut a: Arena = arena;
+  a.node_kind = int_array_push(a.node_kind, name_node());
+  a.node_a = int_array_push(a.node_a, 0);
+  a.node_b = int_array_push(a.node_b, 0);
+  a.node_text = string_array_push(a.node_text, text);
+  return a;
+}
+
+fn push_binary_node(arena: Arena, left: Int, right: Int, op: String) -> Arena {
+  let mut a: Arena = arena;
+  a.node_kind = int_array_push(a.node_kind, binary_node());
+  a.node_a = int_array_push(a.node_a, left);
+  a.node_b = int_array_push(a.node_b, right);
+  a.node_text = string_array_push(a.node_text, op);
+  return a;
+}
+
+// ---------------------------------------------------------------------------
+// Recursive-descent parser. Token streams come from the lexer below.
+// Grammar (the M2 slice):
+//   module    := ("module" path ";")? function+
+//   function  := "fn" name "(" ")" "->" type "{" stmt* "}"
+//   stmt      := "let" name ":" type "=" expr ";" | "return" expr ";"
+//   expr      := term (("+"|"-") term)*
+//   term      := factor (("*"|"/") factor)*
+//   factor    := INT | NAME | "(" expr ")"
+// ---------------------------------------------------------------------------
+
+export fn dump_module_via_arena(source: String) -> String {
+  let kinds: IntArray = lex_kinds(source);
+  let texts: StringArray = lex_texts(source);
+  let result: ParseResult = parse_module(arena_empty(), kinds, texts, 0);
+  return dump_from_arena(result.arena);
+}
+
+fn parse_module(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let mut a: Arena = arena;
+  let mut p: Int = pos;
+  if p < kinds.len && kinds[p] == token_module() {
+    p = p + 1;
+    let mut name: String = "";
+    while p < kinds.len && kinds[p] != token_semicolon() {
+      name = string_concat(name, texts[p]);
+      p = p + 1;
+    }
+    if p < kinds.len && kinds[p] == token_semicolon() {
+      p = p + 1;
+    }
+    a.has_module = 1;
+    a.module_name = name;
+  }
+  while p < kinds.len && kinds[p] == token_fn() {
+    let r: ParseResult = parse_function(a, kinds, texts, p);
+    a = r.arena;
+    p = r.pos;
+  }
+  return ParseResult { arena: a, node: 0, pos: p };
+}
+
+fn parse_function(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let mut a: Arena = arena;
+  let mut p: Int = pos;
+  // "fn"
+  p = p + 1;
+  let name: String = texts[p];
+  p = p + 1;
+  // "(" ")"
+  if p < kinds.len && kinds[p] == token_lparen() {
+    p = p + 1;
+  }
+  if p < kinds.len && kinds[p] == token_rparen() {
+    p = p + 1;
+  }
+  // "->" type
+  if p < kinds.len && kinds[p] == token_arrow() {
+    p = p + 1;
+  }
+  let ret: String = texts[p];
+  p = p + 1;
+  // "{"
+  if p < kinds.len && kinds[p] == token_lbrace() {
+    p = p + 1;
+  }
+  let stmt_start: Int = a.stmt_kind.len;
+  let mut count: Int = 0;
+  while p < kinds.len && kinds[p] != token_rbrace() {
+    let r: ParseResult = parse_stmt(a, kinds, texts, p);
+    a = r.arena;
+    p = r.pos;
+    count = count + 1;
+  }
+  // "}"
+  if p < kinds.len && kinds[p] == token_rbrace() {
+    p = p + 1;
+  }
+  a.fn_name = string_array_push(a.fn_name, name);
+  a.fn_ret = string_array_push(a.fn_ret, ret);
+  a.fn_stmt_start = int_array_push(a.fn_stmt_start, stmt_start);
+  a.fn_stmt_count = int_array_push(a.fn_stmt_count, count);
+  return ParseResult { arena: a, node: 0, pos: p };
+}
+
+fn parse_stmt(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  if kinds[pos] == token_let() {
+    return parse_let(arena, kinds, texts, pos);
+  }
+  return parse_return(arena, kinds, texts, pos);
+}
+
+fn parse_let(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let mut a: Arena = arena;
+  let mut p: Int = pos;
+  // "let"
+  p = p + 1;
+  let name: String = texts[p];
+  p = p + 1;
+  // ":" type
+  if p < kinds.len && kinds[p] == token_colon() {
+    p = p + 1;
+  }
+  let ty: String = texts[p];
+  p = p + 1;
+  // "="
+  if p < kinds.len && kinds[p] == token_eq() {
+    p = p + 1;
+  }
+  let r: ParseResult = parse_expr(a, kinds, texts, p);
+  a = r.arena;
+  p = r.pos;
+  // ";"
+  if p < kinds.len && kinds[p] == token_semicolon() {
+    p = p + 1;
+  }
+  a.stmt_kind = int_array_push(a.stmt_kind, let_stmt());
+  a.stmt_name = string_array_push(a.stmt_name, name);
+  a.stmt_type = string_array_push(a.stmt_type, ty);
+  a.stmt_expr = int_array_push(a.stmt_expr, r.node);
+  return ParseResult { arena: a, node: 0, pos: p };
+}
+
+fn parse_return(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let mut a: Arena = arena;
+  let mut p: Int = pos;
+  // "return"
+  p = p + 1;
+  let r: ParseResult = parse_expr(a, kinds, texts, p);
+  a = r.arena;
+  p = r.pos;
+  // ";"
+  if p < kinds.len && kinds[p] == token_semicolon() {
+    p = p + 1;
+  }
+  a.stmt_kind = int_array_push(a.stmt_kind, return_stmt());
+  a.stmt_name = string_array_push(a.stmt_name, "");
+  a.stmt_type = string_array_push(a.stmt_type, "");
+  a.stmt_expr = int_array_push(a.stmt_expr, r.node);
+  return ParseResult { arena: a, node: 0, pos: p };
+}
+
+// expr := term (("+"|"-") term)*  — left associative.
+fn parse_expr(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let mut left: ParseResult = parse_term(arena, kinds, texts, pos);
+  let mut a: Arena = left.arena;
+  let mut node: Int = left.node;
+  let mut p: Int = left.pos;
+  while p < kinds.len && (kinds[p] == token_plus() || kinds[p] == token_minus()) {
+    let op: String = binary_op_name(kinds[p]);
+    let rhs: ParseResult = parse_term(a, kinds, texts, p + 1);
+    a = rhs.arena;
+    p = rhs.pos;
+    let new_index: Int = a.node_kind.len;
+    a = push_binary_node(a, node, rhs.node, op);
+    node = new_index;
+  }
+  return ParseResult { arena: a, node: node, pos: p };
+}
+
+// term := factor (("*"|"/") factor)*  — left associative, binds tighter.
+fn parse_term(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let mut left: ParseResult = parse_factor(arena, kinds, texts, pos);
+  let mut a: Arena = left.arena;
+  let mut node: Int = left.node;
+  let mut p: Int = left.pos;
+  while p < kinds.len && (kinds[p] == token_star() || kinds[p] == token_slash()) {
+    let op: String = binary_op_name(kinds[p]);
+    let rhs: ParseResult = parse_factor(a, kinds, texts, p + 1);
+    a = rhs.arena;
+    p = rhs.pos;
+    let new_index: Int = a.node_kind.len;
+    a = push_binary_node(a, node, rhs.node, op);
+    node = new_index;
+  }
+  return ParseResult { arena: a, node: node, pos: p };
+}
+
+// factor := INT | NAME | "(" expr ")"
+fn parse_factor(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  if kinds[pos] == token_lparen() {
+    let inner: ParseResult = parse_expr(arena, kinds, texts, pos + 1);
+    let mut p: Int = inner.pos;
+    if p < kinds.len && kinds[p] == token_rparen() {
+      p = p + 1;
+    }
+    return ParseResult { arena: inner.arena, node: inner.node, pos: p };
+  }
+  if kinds[pos] == token_int() {
+    let index: Int = arena.node_kind.len;
+    let a: Arena = push_int_node(arena, texts[pos]);
+    return ParseResult { arena: a, node: index, pos: pos + 1 };
+  }
+  // identifier / name
+  let index: Int = arena.node_kind.len;
+  let a: Arena = push_name_node(arena, texts[pos]);
+  return ParseResult { arena: a, node: index, pos: pos + 1 };
+}
+
+fn binary_op_name(kind: Int) -> String {
+  if kind == token_plus() {
+    return "add";
+  }
+  if kind == token_minus() {
+    return "sub";
+  }
+  if kind == token_star() {
+    return "mul";
+  }
+  return "div";
+}
+
+// ---------------------------------------------------------------------------
+// Dump: walk the arenas and emit text identical to Rust `ast-dump`.
+// Indent is 2 spaces per level.
+// ---------------------------------------------------------------------------
+fn dump_from_arena(arena: Arena) -> String {
+  let mut out: String = "Module\n";
+  if arena.has_module == 1 {
+    out = string_concat(out, "  ModuleDecl name=");
+    out = string_concat(out, arena.module_name);
+    out = string_concat(out, "\n");
+  }
+  let mut fi: Int = 0;
+  while fi < arena.fn_name.len {
+    out = string_concat(out, "  Function name=");
+    out = string_concat(out, arena.fn_name[fi]);
+    out = string_concat(out, " exported=false\n");
+    out = string_concat(out, "    Return type=");
+    out = string_concat(out, arena.fn_ret[fi]);
+    out = string_concat(out, "\n");
+    let start: Int = arena.fn_stmt_start[fi];
+    let count: Int = arena.fn_stmt_count[fi];
+    let mut si: Int = 0;
+    while si < count {
+      out = dump_stmt(out, arena, start + si);
+      si = si + 1;
+    }
+    fi = fi + 1;
+  }
+  return out;
+}
+
+fn dump_stmt(out: String, arena: Arena, index: Int) -> String {
+  let mut next: String = out;
+  if arena.stmt_kind[index] == let_stmt() {
+    next = string_concat(next, "    Let name=");
+    next = string_concat(next, arena.stmt_name[index]);
+    next = string_concat(next, " type=");
+    next = string_concat(next, arena.stmt_type[index]);
+    next = string_concat(next, "\n");
+    next = dump_expr(next, arena, arena.stmt_expr[index], 3);
+    return next;
+  }
+  next = string_concat(next, "    Return\n");
+  next = dump_expr(next, arena, arena.stmt_expr[index], 3);
+  return next;
+}
+
+// Walk an expr node recursively. `depth` is the indentation level (in 2-space
+// units) at which this node's header line is emitted.
+fn dump_expr(out: String, arena: Arena, node: Int, depth: Int) -> String {
+  let pad: String = indent_of(depth);
+  let kind: Int = arena.node_kind[node];
+  if kind == int_node() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "Int ");
+    next = string_concat(next, arena.node_text[node]);
+    next = string_concat(next, "\n");
+    return next;
+  }
+  if kind == name_node() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "Name ");
+    next = string_concat(next, arena.node_text[node]);
+    next = string_concat(next, "\n");
+    return next;
+  }
+  // binary
+  let mut next: String = string_concat(out, pad);
+  next = string_concat(next, "Binary op=");
+  next = string_concat(next, arena.node_text[node]);
+  next = string_concat(next, "\n");
+  next = dump_expr(next, arena, arena.node_a[node], depth + 1);
+  next = dump_expr(next, arena, arena.node_b[node], depth + 1);
+  return next;
+}
+
+fn indent_of(depth: Int) -> String {
+  let mut out: String = "";
+  let mut i: Int = 0;
+  while i < depth {
+    out = string_concat(out, "  ");
+    i = i + 1;
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Lexer — copied from the Stage1 frontend and trimmed to this slice's needs.
+// Produces a parallel kinds / texts pair (each ending with an EOF / "" entry).
+// ---------------------------------------------------------------------------
+fn lex_kinds(source: String) -> IntArray {
+  let mut kinds: IntArray = int_array_empty();
+  let mut index: Int = 0;
+  let len: Int = string_len(source);
+  while index < len {
+    let byte: Int = string_byte_at(source, index);
+    let mut handled: Bool = false;
+    if !handled && ascii_is_whitespace(byte) {
+      index = index + 1;
+      handled = true;
+    }
+    if !handled && byte == 47 && index + 1 < len && string_byte_at(source, index + 1) == 47 {
+      index = index + 2;
+      while index < len && string_byte_at(source, index) != 10 {
+        index = index + 1;
+      }
+      handled = true;
+    }
+    if !handled && is_ident_start(byte) {
+      let start: Int = index;
+      index = index + 1;
+      while index < len && is_ident_continue(string_byte_at(source, index)) {
+        index = index + 1;
+      }
+      let text: String = string_byte_slice(source, start, index - start);
+      kinds = int_array_push(kinds, keyword_or_ident(text));
+      handled = true;
+    }
+    if !handled && ascii_is_digit(byte) {
+      index = index + 1;
+      while index < len && ascii_is_digit(string_byte_at(source, index)) {
+        index = index + 1;
+      }
+      kinds = int_array_push(kinds, token_int());
+      handled = true;
+    }
+    if !handled {
+      kinds = int_array_push(kinds, symbol_kind(source, index));
+      index = index + symbol_width(source, index);
+    }
+  }
+  return int_array_push(kinds, token_eof());
+}
+
+fn lex_texts(source: String) -> StringArray {
+  let mut texts: StringArray = string_array_empty();
+  let mut index: Int = 0;
+  let len: Int = string_len(source);
+  while index < len {
+    let byte: Int = string_byte_at(source, index);
+    let mut handled: Bool = false;
+    if !handled && ascii_is_whitespace(byte) {
+      index = index + 1;
+      handled = true;
+    }
+    if !handled && byte == 47 && index + 1 < len && string_byte_at(source, index + 1) == 47 {
+      index = index + 2;
+      while index < len && string_byte_at(source, index) != 10 {
+        index = index + 1;
+      }
+      handled = true;
+    }
+    if !handled && is_ident_start(byte) {
+      let start: Int = index;
+      index = index + 1;
+      while index < len && is_ident_continue(string_byte_at(source, index)) {
+        index = index + 1;
+      }
+      texts = string_array_push(texts, string_byte_slice(source, start, index - start));
+      handled = true;
+    }
+    if !handled && ascii_is_digit(byte) {
+      let start: Int = index;
+      index = index + 1;
+      while index < len && ascii_is_digit(string_byte_at(source, index)) {
+        index = index + 1;
+      }
+      texts = string_array_push(texts, string_byte_slice(source, start, index - start));
+      handled = true;
+    }
+    if !handled {
+      let width: Int = symbol_width(source, index);
+      texts = string_array_push(texts, string_byte_slice(source, index, width));
+      index = index + width;
+    }
+  }
+  return string_array_push(texts, "");
+}
+
+fn symbol_width(source: String, index: Int) -> Int {
+  let byte: Int = string_byte_at(source, index);
+  let len: Int = string_len(source);
+  if byte == 45 && index + 1 < len && string_byte_at(source, index + 1) == 62 {
+    return 2;
+  }
+  return 1;
+}
+
+fn is_ident_start(byte: Int) -> Bool {
+  return ascii_is_alpha(byte) || byte == 95;
+}
+
+fn is_ident_continue(byte: Int) -> Bool {
+  return is_ident_start(byte) || ascii_is_digit(byte);
+}
+
+fn keyword_or_ident(text: String) -> Int {
+  if text == "module" {
+    return token_module();
+  }
+  if text == "fn" {
+    return token_fn();
+  }
+  if text == "let" {
+    return token_let();
+  }
+  if text == "return" {
+    return token_return();
+  }
+  return token_ident();
+}
+
+fn symbol_kind(source: String, index: Int) -> Int {
+  let byte: Int = string_byte_at(source, index);
+  if byte == 40 {
+    return token_lparen();
+  }
+  if byte == 41 {
+    return token_rparen();
+  }
+  if byte == 123 {
+    return token_lbrace();
+  }
+  if byte == 125 {
+    return token_rbrace();
+  }
+  if byte == 58 {
+    return token_colon();
+  }
+  if byte == 59 {
+    return token_semicolon();
+  }
+  if byte == 46 {
+    return token_dot();
+  }
+  if byte == 45 {
+    if index + 1 < string_len(source) && string_byte_at(source, index + 1) == 62 {
+      return token_arrow();
+    }
+    return token_minus();
+  }
+  if byte == 61 {
+    return token_eq();
+  }
+  if byte == 43 {
+    return token_plus();
+  }
+  if byte == 42 {
+    return token_star();
+  }
+  if byte == 47 {
+    return token_slash();
+  }
+  return token_unknown();
+}
+
+// ---------------------------------------------------------------------------
+// Token ids (subset of the Stage1 set; values kept identical for familiarity).
+// ---------------------------------------------------------------------------
+fn token_eof() -> Int { return 0; }
+fn token_ident() -> Int { return 1; }
+fn token_int() -> Int { return 2; }
+fn token_module() -> Int { return 10; }
+fn token_fn() -> Int { return 14; }
+fn token_let() -> Int { return 15; }
+fn token_return() -> Int { return 17; }
+fn token_lparen() -> Int { return 30; }
+fn token_rparen() -> Int { return 31; }
+fn token_lbrace() -> Int { return 32; }
+fn token_rbrace() -> Int { return 33; }
+fn token_colon() -> Int { return 36; }
+fn token_semicolon() -> Int { return 37; }
+fn token_dot() -> Int { return 39; }
+fn token_arrow() -> Int { return 40; }
+fn token_eq() -> Int { return 41; }
+fn token_plus() -> Int { return 51; }
+fn token_minus() -> Int { return 52; }
+fn token_star() -> Int { return 53; }
+fn token_slash() -> Int { return 54; }
+fn token_unknown() -> Int { return 99; }
