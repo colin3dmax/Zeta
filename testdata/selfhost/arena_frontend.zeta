@@ -2392,3 +2392,402 @@ fn token_star_eq() -> Int { return 68; }
 fn token_slash_eq() -> Int { return 69; }
 fn token_percent_eq() -> Int { return 70; }
 fn token_unknown() -> Int { return 99; }
+
+// ---------------------------------------------------------------------------
+// M3 vertical slice #1: a minimal name resolver consuming the arena AST.
+//
+// This walks the *already-built* arena (the same one `dump_module_via_arena`
+// produces) and reports every "unknown name reference" — a Name expression (or
+// a simple-name assignment target) that is not bound by any param / let / for /
+// match binding and is not a top-level item name (fn / struct / enum).
+//
+// Mirrors src/resolver.rs's RESOLVE_UNKNOWN_NAME behaviour ONLY:
+//   * Calls (`Call callee=...`) do NOT produce unknown-name diagnostics here
+//     (the Rust resolver classifies an unknown callee as RESOLVE_UNKNOWN_FUNCTION,
+//     a different code), so we skip the callee root entirely and only resolve the
+//     call arguments. Likewise struct-literal type names and field names are not
+//     local references and are never reported.
+//   * A bare `Name` is unknown when it is in neither `locals` nor
+//     `top_level_names`. A simple-name assignment target is unknown when it is
+//     not in `locals` (top-level names are NOT consulted for assign targets,
+//     matching the Rust resolver).
+//
+// Scope stack: Zeta has no map, so `locals` is a StringArray used as a stack of
+// bound names, paired with a logical `count`. Entering a block records the
+// current `count`; bindings inside the block append to the array and bump
+// `count`; on leaving, the parent simply reuses its own saved `count`, so the
+// appended entries past that length are invisible to later lookups. Lookups only
+// ever scan `locals[0 .. count]`, giving exact block scoping without truncation.
+// ---------------------------------------------------------------------------
+
+// Threaded resolver state. `top` holds the top-level item names (fn/struct/enum)
+// gathered once up front; `locals`/`count` are the lexical scope stack described
+// above; `report` accumulates the diagnostic text in AST-visit order; `fn_name`
+// is the enclosing function (kept for parity with the Rust message, though the
+// report format only needs the name).
+struct ResolveState {
+  arena: Arena,
+  top: StringArray,
+  top_count: Int,
+  locals: StringArray,
+  count: Int,
+  report: String,
+  fn_name: String,
+}
+
+export fn resolve_report(source: String) -> String {
+  let kinds: IntArray = lex_kinds(source);
+  let texts: StringArray = lex_texts(source);
+  let parsed: ParseResult = parse_module(arena_empty(), kinds, texts, 0);
+  let arena: Arena = parsed.arena;
+  // Gather top-level names (function / struct / enum) — these shadow nothing but
+  // make a bare reference to them legal.
+  let mut top: StringArray = string_array_empty();
+  let mut top_count: Int = 0;
+  let mut ii: Int = 0;
+  while ii < arena.item_kind.len {
+    let kind: Int = arena.item_kind[ii];
+    let ref: Int = arena.item_ref[ii];
+    if kind == item_struct() {
+      top = string_array_push(top, arena.struct_name[ref]);
+      top_count = top_count + 1;
+    }
+    if kind == item_enum() {
+      top = string_array_push(top, arena.enum_name[ref]);
+      top_count = top_count + 1;
+    }
+    if kind == item_function() {
+      top = string_array_push(top, arena.fn_name[ref]);
+      top_count = top_count + 1;
+    }
+    ii = ii + 1;
+  }
+  // Resolve each function body in source order.
+  let mut report: String = "";
+  let mut fi: Int = 0;
+  while fi < arena.item_kind.len {
+    if arena.item_kind[fi] == item_function() {
+      let ref: Int = arena.item_ref[fi];
+      report = resolve_function(arena, top, top_count, ref, report);
+    }
+    fi = fi + 1;
+  }
+  return report;
+}
+
+// Resolve one function: seed locals with its parameters, then walk the body.
+fn resolve_function(arena: Arena, top: StringArray, top_count: Int, ref: Int, report: String) -> String {
+  let mut locals: StringArray = string_array_empty();
+  let mut count: Int = 0;
+  let pstart: Int = arena.fn_param_start[ref];
+  let pcount: Int = arena.fn_param_count[ref];
+  let mut pi: Int = 0;
+  while pi < pcount {
+    locals = string_array_push(locals, arena.param_name[pstart + pi]);
+    count = count + 1;
+    pi = pi + 1;
+  }
+  let state: ResolveState = ResolveState {
+    arena: arena,
+    top: top,
+    top_count: top_count,
+    locals: locals,
+    count: count,
+    report: report,
+    fn_name: arena.fn_name[ref],
+  };
+  let after: ResolveState = resolve_block(state, arena.fn_body_start[ref], arena.fn_body_count[ref]);
+  return after.report;
+}
+
+// Is `name` currently in lexical scope (params + lets declared so far + loop /
+// match bindings)? Only the first `count` stack entries are visible.
+fn local_in_scope(state: ResolveState, name: String) -> Bool {
+  let mut i: Int = 0;
+  while i < state.count {
+    if state.locals[i] == name {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// Is `name` a top-level item (function / struct / enum)?
+fn top_in_scope(state: ResolveState, name: String) -> Bool {
+  let mut i: Int = 0;
+  while i < state.top_count {
+    if state.top[i] == name {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// Push a binding onto the scope stack, bumping the logical length.
+fn bind_local(state: ResolveState, name: String) -> ResolveState {
+  let mut s: ResolveState = state;
+  // locals 是逻辑栈:写到逻辑位置 count(覆盖上一个块退出后残留、当前不可见的条目),
+  // 仅当逻辑长度已达物理末尾时才真正扩展数组。否则残留条目会落在 count 之后,
+  // 使 local_in_scope(只查 [0..count])看不到这个新绑定 —— 这正是嵌套块后
+  // 兄弟块的循环/match 绑定被误报 unknown 的根因。
+  if s.count < s.locals.len {
+    s.locals[s.count] = name;
+  } else {
+    s.locals = string_array_push(s.locals, name);
+  }
+  s.count = s.count + 1;
+  return s;
+}
+
+// Append one unknown-name diagnostic line.
+fn report_unknown(state: ResolveState, name: String) -> ResolveState {
+  let mut s: ResolveState = state;
+  s.report = string_concat(s.report, "RESOLVE_UNKNOWN_NAME name=");
+  s.report = string_concat(s.report, name);
+  s.report = string_concat(s.report, "\n");
+  return s;
+}
+
+// Resolve a contiguous run of statements (a block). Bindings introduced by the
+// block live only until `resolve_block` returns, because we restore the caller's
+// `count` on the way out (the appended entries stay in the array but become
+// unreachable). `locals` and `report` are threaded forward so later sibling
+// statements and outer scopes see accumulated diagnostics and any array growth.
+fn resolve_block(state: ResolveState, start: Int, count: Int) -> ResolveState {
+  let mut s: ResolveState = state;
+  let saved: Int = s.count;
+  let arena: Arena = s.arena;
+  let mut i: Int = 0;
+  while i < count {
+    let stmt_index: Int = arena.block_list[start + i];
+    s = resolve_stmt(s, stmt_index);
+    i = i + 1;
+  }
+  // Leave the block: forget bindings introduced inside it. The underlying array
+  // may have grown (and that growth is preserved for the caller via `s.locals`),
+  // but only the first `saved` entries are in scope again.
+  s.count = saved;
+  return s;
+}
+
+// Resolve one statement, mutating scope (for let bindings) and threading state.
+fn resolve_stmt(state: ResolveState, index: Int) -> ResolveState {
+  let arena: Arena = state.arena;
+  let kind: Int = arena.stmt_kind[index];
+  let mut s: ResolveState = state;
+  if kind == let_stmt() {
+    // The initializer is resolved in the *pre-binding* scope (so a let cannot
+    // see itself), then the name becomes visible to following statements.
+    s = resolve_expr(s, arena.stmt_expr[index]);
+    s = bind_local(s, arena.stmt_name[index]);
+    return s;
+  }
+  if kind == return_stmt() {
+    if arena.stmt_expr[index] >= 0 {
+      s = resolve_expr(s, arena.stmt_expr[index]);
+    }
+    return s;
+  }
+  if kind == expr_stmt() {
+    s = resolve_expr(s, arena.stmt_expr[index]);
+    return s;
+  }
+  if kind == assign_stmt() {
+    // value first (matches Rust ordering), then the target.
+    s = resolve_expr(s, arena.stmt_expr[index]);
+    if arena.stmt_target[index] >= 0 {
+      // Complex target (field / index chain): resolve it as an expression — its
+      // Name root is reported as unknown only if absent from BOTH scopes, just
+      // like any other Name expression.
+      s = resolve_expr(s, arena.stmt_target[index]);
+    } else {
+      // Simple `name = ...`: unknown when not a local (top-level names are NOT
+      // consulted for assignment targets, mirroring the Rust resolver).
+      let target_name: String = arena.stmt_name[index];
+      if !local_in_scope(s, target_name) {
+        s = report_unknown(s, target_name);
+      }
+    }
+    return s;
+  }
+  if kind == if_stmt() {
+    s = resolve_expr(s, arena.stmt_expr[index]);
+    // then / else each get a fresh nested scope (block bindings don't leak).
+    s = resolve_block(s, arena.stmt_then_start[index], arena.stmt_then_count[index]);
+    s = resolve_block(s, arena.stmt_else_start[index], arena.stmt_else_count[index]);
+    return s;
+  }
+  if kind == while_stmt() {
+    s = resolve_expr(s, arena.stmt_expr[index]);
+    s = resolve_block(s, arena.stmt_then_start[index], arena.stmt_then_count[index]);
+    return s;
+  }
+  if kind == for_in_stmt() {
+    s = resolve_expr(s, arena.stmt_expr[index]);
+    // The loop binding is visible only inside the body.
+    let saved: Int = s.count;
+    s = bind_local(s, arena.stmt_name[index]);
+    s = resolve_block(s, arena.stmt_then_start[index], arena.stmt_then_count[index]);
+    s.count = saved;
+    return s;
+  }
+  if kind == for_c_stmt() {
+    // init / condition / step / body all share one loop scope (init's binding is
+    // visible to condition, step, and body).
+    let saved: Int = s.count;
+    s = resolve_stmt(s, arena.stmt_init[index]);
+    s = resolve_expr(s, arena.stmt_expr[index]);
+    s = resolve_stmt(s, arena.stmt_step[index]);
+    s = resolve_block(s, arena.stmt_then_start[index], arena.stmt_then_count[index]);
+    s.count = saved;
+    return s;
+  }
+  if kind == match_stmt() {
+    s = resolve_expr(s, arena.stmt_expr[index]);
+    let astart: Int = arena.stmt_then_start[index];
+    let acount: Int = arena.stmt_then_count[index];
+    let mut ai: Int = 0;
+    while ai < acount {
+      // Each arm binds its pattern variable (if any) only within that arm body.
+      let saved: Int = s.count;
+      let binding: String = pattern_binding(arena.arm_pattern[astart + ai]);
+      if binding != "" {
+        s = bind_local(s, binding);
+      }
+      s = resolve_block(s, arena.arm_body_start[astart + ai], arena.arm_body_count[astart + ai]);
+      s.count = saved;
+      ai = ai + 1;
+    }
+    return s;
+  }
+  // break / continue: no names to resolve.
+  return s;
+}
+
+// Extract the variable bound by a match-arm pattern, if any. Patterns were
+// rendered to text by pattern_text:
+//   name:x            -> binds x
+//   variant:E.V(b)    -> binds b (the payload)
+//   variant:E.V       -> binds nothing
+//   int:/string:/bool:/_  -> bind nothing
+// Returns "" when the arm introduces no binding.
+fn pattern_binding(pattern: String) -> String {
+  if string_starts_with(pattern, "name:") {
+    return string_byte_slice(pattern, 5, string_len(pattern) - 5);
+  }
+  if string_starts_with(pattern, "variant:") {
+    // A payload binding appears as `...(b)` at the end.
+    let len: Int = string_len(pattern);
+    if len > 0 && string_byte_at(pattern, len - 1) == 41 {
+      // find the matching '('
+      let mut i: Int = len - 2;
+      let mut open: Int = 0 - 1;
+      while i >= 0 {
+        if string_byte_at(pattern, i) == 40 {
+          open = i;
+          i = 0 - 1;
+        } else {
+          i = i - 1;
+        }
+      }
+      if open >= 0 {
+        return string_byte_slice(pattern, open + 1, len - 1 - (open + 1));
+      }
+    }
+    return "";
+  }
+  return "";
+}
+
+// Does `text` begin with `prefix`?
+fn string_starts_with(text: String, prefix: String) -> Bool {
+  let plen: Int = string_len(prefix);
+  if string_len(text) < plen {
+    return false;
+  }
+  let mut i: Int = 0;
+  while i < plen {
+    if string_byte_at(text, i) != string_byte_at(prefix, i) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// Resolve one expression node, reporting unknown Name references in visit order.
+fn resolve_expr(state: ResolveState, node: Int) -> ResolveState {
+  let arena: Arena = state.arena;
+  let kind: Int = arena.node_kind[node];
+  let mut s: ResolveState = state;
+  if kind == name_node() {
+    let name: String = arena.node_text[node];
+    if !local_in_scope(s, name) && !top_in_scope(s, name) {
+      s = report_unknown(s, name);
+    }
+    return s;
+  }
+  if kind == int_node() || kind == bool_node() || kind == string_node() {
+    return s;
+  }
+  if kind == unary_node() {
+    s = resolve_expr(s, arena.node_a[node]);
+    return s;
+  }
+  if kind == binary_node() {
+    s = resolve_expr(s, arena.node_a[node]);
+    s = resolve_expr(s, arena.node_b[node]);
+    return s;
+  }
+  if kind == call_node() {
+    // The callee root is NOT a local name reference (an unknown callee is a
+    // separate RESOLVE_UNKNOWN_FUNCTION diagnostic, out of this slice). Only the
+    // arguments are resolved here.
+    let start: Int = arena.node_a[node];
+    let count: Int = arena.node_b[node];
+    let mut i: Int = 0;
+    while i < count {
+      s = resolve_expr(s, arena.child_list[start + i]);
+      i = i + 1;
+    }
+    return s;
+  }
+  if kind == index_node() {
+    s = resolve_expr(s, arena.node_a[node]);
+    s = resolve_expr(s, arena.node_b[node]);
+    return s;
+  }
+  if kind == field_node() {
+    // Only the base is a name reference; the field name is not.
+    s = resolve_expr(s, arena.node_a[node]);
+    return s;
+  }
+  if kind == array_node() {
+    let start: Int = arena.node_a[node];
+    let count: Int = arena.node_b[node];
+    let mut i: Int = 0;
+    while i < count {
+      s = resolve_expr(s, arena.child_list[start + i]);
+      i = i + 1;
+    }
+    return s;
+  }
+  if kind == struct_lit_node() {
+    // The type name and field names are not local references; resolve only the
+    // field value expressions.
+    let start: Int = arena.node_a[node];
+    let count: Int = arena.node_b[node];
+    let mut i: Int = 0;
+    while i < count {
+      s = resolve_expr(s, arena.sl_field_value[start + i]);
+      i = i + 1;
+    }
+    return s;
+  }
+  // range
+  s = resolve_expr(s, arena.node_a[node]);
+  s = resolve_expr(s, arena.node_b[node]);
+  return s;
+}
