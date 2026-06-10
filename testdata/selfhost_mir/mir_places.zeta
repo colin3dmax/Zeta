@@ -1,0 +1,8 @@
+struct Holder { b: IntArray, }
+
+fn f(a: Holder, xs: IntArray, i: Int, x: Int, y: Int) -> Int {
+  a.b[i].c = x;
+  xs[i + 1] = y;
+  a.b[i][i + 2].c.d = x + y;
+  return 0;
+}

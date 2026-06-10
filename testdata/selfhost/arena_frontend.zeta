@@ -4849,3 +4849,1284 @@ fn tc_arms_cover_variant(arena: Arena, astart: Int, acount: Int,
   }
   return false;
 }
+
+// ---------------------------------------------------------------------------
+// M5 self-hosting milestone: AST arena -> MIR arena lowering + mir-dump.
+//
+// Mirrors src/mir.rs `lower` / `lower_with_external_enum_variants` /
+// `dump_program` exactly. The lowering is structural (1:1 statement mapping)
+// with three desugars:
+//   * an expression statement becomes Drop;
+//   * a for-in whose iterable is a Range node becomes ForRange (the Range node
+//     itself is never lowered);
+//   * a Call whose dotted callee rsplits at the last '.' into a known
+//     (enum, variant) pair becomes EnumVariant — only the FIRST argument
+//     becomes the payload, extra arguments are silently dropped (Rust uses
+//     `args.first()`); a FieldAccess whose base is a Name node naming a known
+//     (enum, variant) pair becomes a payload-less EnumVariant (table-driven
+//     only — locals are NOT consulted, unlike the typechecker).
+//
+// The MIR lives in its own arena (parallel arrays, post-order construction)
+// so the M6 interpreter can execute it without re-walking the AST.
+// ---------------------------------------------------------------------------
+
+// MIR statement kinds.
+fn mir_local_stmt() -> Int { return 0; }
+fn mir_store_stmt() -> Int { return 1; }
+fn mir_if_stmt() -> Int { return 2; }
+fn mir_while_stmt() -> Int { return 3; }
+fn mir_for_in_stmt() -> Int { return 4; }
+fn mir_for_range_stmt() -> Int { return 5; }
+fn mir_for_c_stmt() -> Int { return 6; }
+fn mir_match_stmt() -> Int { return 7; }
+fn mir_return_stmt() -> Int { return 8; }
+fn mir_break_stmt() -> Int { return 9; }
+fn mir_continue_stmt() -> Int { return 10; }
+fn mir_drop_stmt() -> Int { return 11; }
+
+// MIR expression kinds.
+fn mir_load_expr() -> Int { return 0; }
+fn mir_int_expr() -> Int { return 1; }
+fn mir_string_expr() -> Int { return 2; }
+fn mir_bool_expr() -> Int { return 3; }
+fn mir_binary_expr() -> Int { return 4; }
+fn mir_unary_expr() -> Int { return 5; }
+fn mir_call_expr() -> Int { return 6; }
+fn mir_enum_expr() -> Int { return 7; }
+fn mir_struct_expr() -> Int { return 8; }
+fn mir_field_expr() -> Int { return 9; }
+fn mir_array_expr() -> Int { return 10; }
+fn mir_index_expr() -> Int { return 11; }
+
+// MIR place kinds (assignment left-values).
+fn mir_place_local() -> Int { return 0; }
+fn mir_place_field() -> Int { return 1; }
+fn mir_place_index() -> Int { return 2; }
+
+// The MIR arena. Same parallel-array discipline as the AST Arena: every
+// pusher appends to all arrays of its family so indices stay aligned.
+struct Mir {
+  // Enum dump table: user enums in declaration order, then external (std)
+  // enums sorted by name with variants sorted by name. mev_payload "" = none.
+  men_name: StringArray,
+  men_variant_start: IntArray,
+  men_variant_count: IntArray,
+  mev_name: StringArray,
+  mev_payload: StringArray,
+  // Function table. mf_has_ret=0 dumps as `-> Unit`.
+  mf_name: StringArray,
+  mf_has_ret: IntArray,
+  mf_ret: StringArray,
+  mf_param_start: IntArray,
+  mf_param_count: IntArray,
+  mf_body_start: IntArray,
+  mf_body_count: IntArray,
+  mp_name: StringArray,
+  mp_type: StringArray,
+  // Statement arena (flat post-order pool; block shape lives in mblock_list).
+  // ms_name: local name / for binding. ms_expr: value / condition / iterable /
+  // range start (-1 = none). ms_expr2: range end. ms_place: Store place row.
+  // ms_then_*: then body / loop body / match arm slice. ms_else_*: else body.
+  // ms_init / ms_step: ForC init and step statement rows.
+  ms_kind: IntArray,
+  ms_name: StringArray,
+  ms_type: StringArray,
+  ms_has_type: IntArray,
+  ms_mut: IntArray,
+  ms_expr: IntArray,
+  ms_expr2: IntArray,
+  ms_place: IntArray,
+  ms_then_start: IntArray,
+  ms_then_count: IntArray,
+  ms_else_start: IntArray,
+  ms_else_count: IntArray,
+  ms_init: IntArray,
+  ms_step: IntArray,
+  mblock_list: IntArray,
+  // Match arms: pattern text is already in MIR form (string patterns carry
+  // their Rust Debug escaping).
+  marm_pattern: StringArray,
+  marm_body_start: IntArray,
+  marm_body_count: IntArray,
+  // Place arena: local (mpl_name) / field (mpl_base + mpl_name) /
+  // index (mpl_base + mpl_index expr row).
+  mpl_kind: IntArray,
+  mpl_base: IntArray,
+  mpl_name: StringArray,
+  mpl_index: IntArray,
+  // Expression arena. me_text: load name / int text / RAW string token
+  // (normalized at dump time) / bool text / binary-unary op name / callee /
+  // "Enum.Variant" full path / struct type name / field name. me_a/me_b:
+  // children or (start, count) slices of mchild_list. EnumVariant payload is
+  // me_a (-1 = none).
+  me_kind: IntArray,
+  me_a: IntArray,
+  me_b: IntArray,
+  me_text: StringArray,
+  mchild_list: IntArray,
+  // Struct-literal fields, sliced via (me_a, me_b) of the owning struct expr.
+  msl_field_name: StringArray,
+  msl_field_value: IntArray,
+}
+
+fn mir_empty() -> Mir {
+  return Mir {
+    men_name: string_array_empty(),
+    men_variant_start: int_array_empty(),
+    men_variant_count: int_array_empty(),
+    mev_name: string_array_empty(),
+    mev_payload: string_array_empty(),
+    mf_name: string_array_empty(),
+    mf_has_ret: int_array_empty(),
+    mf_ret: string_array_empty(),
+    mf_param_start: int_array_empty(),
+    mf_param_count: int_array_empty(),
+    mf_body_start: int_array_empty(),
+    mf_body_count: int_array_empty(),
+    mp_name: string_array_empty(),
+    mp_type: string_array_empty(),
+    ms_kind: int_array_empty(),
+    ms_name: string_array_empty(),
+    ms_type: string_array_empty(),
+    ms_has_type: int_array_empty(),
+    ms_mut: int_array_empty(),
+    ms_expr: int_array_empty(),
+    ms_expr2: int_array_empty(),
+    ms_place: int_array_empty(),
+    ms_then_start: int_array_empty(),
+    ms_then_count: int_array_empty(),
+    ms_else_start: int_array_empty(),
+    ms_else_count: int_array_empty(),
+    ms_init: int_array_empty(),
+    ms_step: int_array_empty(),
+    mblock_list: int_array_empty(),
+    marm_pattern: string_array_empty(),
+    marm_body_start: int_array_empty(),
+    marm_body_count: int_array_empty(),
+    mpl_kind: int_array_empty(),
+    mpl_base: int_array_empty(),
+    mpl_name: string_array_empty(),
+    mpl_index: int_array_empty(),
+    me_kind: int_array_empty(),
+    me_a: int_array_empty(),
+    me_b: int_array_empty(),
+    me_text: string_array_empty(),
+    mchild_list: int_array_empty(),
+    msl_field_name: string_array_empty(),
+    msl_field_value: int_array_empty(),
+  };
+}
+
+// MirResult / MirBlockResult thread the Mir arena through the lowering the
+// same way ParseResult / BlockResult thread the AST arena through the parser.
+struct MirResult {
+  mir: Mir,
+  node: Int,
+}
+
+struct MirBlockResult {
+  mir: Mir,
+  start: Int,
+  count: Int,
+}
+
+fn push_mir_expr(mir: Mir, kind: Int, a: Int, b: Int, text: String) -> Mir {
+  let mut m: Mir = mir;
+  m.me_kind = int_array_push(m.me_kind, kind);
+  m.me_a = int_array_push(m.me_a, a);
+  m.me_b = int_array_push(m.me_b, b);
+  m.me_text = string_array_push(m.me_text, text);
+  return m;
+}
+
+fn push_mir_place(mir: Mir, kind: Int, base: Int, name: String, index: Int) -> Mir {
+  let mut m: Mir = mir;
+  m.mpl_kind = int_array_push(m.mpl_kind, kind);
+  m.mpl_base = int_array_push(m.mpl_base, base);
+  m.mpl_name = string_array_push(m.mpl_name, name);
+  m.mpl_index = int_array_push(m.mpl_index, index);
+  return m;
+}
+
+fn push_mir_stmt(mir: Mir, kind: Int, name: String, ty: String, has_type: Int, is_mut: Int,
+                 expr: Int, expr2: Int, place: Int,
+                 then_start: Int, then_count: Int, else_start: Int, else_count: Int,
+                 init: Int, step: Int) -> Mir {
+  let mut m: Mir = mir;
+  m.ms_kind = int_array_push(m.ms_kind, kind);
+  m.ms_name = string_array_push(m.ms_name, name);
+  m.ms_type = string_array_push(m.ms_type, ty);
+  m.ms_has_type = int_array_push(m.ms_has_type, has_type);
+  m.ms_mut = int_array_push(m.ms_mut, is_mut);
+  m.ms_expr = int_array_push(m.ms_expr, expr);
+  m.ms_expr2 = int_array_push(m.ms_expr2, expr2);
+  m.ms_place = int_array_push(m.ms_place, place);
+  m.ms_then_start = int_array_push(m.ms_then_start, then_start);
+  m.ms_then_count = int_array_push(m.ms_then_count, then_count);
+  m.ms_else_start = int_array_push(m.ms_else_start, else_start);
+  m.ms_else_count = int_array_push(m.ms_else_count, else_count);
+  m.ms_init = int_array_push(m.ms_init, init);
+  m.ms_step = int_array_push(m.ms_step, step);
+  return m;
+}
+
+// ---------------------------------------------------------------------------
+// Lowering: AST arena -> MIR arena, post-order. `enums` is the variant lookup
+// table (user enums plus the entry point's external std enums merged in, the
+// union Rust builds by extending enum_variants with the external map).
+// ---------------------------------------------------------------------------
+
+fn lower_expr(arena: Arena, enums: EnumTable, mir: Mir, node: Int) -> MirResult {
+  let kind: Int = arena.node_kind[node];
+  if kind == name_node() {
+    let index: Int = mir.me_kind.len;
+    let m: Mir = push_mir_expr(mir, mir_load_expr(), 0 - 1, 0 - 1, arena.node_text[node]);
+    return MirResult { mir: m, node: index };
+  }
+  if kind == int_node() {
+    let index: Int = mir.me_kind.len;
+    let m: Mir = push_mir_expr(mir, mir_int_expr(), 0 - 1, 0 - 1, arena.node_text[node]);
+    return MirResult { mir: m, node: index };
+  }
+  if kind == string_node() {
+    // Keep the raw quoted token; the dump pass normalizes the escapes.
+    let index: Int = mir.me_kind.len;
+    let m: Mir = push_mir_expr(mir, mir_string_expr(), 0 - 1, 0 - 1, arena.node_text[node]);
+    return MirResult { mir: m, node: index };
+  }
+  if kind == bool_node() {
+    let index: Int = mir.me_kind.len;
+    let m: Mir = push_mir_expr(mir, mir_bool_expr(), 0 - 1, 0 - 1, arena.node_text[node]);
+    return MirResult { mir: m, node: index };
+  }
+  if kind == unary_node() {
+    let operand: MirResult = lower_expr(arena, enums, mir, arena.node_a[node]);
+    let index: Int = operand.mir.me_kind.len;
+    let m: Mir = push_mir_expr(operand.mir, mir_unary_expr(), operand.node, 0 - 1,
+                               arena.node_text[node]);
+    return MirResult { mir: m, node: index };
+  }
+  if kind == binary_node() {
+    let left: MirResult = lower_expr(arena, enums, mir, arena.node_a[node]);
+    let right: MirResult = lower_expr(arena, enums, left.mir, arena.node_b[node]);
+    let index: Int = right.mir.me_kind.len;
+    let m: Mir = push_mir_expr(right.mir, mir_binary_expr(), left.node, right.node,
+                               arena.node_text[node]);
+    return MirResult { mir: m, node: index };
+  }
+  if kind == call_node() {
+    let callee: String = arena.node_text[node];
+    let arg_start: Int = arena.node_a[node];
+    let arg_count: Int = arena.node_b[node];
+    let dot: Int = string_last_dot(callee);
+    if dot >= 0 {
+      let ename: String = string_byte_slice(callee, 0, dot);
+      let vname: String = string_byte_slice(callee, dot + 1, string_len(callee) - dot - 1);
+      if tc_variant_index(enums, ename, vname) >= 0 {
+        // Enum-variant construction. Only the first argument is lowered as
+        // the payload; extra arguments never reach the MIR (Rust quirk).
+        if arg_count > 0 {
+          let payload: MirResult = lower_expr(arena, enums, mir, arena.child_list[arg_start]);
+          let pindex: Int = payload.mir.me_kind.len;
+          let pm: Mir = push_mir_expr(payload.mir, mir_enum_expr(), payload.node, 0 - 1, callee);
+          return MirResult { mir: pm, node: pindex };
+        }
+        let index: Int = mir.me_kind.len;
+        let m: Mir = push_mir_expr(mir, mir_enum_expr(), 0 - 1, 0 - 1, callee);
+        return MirResult { mir: m, node: index };
+      }
+    }
+    // Plain call: lower the args in order, then commit their MIR rows to
+    // mchild_list as one contiguous run.
+    let mut mm: Mir = mir;
+    let mut args: IntArray = int_array_empty();
+    let mut i: Int = 0;
+    while i < arg_count {
+      let r: MirResult = lower_expr(arena, enums, mm, arena.child_list[arg_start + i]);
+      mm = r.mir;
+      args = int_array_push(args, r.node);
+      i = i + 1;
+    }
+    let cstart: Int = mm.mchild_list.len;
+    let mut j: Int = 0;
+    while j < args.len {
+      mm.mchild_list = int_array_push(mm.mchild_list, args[j]);
+      j = j + 1;
+    }
+    let index: Int = mm.me_kind.len;
+    mm = push_mir_expr(mm, mir_call_expr(), cstart, arg_count, callee);
+    return MirResult { mir: mm, node: index };
+  }
+  if kind == field_node() {
+    let base: Int = arena.node_a[node];
+    let field: String = arena.node_text[node];
+    if arena.node_kind[base] == name_node() {
+      if tc_variant_index(enums, arena.node_text[base], field) >= 0 {
+        // Payload-less enum-variant reference. Purely table-driven: a local
+        // shadowing the enum name does NOT suppress this (unlike typecheck).
+        let mut path: String = arena.node_text[base];
+        path = string_concat(path, ".");
+        path = string_concat(path, field);
+        let index: Int = mir.me_kind.len;
+        let m: Mir = push_mir_expr(mir, mir_enum_expr(), 0 - 1, 0 - 1, path);
+        return MirResult { mir: m, node: index };
+      }
+    }
+    let br: MirResult = lower_expr(arena, enums, mir, base);
+    let index: Int = br.mir.me_kind.len;
+    let m: Mir = push_mir_expr(br.mir, mir_field_expr(), br.node, 0 - 1, field);
+    return MirResult { mir: m, node: index };
+  }
+  if kind == array_node() {
+    let elem_start: Int = arena.node_a[node];
+    let elem_count: Int = arena.node_b[node];
+    let mut mm: Mir = mir;
+    let mut elems: IntArray = int_array_empty();
+    let mut i: Int = 0;
+    while i < elem_count {
+      let r: MirResult = lower_expr(arena, enums, mm, arena.child_list[elem_start + i]);
+      mm = r.mir;
+      elems = int_array_push(elems, r.node);
+      i = i + 1;
+    }
+    let cstart: Int = mm.mchild_list.len;
+    let mut j: Int = 0;
+    while j < elems.len {
+      mm.mchild_list = int_array_push(mm.mchild_list, elems[j]);
+      j = j + 1;
+    }
+    let index: Int = mm.me_kind.len;
+    mm = push_mir_expr(mm, mir_array_expr(), cstart, elem_count, "");
+    return MirResult { mir: mm, node: index };
+  }
+  if kind == struct_lit_node() {
+    let fstart: Int = arena.node_a[node];
+    let fcount: Int = arena.node_b[node];
+    let mut mm: Mir = mir;
+    let mut values: IntArray = int_array_empty();
+    let mut i: Int = 0;
+    while i < fcount {
+      let r: MirResult = lower_expr(arena, enums, mm, arena.sl_field_value[fstart + i]);
+      mm = r.mir;
+      values = int_array_push(values, r.node);
+      i = i + 1;
+    }
+    let mstart: Int = mm.msl_field_name.len;
+    let mut j: Int = 0;
+    while j < fcount {
+      mm.msl_field_name = string_array_push(mm.msl_field_name, arena.sl_field_name[fstart + j]);
+      mm.msl_field_value = int_array_push(mm.msl_field_value, values[j]);
+      j = j + 1;
+    }
+    let index: Int = mm.me_kind.len;
+    mm = push_mir_expr(mm, mir_struct_expr(), mstart, fcount, arena.node_text[node]);
+    return MirResult { mir: mm, node: index };
+  }
+  if kind == index_node() {
+    let base: MirResult = lower_expr(arena, enums, mir, arena.node_a[node]);
+    let idx: MirResult = lower_expr(arena, enums, base.mir, arena.node_b[node]);
+    let index: Int = idx.mir.me_kind.len;
+    let m: Mir = push_mir_expr(idx.mir, mir_index_expr(), base.node, idx.node, "");
+    return MirResult { mir: m, node: index };
+  }
+  // range_node: only reachable as a for-in iterable, which lower_stmt splits
+  // into ForRange start/end before ever lowering the Range itself (the Rust
+  // arm is unreachable!()). Emit a dummy load to keep the arena consistent.
+  let index: Int = mir.me_kind.len;
+  let m: Mir = push_mir_expr(mir, mir_load_expr(), 0 - 1, 0 - 1, "");
+  return MirResult { mir: m, node: index };
+}
+
+// Lower an assignment target expression into a place row.
+fn lower_place(arena: Arena, enums: EnumTable, mir: Mir, node: Int) -> MirResult {
+  let kind: Int = arena.node_kind[node];
+  if kind == name_node() {
+    let index: Int = mir.mpl_kind.len;
+    let m: Mir = push_mir_place(mir, mir_place_local(), 0 - 1, arena.node_text[node], 0 - 1);
+    return MirResult { mir: m, node: index };
+  }
+  if kind == field_node() {
+    let base: MirResult = lower_place(arena, enums, mir, arena.node_a[node]);
+    let index: Int = base.mir.mpl_kind.len;
+    let m: Mir = push_mir_place(base.mir, mir_place_field(), base.node,
+                                arena.node_text[node], 0 - 1);
+    return MirResult { mir: m, node: index };
+  }
+  if kind == index_node() {
+    let base: MirResult = lower_place(arena, enums, mir, arena.node_a[node]);
+    let idx: MirResult = lower_expr(arena, enums, base.mir, arena.node_b[node]);
+    let index: Int = idx.mir.mpl_kind.len;
+    let m: Mir = push_mir_place(idx.mir, mir_place_index(), base.node, "", idx.node);
+    return MirResult { mir: m, node: index };
+  }
+  // Non-lvalue target: Rust lowers it to Local("") (typecheck rejects such
+  // programs before MIR in valid pipelines).
+  let index: Int = mir.mpl_kind.len;
+  let m: Mir = push_mir_place(mir, mir_place_local(), 0 - 1, "", 0 - 1);
+  return MirResult { mir: m, node: index };
+}
+
+// AST arm-pattern text -> MIR arm-pattern text. Identical except string
+// patterns: the arena stores the raw quoted token after "string:", while the
+// MIR dump shows the Rust Debug escaping (normalize_string_escapes handles
+// both the quotes and the escape contract).
+fn mir_pattern_text(pattern: String) -> String {
+  if string_starts_with(pattern, "string:") {
+    let raw: String = string_byte_slice(pattern, 7, string_len(pattern) - 7);
+    return string_concat("string:", normalize_string_escapes(raw));
+  }
+  return pattern;
+}
+
+fn lower_block(arena: Arena, enums: EnumTable, mir: Mir, start: Int, count: Int) -> MirBlockResult {
+  // Same gather-then-commit pattern as parse_block: lowered child rows are
+  // collected locally, then appended to mblock_list as one contiguous run.
+  let mut m: Mir = mir;
+  let mut items: IntArray = int_array_empty();
+  let mut i: Int = 0;
+  while i < count {
+    let r: MirResult = lower_stmt(arena, enums, m, arena.block_list[start + i]);
+    m = r.mir;
+    items = int_array_push(items, r.node);
+    i = i + 1;
+  }
+  let bstart: Int = m.mblock_list.len;
+  let mut j: Int = 0;
+  while j < count {
+    m.mblock_list = int_array_push(m.mblock_list, items[j]);
+    j = j + 1;
+  }
+  return MirBlockResult { mir: m, start: bstart, count: count };
+}
+
+fn lower_stmt(arena: Arena, enums: EnumTable, mir: Mir, index: Int) -> MirResult {
+  let kind: Int = arena.stmt_kind[index];
+  if kind == let_stmt() {
+    let value: MirResult = lower_expr(arena, enums, mir, arena.stmt_expr[index]);
+    let row: Int = value.mir.ms_kind.len;
+    let m: Mir = push_mir_stmt(value.mir, mir_local_stmt(), arena.stmt_name[index],
+                               arena.stmt_type[index], arena.stmt_has_type[index],
+                               arena.stmt_mut[index], value.node, 0 - 1, 0 - 1,
+                               0, 0, 0, 0, 0 - 1, 0 - 1);
+    return MirResult { mir: m, node: row };
+  }
+  if kind == return_stmt() {
+    if arena.stmt_expr[index] >= 0 {
+      let value: MirResult = lower_expr(arena, enums, mir, arena.stmt_expr[index]);
+      let row: Int = value.mir.ms_kind.len;
+      let m: Mir = push_mir_stmt(value.mir, mir_return_stmt(), "", "", 0, 0,
+                                 value.node, 0 - 1, 0 - 1, 0, 0, 0, 0, 0 - 1, 0 - 1);
+      return MirResult { mir: m, node: row };
+    }
+    let row: Int = mir.ms_kind.len;
+    let m: Mir = push_mir_stmt(mir, mir_return_stmt(), "", "", 0, 0,
+                               0 - 1, 0 - 1, 0 - 1, 0, 0, 0, 0, 0 - 1, 0 - 1);
+    return MirResult { mir: m, node: row };
+  }
+  if kind == assign_stmt() {
+    // Store. A simple-name assign (target -1) becomes a Local place directly;
+    // a complex target lowers through lower_place.
+    let mut m: Mir = mir;
+    let mut place: Int = 0 - 1;
+    if arena.stmt_target[index] >= 0 {
+      let pr: MirResult = lower_place(arena, enums, m, arena.stmt_target[index]);
+      m = pr.mir;
+      place = pr.node;
+    } else {
+      place = m.mpl_kind.len;
+      m = push_mir_place(m, mir_place_local(), 0 - 1, arena.stmt_name[index], 0 - 1);
+    }
+    let value: MirResult = lower_expr(arena, enums, m, arena.stmt_expr[index]);
+    let row: Int = value.mir.ms_kind.len;
+    let mm: Mir = push_mir_stmt(value.mir, mir_store_stmt(), "", "", 0, 0,
+                                value.node, 0 - 1, place, 0, 0, 0, 0, 0 - 1, 0 - 1);
+    return MirResult { mir: mm, node: row };
+  }
+  if kind == if_stmt() {
+    let cond: MirResult = lower_expr(arena, enums, mir, arena.stmt_expr[index]);
+    let thenb: MirBlockResult = lower_block(arena, enums, cond.mir,
+                                            arena.stmt_then_start[index],
+                                            arena.stmt_then_count[index]);
+    let elseb: MirBlockResult = lower_block(arena, enums, thenb.mir,
+                                            arena.stmt_else_start[index],
+                                            arena.stmt_else_count[index]);
+    let row: Int = elseb.mir.ms_kind.len;
+    let m: Mir = push_mir_stmt(elseb.mir, mir_if_stmt(), "", "", 0, 0,
+                               cond.node, 0 - 1, 0 - 1,
+                               thenb.start, thenb.count, elseb.start, elseb.count,
+                               0 - 1, 0 - 1);
+    return MirResult { mir: m, node: row };
+  }
+  if kind == while_stmt() {
+    let cond: MirResult = lower_expr(arena, enums, mir, arena.stmt_expr[index]);
+    let body: MirBlockResult = lower_block(arena, enums, cond.mir,
+                                           arena.stmt_then_start[index],
+                                           arena.stmt_then_count[index]);
+    let row: Int = body.mir.ms_kind.len;
+    let m: Mir = push_mir_stmt(body.mir, mir_while_stmt(), "", "", 0, 0,
+                               cond.node, 0 - 1, 0 - 1,
+                               body.start, body.count, 0, 0, 0 - 1, 0 - 1);
+    return MirResult { mir: m, node: row };
+  }
+  if kind == for_in_stmt() {
+    let iter: Int = arena.stmt_expr[index];
+    if arena.node_kind[iter] == range_node() {
+      // for-in over a Range desugars to ForRange; the Range node itself is
+      // never lowered (only its start/end children are).
+      let startr: MirResult = lower_expr(arena, enums, mir, arena.node_a[iter]);
+      let endr: MirResult = lower_expr(arena, enums, startr.mir, arena.node_b[iter]);
+      let body: MirBlockResult = lower_block(arena, enums, endr.mir,
+                                             arena.stmt_then_start[index],
+                                             arena.stmt_then_count[index]);
+      let row: Int = body.mir.ms_kind.len;
+      let m: Mir = push_mir_stmt(body.mir, mir_for_range_stmt(), arena.stmt_name[index],
+                                 "", 0, 0, startr.node, endr.node, 0 - 1,
+                                 body.start, body.count, 0, 0, 0 - 1, 0 - 1);
+      return MirResult { mir: m, node: row };
+    }
+    let iterable: MirResult = lower_expr(arena, enums, mir, iter);
+    let body: MirBlockResult = lower_block(arena, enums, iterable.mir,
+                                           arena.stmt_then_start[index],
+                                           arena.stmt_then_count[index]);
+    let row: Int = body.mir.ms_kind.len;
+    let m: Mir = push_mir_stmt(body.mir, mir_for_in_stmt(), arena.stmt_name[index],
+                               "", 0, 0, iterable.node, 0 - 1, 0 - 1,
+                               body.start, body.count, 0, 0, 0 - 1, 0 - 1);
+    return MirResult { mir: m, node: row };
+  }
+  if kind == for_c_stmt() {
+    let init: MirResult = lower_stmt(arena, enums, mir, arena.stmt_init[index]);
+    let cond: MirResult = lower_expr(arena, enums, init.mir, arena.stmt_expr[index]);
+    let step: MirResult = lower_stmt(arena, enums, cond.mir, arena.stmt_step[index]);
+    let body: MirBlockResult = lower_block(arena, enums, step.mir,
+                                           arena.stmt_then_start[index],
+                                           arena.stmt_then_count[index]);
+    let row: Int = body.mir.ms_kind.len;
+    let m: Mir = push_mir_stmt(body.mir, mir_for_c_stmt(), "", "", 0, 0,
+                               cond.node, 0 - 1, 0 - 1,
+                               body.start, body.count, 0, 0, init.node, step.node);
+    return MirResult { mir: m, node: row };
+  }
+  if kind == match_stmt() {
+    let value: MirResult = lower_expr(arena, enums, mir, arena.stmt_expr[index]);
+    // Gather each arm locally, then commit one contiguous run (same pattern
+    // as parse_match).
+    let mut m: Mir = value.mir;
+    let mut patterns: StringArray = string_array_empty();
+    let mut bstarts: IntArray = int_array_empty();
+    let mut bcounts: IntArray = int_array_empty();
+    let astart: Int = arena.stmt_then_start[index];
+    let acount: Int = arena.stmt_then_count[index];
+    let mut ai: Int = 0;
+    while ai < acount {
+      let body: MirBlockResult = lower_block(arena, enums, m,
+                                             arena.arm_body_start[astart + ai],
+                                             arena.arm_body_count[astart + ai]);
+      m = body.mir;
+      patterns = string_array_push(patterns, mir_pattern_text(arena.arm_pattern[astart + ai]));
+      bstarts = int_array_push(bstarts, body.start);
+      bcounts = int_array_push(bcounts, body.count);
+      ai = ai + 1;
+    }
+    let marm_start: Int = m.marm_pattern.len;
+    let mut k: Int = 0;
+    while k < acount {
+      m.marm_pattern = string_array_push(m.marm_pattern, patterns[k]);
+      m.marm_body_start = int_array_push(m.marm_body_start, bstarts[k]);
+      m.marm_body_count = int_array_push(m.marm_body_count, bcounts[k]);
+      k = k + 1;
+    }
+    let row: Int = m.ms_kind.len;
+    m = push_mir_stmt(m, mir_match_stmt(), "", "", 0, 0,
+                      value.node, 0 - 1, 0 - 1,
+                      marm_start, acount, 0, 0, 0 - 1, 0 - 1);
+    return MirResult { mir: m, node: row };
+  }
+  if kind == break_stmt() {
+    let row: Int = mir.ms_kind.len;
+    let m: Mir = push_mir_stmt(mir, mir_break_stmt(), "", "", 0, 0,
+                               0 - 1, 0 - 1, 0 - 1, 0, 0, 0, 0, 0 - 1, 0 - 1);
+    return MirResult { mir: m, node: row };
+  }
+  if kind == continue_stmt() {
+    let row: Int = mir.ms_kind.len;
+    let m: Mir = push_mir_stmt(mir, mir_continue_stmt(), "", "", 0, 0,
+                               0 - 1, 0 - 1, 0 - 1, 0, 0, 0, 0, 0 - 1, 0 - 1);
+    return MirResult { mir: m, node: row };
+  }
+  // Expression statement -> Drop.
+  let value: MirResult = lower_expr(arena, enums, mir, arena.stmt_expr[index]);
+  let row: Int = value.mir.ms_kind.len;
+  let m: Mir = push_mir_stmt(value.mir, mir_drop_stmt(), "", "", 0, 0,
+                             value.node, 0 - 1, 0 - 1, 0, 0, 0, 0, 0 - 1, 0 - 1);
+  return MirResult { mir: m, node: row };
+}
+
+fn lower_function(arena: Arena, enums: EnumTable, mir: Mir, fi: Int) -> Mir {
+  let mut m: Mir = mir;
+  let pstart: Int = m.mp_name.len;
+  let apstart: Int = arena.fn_param_start[fi];
+  let pcount: Int = arena.fn_param_count[fi];
+  let mut pi: Int = 0;
+  while pi < pcount {
+    m.mp_name = string_array_push(m.mp_name, arena.param_name[apstart + pi]);
+    m.mp_type = string_array_push(m.mp_type, arena.param_type[apstart + pi]);
+    pi = pi + 1;
+  }
+  let body: MirBlockResult = lower_block(arena, enums, m,
+                                         arena.fn_body_start[fi], arena.fn_body_count[fi]);
+  m = body.mir;
+  m.mf_name = string_array_push(m.mf_name, arena.fn_name[fi]);
+  m.mf_has_ret = int_array_push(m.mf_has_ret, arena.fn_has_ret[fi]);
+  m.mf_ret = string_array_push(m.mf_ret, arena.fn_ret[fi]);
+  m.mf_param_start = int_array_push(m.mf_param_start, pstart);
+  m.mf_param_count = int_array_push(m.mf_param_count, pcount);
+  m.mf_body_start = int_array_push(m.mf_body_start, body.start);
+  m.mf_body_count = int_array_push(m.mf_body_count, body.count);
+  return m;
+}
+
+fn lower_module(arena: Arena, enums: EnumTable, mir: Mir) -> Mir {
+  // Functions in item (source) order, mirroring the Rust items filter.
+  let mut m: Mir = mir;
+  let mut ii: Int = 0;
+  while ii < arena.item_kind.len {
+    if arena.item_kind[ii] == item_function() {
+      m = lower_function(arena, enums, m, arena.item_ref[ii]);
+    }
+    ii = ii + 1;
+  }
+  return m;
+}
+
+// Is `name` declared as a user enum in this module? (Used to suppress dumping
+// an external std enum shadowed by a same-named user enum.)
+fn user_enum_declared(arena: Arena, name: String) -> Bool {
+  let mut i: Int = 0;
+  while i < arena.enum_name.len {
+    if arena.enum_name[i] == name {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// Append one external std enum (always exactly two variants, pre-sorted by
+// variant name to match Rust's sort_by_key).
+fn push_mir_external_enum(mir: Mir, name: String, v1: String, p1: String,
+                          v2: String, p2: String) -> Mir {
+  let mut m: Mir = mir;
+  m.men_name = string_array_push(m.men_name, name);
+  m.men_variant_start = int_array_push(m.men_variant_start, m.mev_name.len);
+  m.men_variant_count = int_array_push(m.men_variant_count, 2);
+  m.mev_name = string_array_push(m.mev_name, v1);
+  m.mev_payload = string_array_push(m.mev_payload, p1);
+  m.mev_name = string_array_push(m.mev_name, v2);
+  m.mev_payload = string_array_push(m.mev_payload, p2);
+  return m;
+}
+
+// Build the enum dump table: user enums in declaration order first, then the
+// external std enums sorted by enum name (OptionInt < ResultInt < ResultString,
+// so pushing the std.core pair before the std.io one preserves the sort) with
+// variants sorted by name. An external enum shadowed by a same-named user enum
+// is not dumped — but its variants still join the lowering lookup table.
+fn mir_enum_dump_table(arena: Arena, mir: Mir, has_std_core: Bool, has_std_io: Bool) -> Mir {
+  let mut m: Mir = mir;
+  let mut e: Int = 0;
+  while e < arena.enum_name.len {
+    m.men_name = string_array_push(m.men_name, arena.enum_name[e]);
+    m.men_variant_start = int_array_push(m.men_variant_start, m.mev_name.len);
+    m.men_variant_count = int_array_push(m.men_variant_count, arena.enum_variant_count[e]);
+    let vstart: Int = arena.enum_variant_start[e];
+    let vcount: Int = arena.enum_variant_count[e];
+    let mut v: Int = 0;
+    while v < vcount {
+      m.mev_name = string_array_push(m.mev_name, arena.variant_name[vstart + v]);
+      m.mev_payload = string_array_push(m.mev_payload, arena.variant_payload[vstart + v]);
+      v = v + 1;
+    }
+    e = e + 1;
+  }
+  if has_std_core {
+    if !user_enum_declared(arena, "OptionInt") {
+      m = push_mir_external_enum(m, "OptionInt", "None", "", "Some", "Int");
+    }
+    if !user_enum_declared(arena, "ResultInt") {
+      m = push_mir_external_enum(m, "ResultInt", "Err", "String", "Ok", "Int");
+    }
+  }
+  if has_std_io {
+    if !user_enum_declared(arena, "ResultString") {
+      m = push_mir_external_enum(m, "ResultString", "Err", "String", "Ok", "String");
+    }
+  }
+  return m;
+}
+
+// ---------------------------------------------------------------------------
+// MIR dump: walk the MIR arena and emit text identical to Rust dump_program.
+// Temps `_tN` restart at 0 per function; every expression dumps its children
+// first (post-order) and returns its own temp name.
+// ---------------------------------------------------------------------------
+
+// Threaded dump results: `out` is the accumulated text, `next` the next temp id.
+struct MirDumpStmt {
+  out: String,
+  next: Int,
+}
+
+struct MirDumpExpr {
+  out: String,
+  next: Int,
+  temp: String,
+}
+
+struct MirDumpPlace {
+  out: String,
+  next: Int,
+  text: String,
+}
+
+fn mir_temp_name(n: Int) -> String {
+  return string_concat("_t", int_to_string(n));
+}
+
+fn mir_dump_expr(mir: Mir, node: Int, depth: Int, out: String, next: Int) -> MirDumpExpr {
+  let pad: String = indent_of(depth);
+  let kind: Int = mir.me_kind[node];
+  if kind == mir_load_expr() {
+    let temp: String = mir_temp_name(next);
+    let mut o: String = string_concat(out, pad);
+    o = string_concat(o, temp);
+    o = string_concat(o, " = load ");
+    o = string_concat(o, mir.me_text[node]);
+    o = string_concat(o, "\n");
+    return MirDumpExpr { out: o, next: next + 1, temp: temp };
+  }
+  if kind == mir_int_expr() {
+    let temp: String = mir_temp_name(next);
+    let mut o: String = string_concat(out, pad);
+    o = string_concat(o, temp);
+    o = string_concat(o, " = const Int ");
+    o = string_concat(o, mir.me_text[node]);
+    o = string_concat(o, "\n");
+    return MirDumpExpr { out: o, next: next + 1, temp: temp };
+  }
+  if kind == mir_string_expr() {
+    let temp: String = mir_temp_name(next);
+    let mut o: String = string_concat(out, pad);
+    o = string_concat(o, temp);
+    o = string_concat(o, " = const String ");
+    o = string_concat(o, normalize_string_escapes(mir.me_text[node]));
+    o = string_concat(o, "\n");
+    return MirDumpExpr { out: o, next: next + 1, temp: temp };
+  }
+  if kind == mir_bool_expr() {
+    let temp: String = mir_temp_name(next);
+    let mut o: String = string_concat(out, pad);
+    o = string_concat(o, temp);
+    o = string_concat(o, " = const Bool ");
+    o = string_concat(o, mir.me_text[node]);
+    o = string_concat(o, "\n");
+    return MirDumpExpr { out: o, next: next + 1, temp: temp };
+  }
+  if kind == mir_binary_expr() {
+    let left: MirDumpExpr = mir_dump_expr(mir, mir.me_a[node], depth, out, next);
+    let right: MirDumpExpr = mir_dump_expr(mir, mir.me_b[node], depth, left.out, left.next);
+    let temp: String = mir_temp_name(right.next);
+    let mut o: String = string_concat(right.out, pad);
+    o = string_concat(o, temp);
+    o = string_concat(o, " = binary ");
+    o = string_concat(o, mir.me_text[node]);
+    o = string_concat(o, " ");
+    o = string_concat(o, left.temp);
+    o = string_concat(o, ", ");
+    o = string_concat(o, right.temp);
+    o = string_concat(o, "\n");
+    return MirDumpExpr { out: o, next: right.next + 1, temp: temp };
+  }
+  if kind == mir_unary_expr() {
+    let operand: MirDumpExpr = mir_dump_expr(mir, mir.me_a[node], depth, out, next);
+    let temp: String = mir_temp_name(operand.next);
+    let mut o: String = string_concat(operand.out, pad);
+    o = string_concat(o, temp);
+    o = string_concat(o, " = unary ");
+    o = string_concat(o, mir.me_text[node]);
+    o = string_concat(o, " ");
+    o = string_concat(o, operand.temp);
+    o = string_concat(o, "\n");
+    return MirDumpExpr { out: o, next: operand.next + 1, temp: temp };
+  }
+  if kind == mir_call_expr() {
+    let astart: Int = mir.me_a[node];
+    let acount: Int = mir.me_b[node];
+    let mut o: String = out;
+    let mut n: Int = next;
+    let mut joined: String = "";
+    let mut i: Int = 0;
+    while i < acount {
+      let r: MirDumpExpr = mir_dump_expr(mir, mir.mchild_list[astart + i], depth, o, n);
+      o = r.out;
+      n = r.next;
+      if i > 0 {
+        joined = string_concat(joined, ", ");
+      }
+      joined = string_concat(joined, r.temp);
+      i = i + 1;
+    }
+    let temp: String = mir_temp_name(n);
+    o = string_concat(o, pad);
+    o = string_concat(o, temp);
+    o = string_concat(o, " = call ");
+    o = string_concat(o, mir.me_text[node]);
+    o = string_concat(o, "(");
+    o = string_concat(o, joined);
+    o = string_concat(o, ")\n");
+    return MirDumpExpr { out: o, next: n + 1, temp: temp };
+  }
+  if kind == mir_enum_expr() {
+    if mir.me_a[node] >= 0 {
+      let payload: MirDumpExpr = mir_dump_expr(mir, mir.me_a[node], depth, out, next);
+      let temp: String = mir_temp_name(payload.next);
+      let mut o: String = string_concat(payload.out, pad);
+      o = string_concat(o, temp);
+      o = string_concat(o, " = enum ");
+      o = string_concat(o, mir.me_text[node]);
+      o = string_concat(o, "(");
+      o = string_concat(o, payload.temp);
+      o = string_concat(o, ")\n");
+      return MirDumpExpr { out: o, next: payload.next + 1, temp: temp };
+    }
+    let temp: String = mir_temp_name(next);
+    let mut o: String = string_concat(out, pad);
+    o = string_concat(o, temp);
+    o = string_concat(o, " = enum ");
+    o = string_concat(o, mir.me_text[node]);
+    o = string_concat(o, "\n");
+    return MirDumpExpr { out: o, next: next + 1, temp: temp };
+  }
+  if kind == mir_struct_expr() {
+    let fstart: Int = mir.me_a[node];
+    let fcount: Int = mir.me_b[node];
+    let mut o: String = out;
+    let mut n: Int = next;
+    let mut joined: String = "";
+    let mut i: Int = 0;
+    while i < fcount {
+      let r: MirDumpExpr = mir_dump_expr(mir, mir.msl_field_value[fstart + i], depth, o, n);
+      o = r.out;
+      n = r.next;
+      if i > 0 {
+        joined = string_concat(joined, ", ");
+      }
+      joined = string_concat(joined, mir.msl_field_name[fstart + i]);
+      joined = string_concat(joined, ": ");
+      joined = string_concat(joined, r.temp);
+      i = i + 1;
+    }
+    let temp: String = mir_temp_name(n);
+    o = string_concat(o, pad);
+    o = string_concat(o, temp);
+    o = string_concat(o, " = struct ");
+    o = string_concat(o, mir.me_text[node]);
+    // Rust formats `{{ {} }}`: an empty field list still keeps both spaces.
+    o = string_concat(o, " { ");
+    o = string_concat(o, joined);
+    o = string_concat(o, " }\n");
+    return MirDumpExpr { out: o, next: n + 1, temp: temp };
+  }
+  if kind == mir_field_expr() {
+    let base: MirDumpExpr = mir_dump_expr(mir, mir.me_a[node], depth, out, next);
+    let temp: String = mir_temp_name(base.next);
+    let mut o: String = string_concat(base.out, pad);
+    o = string_concat(o, temp);
+    o = string_concat(o, " = field ");
+    o = string_concat(o, base.temp);
+    o = string_concat(o, ".");
+    o = string_concat(o, mir.me_text[node]);
+    o = string_concat(o, "\n");
+    return MirDumpExpr { out: o, next: base.next + 1, temp: temp };
+  }
+  if kind == mir_array_expr() {
+    let estart: Int = mir.me_a[node];
+    let ecount: Int = mir.me_b[node];
+    let mut o: String = out;
+    let mut n: Int = next;
+    let mut joined: String = "";
+    let mut i: Int = 0;
+    while i < ecount {
+      let r: MirDumpExpr = mir_dump_expr(mir, mir.mchild_list[estart + i], depth, o, n);
+      o = r.out;
+      n = r.next;
+      if i > 0 {
+        joined = string_concat(joined, ", ");
+      }
+      joined = string_concat(joined, r.temp);
+      i = i + 1;
+    }
+    let temp: String = mir_temp_name(n);
+    o = string_concat(o, pad);
+    o = string_concat(o, temp);
+    o = string_concat(o, " = array [");
+    o = string_concat(o, joined);
+    o = string_concat(o, "]\n");
+    return MirDumpExpr { out: o, next: n + 1, temp: temp };
+  }
+  // index
+  let base: MirDumpExpr = mir_dump_expr(mir, mir.me_a[node], depth, out, next);
+  let idx: MirDumpExpr = mir_dump_expr(mir, mir.me_b[node], depth, base.out, base.next);
+  let temp: String = mir_temp_name(idx.next);
+  let mut o: String = string_concat(idx.out, pad);
+  o = string_concat(o, temp);
+  o = string_concat(o, " = index ");
+  o = string_concat(o, base.temp);
+  o = string_concat(o, "[");
+  o = string_concat(o, idx.temp);
+  o = string_concat(o, "]\n");
+  return MirDumpExpr { out: o, next: idx.next + 1, temp: temp };
+}
+
+// Render a place to its text, dumping any index expressions along the way
+// (base text first, then the index expr — matching Rust dump_place).
+fn mir_dump_place(mir: Mir, place: Int, depth: Int, out: String, next: Int) -> MirDumpPlace {
+  let kind: Int = mir.mpl_kind[place];
+  if kind == mir_place_local() {
+    return MirDumpPlace { out: out, next: next, text: mir.mpl_name[place] };
+  }
+  if kind == mir_place_field() {
+    let base: MirDumpPlace = mir_dump_place(mir, mir.mpl_base[place], depth, out, next);
+    let mut text: String = string_concat(base.text, ".");
+    text = string_concat(text, mir.mpl_name[place]);
+    return MirDumpPlace { out: base.out, next: base.next, text: text };
+  }
+  // index place
+  let base: MirDumpPlace = mir_dump_place(mir, mir.mpl_base[place], depth, out, next);
+  let idx: MirDumpExpr = mir_dump_expr(mir, mir.mpl_index[place], depth, base.out, base.next);
+  let mut text: String = string_concat(base.text, "[");
+  text = string_concat(text, idx.temp);
+  text = string_concat(text, "]");
+  return MirDumpPlace { out: idx.out, next: idx.next, text: text };
+}
+
+fn mir_dump_block(mir: Mir, start: Int, count: Int, depth: Int, out: String, next: Int) -> MirDumpStmt {
+  let mut o: String = out;
+  let mut n: Int = next;
+  let mut i: Int = 0;
+  while i < count {
+    let r: MirDumpStmt = mir_dump_stmt(mir, mir.mblock_list[start + i], depth, o, n);
+    o = r.out;
+    n = r.next;
+    i = i + 1;
+  }
+  return MirDumpStmt { out: o, next: n };
+}
+
+fn mir_dump_stmt(mir: Mir, index: Int, depth: Int, out: String, next: Int) -> MirDumpStmt {
+  let pad: String = indent_of(depth);
+  let kind: Int = mir.ms_kind[index];
+  if kind == mir_local_stmt() {
+    // Header line first, then the value expression, then the store.
+    let mut o: String = string_concat(out, pad);
+    o = string_concat(o, "local ");
+    o = string_concat(o, mir.ms_name[index]);
+    o = string_concat(o, ": ");
+    if mir.ms_has_type[index] == 1 {
+      o = string_concat(o, mir.ms_type[index]);
+    } else {
+      o = string_concat(o, "<inferred>");
+    }
+    o = string_concat(o, " mutability=");
+    if mir.ms_mut[index] == 1 {
+      o = string_concat(o, "mutable");
+    } else {
+      o = string_concat(o, "immutable");
+    }
+    o = string_concat(o, "\n");
+    let value: MirDumpExpr = mir_dump_expr(mir, mir.ms_expr[index], depth, o, next);
+    let mut o2: String = string_concat(value.out, pad);
+    o2 = string_concat(o2, "store ");
+    o2 = string_concat(o2, mir.ms_name[index]);
+    o2 = string_concat(o2, ", ");
+    o2 = string_concat(o2, value.temp);
+    o2 = string_concat(o2, "\n");
+    return MirDumpStmt { out: o2, next: value.next };
+  }
+  if kind == mir_store_stmt() {
+    // Value expression first, then the place (whose index exprs dump here).
+    let value: MirDumpExpr = mir_dump_expr(mir, mir.ms_expr[index], depth, out, next);
+    let place: MirDumpPlace = mir_dump_place(mir, mir.ms_place[index], depth,
+                                             value.out, value.next);
+    let mut o: String = string_concat(place.out, pad);
+    o = string_concat(o, "store ");
+    o = string_concat(o, place.text);
+    o = string_concat(o, ", ");
+    o = string_concat(o, value.temp);
+    o = string_concat(o, "\n");
+    return MirDumpStmt { out: o, next: place.next };
+  }
+  if kind == mir_if_stmt() {
+    let cond: MirDumpExpr = mir_dump_expr(mir, mir.ms_expr[index], depth, out, next);
+    let mut o: String = string_concat(cond.out, pad);
+    o = string_concat(o, "if ");
+    o = string_concat(o, cond.temp);
+    o = string_concat(o, "\n");
+    o = string_concat(o, pad);
+    o = string_concat(o, "  then\n");
+    let thenb: MirDumpStmt = mir_dump_block(mir, mir.ms_then_start[index],
+                                            mir.ms_then_count[index], depth + 2, o, cond.next);
+    let mut o2: String = thenb.out;
+    let mut n2: Int = thenb.next;
+    if mir.ms_else_count[index] > 0 {
+      o2 = string_concat(o2, pad);
+      o2 = string_concat(o2, "  else\n");
+      let elseb: MirDumpStmt = mir_dump_block(mir, mir.ms_else_start[index],
+                                              mir.ms_else_count[index], depth + 2, o2, n2);
+      o2 = elseb.out;
+      n2 = elseb.next;
+    }
+    o2 = string_concat(o2, pad);
+    o2 = string_concat(o2, "end_if\n");
+    return MirDumpStmt { out: o2, next: n2 };
+  }
+  if kind == mir_while_stmt() {
+    let mut o: String = string_concat(out, pad);
+    o = string_concat(o, "loop\n");
+    // The condition dumps one level deeper than the loop header.
+    let cond: MirDumpExpr = mir_dump_expr(mir, mir.ms_expr[index], depth + 1, o, next);
+    let mut o2: String = string_concat(cond.out, pad);
+    o2 = string_concat(o2, "  break_unless ");
+    o2 = string_concat(o2, cond.temp);
+    o2 = string_concat(o2, "\n");
+    let body: MirDumpStmt = mir_dump_block(mir, mir.ms_then_start[index],
+                                           mir.ms_then_count[index], depth + 1, o2, cond.next);
+    let mut o3: String = string_concat(body.out, pad);
+    o3 = string_concat(o3, "end_loop\n");
+    return MirDumpStmt { out: o3, next: body.next };
+  }
+  if kind == mir_for_in_stmt() {
+    let iterable: MirDumpExpr = mir_dump_expr(mir, mir.ms_expr[index], depth, out, next);
+    let mut o: String = string_concat(iterable.out, pad);
+    o = string_concat(o, "for ");
+    o = string_concat(o, mir.ms_name[index]);
+    o = string_concat(o, " in ");
+    o = string_concat(o, iterable.temp);
+    o = string_concat(o, "\n");
+    let body: MirDumpStmt = mir_dump_block(mir, mir.ms_then_start[index],
+                                           mir.ms_then_count[index], depth + 1, o, iterable.next);
+    let mut o2: String = string_concat(body.out, pad);
+    o2 = string_concat(o2, "end_for\n");
+    return MirDumpStmt { out: o2, next: body.next };
+  }
+  if kind == mir_for_range_stmt() {
+    let startr: MirDumpExpr = mir_dump_expr(mir, mir.ms_expr[index], depth, out, next);
+    let endr: MirDumpExpr = mir_dump_expr(mir, mir.ms_expr2[index], depth,
+                                          startr.out, startr.next);
+    let mut o: String = string_concat(endr.out, pad);
+    o = string_concat(o, "for ");
+    o = string_concat(o, mir.ms_name[index]);
+    o = string_concat(o, " in ");
+    o = string_concat(o, startr.temp);
+    o = string_concat(o, "..");
+    o = string_concat(o, endr.temp);
+    o = string_concat(o, "\n");
+    let body: MirDumpStmt = mir_dump_block(mir, mir.ms_then_start[index],
+                                           mir.ms_then_count[index], depth + 1, o, endr.next);
+    let mut o2: String = string_concat(body.out, pad);
+    o2 = string_concat(o2, "end_for\n");
+    return MirDumpStmt { out: o2, next: body.next };
+  }
+  if kind == mir_for_c_stmt() {
+    let mut o: String = string_concat(out, pad);
+    o = string_concat(o, "for_c\n");
+    o = string_concat(o, pad);
+    o = string_concat(o, "  init\n");
+    let init: MirDumpStmt = mir_dump_stmt(mir, mir.ms_init[index], depth + 2, o, next);
+    // The condition dumps one level deeper than the for_c header.
+    let cond: MirDumpExpr = mir_dump_expr(mir, mir.ms_expr[index], depth + 1,
+                                          init.out, init.next);
+    let mut o2: String = string_concat(cond.out, pad);
+    o2 = string_concat(o2, "  break_unless ");
+    o2 = string_concat(o2, cond.temp);
+    o2 = string_concat(o2, "\n");
+    o2 = string_concat(o2, pad);
+    o2 = string_concat(o2, "  body\n");
+    let body: MirDumpStmt = mir_dump_block(mir, mir.ms_then_start[index],
+                                           mir.ms_then_count[index], depth + 2, o2, cond.next);
+    let mut o3: String = string_concat(body.out, pad);
+    o3 = string_concat(o3, "  step\n");
+    let step: MirDumpStmt = mir_dump_stmt(mir, mir.ms_step[index], depth + 2, o3, body.next);
+    let mut o4: String = string_concat(step.out, pad);
+    o4 = string_concat(o4, "end_for_c\n");
+    return MirDumpStmt { out: o4, next: step.next };
+  }
+  if kind == mir_match_stmt() {
+    let value: MirDumpExpr = mir_dump_expr(mir, mir.ms_expr[index], depth, out, next);
+    let mut o: String = string_concat(value.out, pad);
+    o = string_concat(o, "match ");
+    o = string_concat(o, value.temp);
+    o = string_concat(o, "\n");
+    let mut n: Int = value.next;
+    let astart: Int = mir.ms_then_start[index];
+    let acount: Int = mir.ms_then_count[index];
+    let mut ai: Int = 0;
+    while ai < acount {
+      o = string_concat(o, pad);
+      o = string_concat(o, "  arm ");
+      o = string_concat(o, mir.marm_pattern[astart + ai]);
+      o = string_concat(o, "\n");
+      let body: MirDumpStmt = mir_dump_block(mir, mir.marm_body_start[astart + ai],
+                                             mir.marm_body_count[astart + ai],
+                                             depth + 2, o, n);
+      o = body.out;
+      n = body.next;
+      ai = ai + 1;
+    }
+    o = string_concat(o, pad);
+    o = string_concat(o, "end_match\n");
+    return MirDumpStmt { out: o, next: n };
+  }
+  if kind == mir_return_stmt() {
+    if mir.ms_expr[index] >= 0 {
+      let value: MirDumpExpr = mir_dump_expr(mir, mir.ms_expr[index], depth, out, next);
+      let mut o: String = string_concat(value.out, pad);
+      o = string_concat(o, "return ");
+      o = string_concat(o, value.temp);
+      o = string_concat(o, "\n");
+      return MirDumpStmt { out: o, next: value.next };
+    }
+    let mut o: String = string_concat(out, pad);
+    o = string_concat(o, "return Unit\n");
+    return MirDumpStmt { out: o, next: next };
+  }
+  if kind == mir_break_stmt() {
+    let mut o: String = string_concat(out, pad);
+    o = string_concat(o, "break\n");
+    return MirDumpStmt { out: o, next: next };
+  }
+  if kind == mir_continue_stmt() {
+    let mut o: String = string_concat(out, pad);
+    o = string_concat(o, "continue\n");
+    return MirDumpStmt { out: o, next: next };
+  }
+  // drop
+  let value: MirDumpExpr = mir_dump_expr(mir, mir.ms_expr[index], depth, out, next);
+  let mut o: String = string_concat(value.out, pad);
+  o = string_concat(o, "drop ");
+  o = string_concat(o, value.temp);
+  o = string_concat(o, "\n");
+  return MirDumpStmt { out: o, next: value.next };
+}
+
+fn mir_dump_function_text(out: String, mir: Mir, fi: Int) -> String {
+  let mut o: String = string_concat(out, "  fn ");
+  o = string_concat(o, mir.mf_name[fi]);
+  o = string_concat(o, " -> ");
+  if mir.mf_has_ret[fi] == 1 {
+    o = string_concat(o, mir.mf_ret[fi]);
+  } else {
+    o = string_concat(o, "Unit");
+  }
+  o = string_concat(o, "\n");
+  let pstart: Int = mir.mf_param_start[fi];
+  let pcount: Int = mir.mf_param_count[fi];
+  let mut pi: Int = 0;
+  while pi < pcount {
+    o = string_concat(o, "    param ");
+    o = string_concat(o, mir.mp_name[pstart + pi]);
+    o = string_concat(o, ": ");
+    o = string_concat(o, mir.mp_type[pstart + pi]);
+    o = string_concat(o, "\n");
+    pi = pi + 1;
+  }
+  o = string_concat(o, "    block entry\n");
+  // Temps restart at _t0 for every function.
+  let body: MirDumpStmt = mir_dump_block(mir, mir.mf_body_start[fi],
+                                         mir.mf_body_count[fi], 3, o, 0);
+  return body.out;
+}
+
+fn mir_dump_text(mir: Mir) -> String {
+  let mut out: String = "MirModule\n";
+  let mut e: Int = 0;
+  while e < mir.men_name.len {
+    out = string_concat(out, "  enum ");
+    out = string_concat(out, mir.men_name[e]);
+    out = string_concat(out, " variants=");
+    let vstart: Int = mir.men_variant_start[e];
+    let vcount: Int = mir.men_variant_count[e];
+    let mut v: Int = 0;
+    while v < vcount {
+      if v > 0 {
+        out = string_concat(out, ",");
+      }
+      out = string_concat(out, mir.mev_name[vstart + v]);
+      if mir.mev_payload[vstart + v] != "" {
+        out = string_concat(out, "(");
+        out = string_concat(out, mir.mev_payload[vstart + v]);
+        out = string_concat(out, ")");
+      }
+      v = v + 1;
+    }
+    out = string_concat(out, "\n");
+    e = e + 1;
+  }
+  let mut f: Int = 0;
+  while f < mir.mf_name.len {
+    out = mir_dump_function_text(out, mir, f);
+    f = f + 1;
+  }
+  return out;
+}
+
+// Shared driver for both entry points: lex + parse, build the variant lookup
+// table (user enums plus std enums when granted), build the enum dump table,
+// lower, dump.
+fn mir_dump_with_std(arena: Arena, has_std_core: Bool, has_std_io: Bool) -> String {
+  let enums: EnumTable = enum_table_build(arena, has_std_core, has_std_io);
+  let mut mir: Mir = mir_empty();
+  mir = mir_enum_dump_table(arena, mir, has_std_core, has_std_io);
+  mir = lower_module(arena, enums, mir);
+  return mir_dump_text(mir);
+}
+
+// Mirror of `zeta::mir::dump`: lowering with NO external enums (parse-only
+// oracle; the variant table holds just the user enums).
+export fn mir_dump_via_arena(source: String) -> String {
+  let kinds: IntArray = lex_kinds(source);
+  let texts: StringArray = lex_texts(source);
+  let mut start_arena: Arena = arena_empty();
+  start_arena.token_start = lex_starts(source);
+  let parsed: ParseResult = parse_module(start_arena, kinds, texts, 0);
+  return mir_dump_with_std(parsed.arena, false, false);
+}
+
+// Mirror of `zeta::dump_mir`'s lowering: std imports inject external enums
+// (`import std.core` grants OptionInt/ResultInt, `import std.io` grants
+// ResultString), which join the variant lookup table and are dumped after the
+// user enums (sorted by name, variants sorted by name, shadowed names skipped).
+export fn mir_dump_pipeline_via_arena(source: String) -> String {
+  let kinds: IntArray = lex_kinds(source);
+  let texts: StringArray = lex_texts(source);
+  let mut start_arena: Arena = arena_empty();
+  start_arena.token_start = lex_starts(source);
+  let parsed: ParseResult = parse_module(start_arena, kinds, texts, 0);
+  let arena: Arena = parsed.arena;
+  let mut has_std_core: Bool = false;
+  let mut has_std_io: Bool = false;
+  let mut si: Int = 0;
+  while si < arena.item_kind.len {
+    if arena.item_kind[si] == item_import() {
+      let path: String = arena.import_path[arena.item_ref[si]];
+      if path == "std.core" {
+        has_std_core = true;
+      }
+      if path == "std.io" {
+        has_std_io = true;
+      }
+    }
+    si = si + 1;
+  }
+  return mir_dump_with_std(arena, has_std_core, has_std_io);
+}

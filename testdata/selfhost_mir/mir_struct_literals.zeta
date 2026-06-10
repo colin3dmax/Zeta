@@ -1,0 +1,13 @@
+struct P { x: Int, y: Int, }
+struct Empty { }
+
+fn g(v: Int) -> Int {
+  return v;
+}
+
+fn f() -> P {
+  let e: Empty = Empty {};
+  let p: P = P { x: 1, y: 2 };
+  let q: P = P { x: p.x, y: g(p.y) };
+  return p;
+}

@@ -1,0 +1,8 @@
+fn f() -> Int {
+  return ghost;
+}
+
+fn g() -> Int {
+  spook(1);
+  return phantom + 1;
+}

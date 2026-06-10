@@ -1,0 +1,9 @@
+fn act() -> Int {
+  return 1;
+}
+
+fn run() {
+  act();
+  1 + 2;
+  act() + 3;
+}

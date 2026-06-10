@@ -1,0 +1,13 @@
+enum E { A(Int), B, }
+
+fn quirk() -> E {
+  return E.A(1, 2);
+}
+
+fn not_variant() -> Int {
+  return E.x;
+}
+
+fn unknown_enum() -> Int {
+  return F.A(3);
+}

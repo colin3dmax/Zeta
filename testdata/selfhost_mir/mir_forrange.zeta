@@ -1,0 +1,18 @@
+fn f(a: Int, n: Int) -> Int {
+  let mut s: Int = 0;
+  for i in a + 1..bound(n) {
+    s += i;
+  }
+  for x in items(n) {
+    s = s + x;
+  }
+  return s;
+}
+
+fn bound(n: Int) -> Int {
+  return n * 2;
+}
+
+fn items(n: Int) -> IntArray {
+  return [n];
+}

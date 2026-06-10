@@ -1,0 +1,7 @@
+fn act() {
+  return;
+}
+
+fn noop() {
+  act();
+}

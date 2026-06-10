@@ -1,0 +1,10 @@
+fn make() -> Int {
+  return 0;
+}
+
+fn f(m: IntArray, i: Int) -> Int {
+  let a: IntArray = [1, 2, 3];
+  let n: Int = a[i] + m[a[0]];
+  let chain: Int = make().items[0].value;
+  return n + chain;
+}

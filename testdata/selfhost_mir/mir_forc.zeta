@@ -1,0 +1,10 @@
+fn f(n: Int) -> Int {
+  let mut s: Int = 0;
+  for (let mut i: Int = 0; i < n; i += 1) {
+    if i == 2 {
+      continue;
+    }
+    s = s + i;
+  }
+  return s;
+}

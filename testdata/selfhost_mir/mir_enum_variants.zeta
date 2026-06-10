@@ -1,0 +1,8 @@
+enum E { A(Int), B, }
+
+fn build() -> E {
+  let x: E = E.A(1);
+  let y: E = E.B;
+  let z: E = E.B();
+  return x;
+}
