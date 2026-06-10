@@ -72,7 +72,10 @@ fn main() -> String {{
 ///   * fixed-message codes (slices 2 + 3): just `CODE span=S..E`
 ///   * TYPE_CALL_ARITY (slice 3): message "function `f` expects N arguments,
 ///     found M" becomes `TYPE_CALL_ARITY name=f expected=N found=M span=S..E`
-/// Any other code is filtered out (slice 4 territory the corpus avoids).
+///   * the slice-4 enum/match codes: TYPE_ENUM_VARIANT_ARITY (counted call
+///     forms + kind=uncalled), TYPE_ENUM_PATTERN_ARITY (kind=unbound /
+///     kind=spurious) and TYPE_MATCH_NON_EXHAUSTIVE (fixed for Bool, named
+///     for enums) — see the match arms below for the message shapes.
 fn oracle_report(program_source: &str) -> String {
     let module = zeta::parse_source(program_source).expect("oracle parse should succeed");
     let mut out = String::new();
@@ -81,7 +84,8 @@ fn oracle_report(program_source: &str) -> String {
             match diagnostic.code {
                 "TYPE_UNKNOWN_TYPE" | "TYPE_UNKNOWN_STRUCT" | "TYPE_DUPLICATE_FIELD"
                 | "TYPE_UNKNOWN_FIELD" | "TYPE_MISSING_FIELD" | "TYPE_ARRAY_FIELD"
-                | "TYPE_ASSIGN_IMMUTABLE" | "TYPE_UNKNOWN_NAME" => {
+                | "TYPE_ASSIGN_IMMUTABLE" | "TYPE_UNKNOWN_NAME" | "TYPE_UNKNOWN_VARIANT"
+                | "TYPE_UNKNOWN_ENUM" => {
                     let name = extract_backtick_name(&diagnostic.message)
                         .expect("typecheck message should contain a backtick-quoted name");
                     out.push_str(&format!(
@@ -94,7 +98,8 @@ fn oracle_report(program_source: &str) -> String {
                 | "TYPE_LOGICAL_OPERAND" | "TYPE_EQUALITY_OPERAND" | "TYPE_ORDERING_OPERAND"
                 | "TYPE_UNARY_OPERAND" | "TYPE_RANGE_BOUND" | "TYPE_CALL_ARGUMENT"
                 | "TYPE_STRUCT_FIELD" | "TYPE_ARRAY_ELEMENT" | "TYPE_INDEX"
-                | "TYPE_ASSIGN_MISMATCH" => {
+                | "TYPE_ASSIGN_MISMATCH" | "TYPE_ENUM_VARIANT_PAYLOAD"
+                | "TYPE_MATCH_PATTERN" => {
                     let rest = diagnostic
                         .message
                         .strip_prefix("expected ")
@@ -114,6 +119,77 @@ fn oracle_report(program_source: &str) -> String {
                         "{} span={}..{}\n",
                         diagnostic.code, diagnostic.span.start, diagnostic.span.end
                     ));
+                }
+                "TYPE_ENUM_VARIANT_ARITY" => {
+                    // Three message shapes:
+                    //   "variant `E.V` expects 1 payload argument, found N"
+                    //   "variant `E.V` expects no payload arguments, found N"
+                    //   "variant `E.V` carries a payload and must be called"
+                    let name = extract_backtick_name(&diagnostic.message)
+                        .expect("variant arity message should contain a backtick-quoted name");
+                    if diagnostic
+                        .message
+                        .contains("carries a payload and must be called")
+                    {
+                        out.push_str(&format!(
+                            "TYPE_ENUM_VARIANT_ARITY name={name} kind=uncalled span={}..{}\n",
+                            diagnostic.span.start, diagnostic.span.end
+                        ));
+                    } else if let Some((_, found)) = diagnostic
+                        .message
+                        .split_once("expects 1 payload argument, found ")
+                    {
+                        out.push_str(&format!(
+                            "TYPE_ENUM_VARIANT_ARITY name={name} expected=1 found={found} span={}..{}\n",
+                            diagnostic.span.start, diagnostic.span.end
+                        ));
+                    } else {
+                        let (_, found) = diagnostic
+                            .message
+                            .split_once("expects no payload arguments, found ")
+                            .expect("variant arity message should match a known shape");
+                        out.push_str(&format!(
+                            "TYPE_ENUM_VARIANT_ARITY name={name} expected=0 found={found} span={}..{}\n",
+                            diagnostic.span.start, diagnostic.span.end
+                        ));
+                    }
+                }
+                "TYPE_ENUM_PATTERN_ARITY" => {
+                    // Two message shapes:
+                    //   "variant `E.V` carries a payload and must bind it"
+                    //   "variant `E.V` does not carry a payload"
+                    let name = extract_backtick_name(&diagnostic.message)
+                        .expect("pattern arity message should contain a backtick-quoted name");
+                    let kind = if diagnostic.message.contains("must bind it") {
+                        "unbound"
+                    } else {
+                        assert!(
+                            diagnostic.message.contains("does not carry a payload"),
+                            "pattern arity message should match a known shape"
+                        );
+                        "spurious"
+                    };
+                    out.push_str(&format!(
+                        "TYPE_ENUM_PATTERN_ARITY name={name} kind={kind} span={}..{}\n",
+                        diagnostic.span.start, diagnostic.span.end
+                    ));
+                }
+                "TYPE_MATCH_NON_EXHAUSTIVE" => {
+                    // Bool matches use a fixed message; enum matches carry the
+                    // enum name in backticks ("match on `E` must cover ...").
+                    if diagnostic.message.starts_with("Bool match") {
+                        out.push_str(&format!(
+                            "TYPE_MATCH_NON_EXHAUSTIVE span={}..{}\n",
+                            diagnostic.span.start, diagnostic.span.end
+                        ));
+                    } else {
+                        let name = extract_backtick_name(&diagnostic.message)
+                            .expect("enum non-exhaustive message should contain a backtick-quoted name");
+                        out.push_str(&format!(
+                            "TYPE_MATCH_NON_EXHAUSTIVE name={name} span={}..{}\n",
+                            diagnostic.span.start, diagnostic.span.end
+                        ));
+                    }
                 }
                 "TYPE_CALL_ARITY" => {
                     let name = extract_backtick_name(&diagnostic.message)
@@ -242,12 +318,10 @@ fn typecheck_multiple_unknowns_in_item_order() {
 }
 
 // ---------------------------------------------------------------------------
-// M4 slice #2: expression type inference. The corpus avoids the slice-4 gaps
-// and the known quirks: enum-variant calls/values (incl. enum-prefixed dotted
-// callees), match patterns, struct names ending in "Array", struct literals
-// missing more than one field (HashMap-random missing order), non-lvalue
-// assignment targets, parenthesized reported expressions, and compound
-// assignment.
+// M4 slice #2: expression type inference. The corpus avoids the known quirks:
+// struct names ending in "Array", struct literals missing more than one field
+// (HashMap-random missing order), non-lvalue assignment targets,
+// parenthesized reported expressions, and compound assignment.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -626,5 +700,206 @@ fn typecheck_for_in_struct_array() {
     // anywhere inside a for-in iterable, even nested in an array literal.)
     assert_matches_oracle(
         "struct P { x: Int } fn f() -> Int { let arr = [P { x: 1 }, P { x: 2 }]; for p in arr { let v: Int = p.x; } return 0; }",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// M4 slice #4 (the last): enum-variant calls and values, match-pattern type
+// checking, and match exhaustiveness.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn typecheck_variant_call_ok() {
+    // A correct payload call types as Named(E): zero lines.
+    assert_matches_oracle(
+        "enum E { A(Int), B } fn f() -> Int { let x: E = E.A(1); return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_variant_call_payload_mismatch() {
+    // TYPE_ENUM_VARIANT_PAYLOAD expected=Int found=Bool, span = the argument.
+    assert_matches_oracle(
+        "enum E { A(Int), B } fn f() -> Int { let x: E = E.A(true); return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_variant_call_arity_then_payload() {
+    // Arity reports at the callee span (expected=1 found=2) and then — unlike
+    // TYPE_CALL_ARITY's early exit — EVERY argument is still expected against
+    // the payload: the second argument adds a PAYLOAD found=Bool line.
+    assert_matches_oracle(
+        "enum E { A(Int), B } fn f() -> Int { let x: E = E.A(1, true); return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_variant_call_no_payload_with_arg() {
+    // A bare variant called with arguments: ARITY expected=0 found=1. The
+    // argument is inferred but its type DISCARDED (no payload to expect
+    // against), so the bad `1 + true` inside still reports its own operand.
+    assert_matches_oracle(
+        "enum E { A(Int), B } fn f() -> Int { let x: E = E.B(1 + true); return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_variant_call_unknown_variant_args_unvisited() {
+    // Unknown variant: ONE line at the callee span; the argument is never
+    // visited, so the bad `1 + true` cannot report. The call still types as
+    // Named(E), so the let passes.
+    assert_matches_oracle(
+        "enum E { A(Int), B } fn f() -> Int { let x: E = E.C(1 + true); return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_enum_value_ok() {
+    // A bare variant used as a value is silent and types as Named(E).
+    assert_matches_oracle("enum E { A(Int), B } fn f() -> Int { let x: E = E.B; return 0; }");
+}
+
+#[test]
+fn typecheck_enum_value_needs_call() {
+    // A payload variant used UNCALLED: TYPE_ENUM_VARIANT_ARITY kind=uncalled
+    // at the field ident; the value still types as Named(E), so the let is ok.
+    assert_matches_oracle("enum E { A(Int), B } fn f() -> Int { let x: E = E.A; return 0; }");
+}
+
+#[test]
+fn typecheck_enum_value_unknown_variant() {
+    // TYPE_UNKNOWN_VARIANT at the field ident; recovery is still Named(E), so
+    // the let passes — one line total.
+    assert_matches_oracle("enum E { A(Int), B } fn f() -> Int { let x: E = E.D; return 0; }");
+}
+
+#[test]
+fn typecheck_std_enum_variant_call() {
+    // `import std.core` grants OptionInt{Some(Int),None}: the Bool payload
+    // reports TYPE_ENUM_VARIANT_PAYLOAD expected=Int found=Bool.
+    assert_matches_oracle(
+        "import std.core; fn f() -> Int { let o: OptionInt = OptionInt.Some(true); return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_enum_shadowed_by_local() {
+    // A local named E shadows the enum: `E.x` takes the NORMAL field path on
+    // the Int base — TYPE_FIELD_BASE, then the Named(x) recovery makes the
+    // return report found=x.
+    assert_matches_oracle("enum E { A } fn f(E: Int) -> Int { return E.x; }");
+}
+
+#[test]
+fn typecheck_match_variant_ok_payload_typed() {
+    // The payload binding carries the declared Int: zero lines (and the two
+    // variant patterns make the match exhaustive).
+    assert_matches_oracle(
+        "enum E { A(Int), B } fn f(e: E) -> Int { match e { E.A(n) -> { let y: Int = n; }, E.B -> { } } return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_match_pattern_type_mismatch() {
+    // A bool pattern on an Int value: TYPE_MATCH_PATTERN expected=Bool
+    // found=Int at the match VALUE expression.
+    assert_matches_oracle("fn f(n: Int) -> Int { match n { true -> { }, _ -> { } } return 0; }");
+}
+
+#[test]
+fn typecheck_match_int_pattern_ok() {
+    assert_matches_oracle("fn f(n: Int) -> Int { match n { 1 -> { }, _ -> { } } return 0; }");
+}
+
+#[test]
+fn typecheck_match_unknown_enum_pattern() {
+    // A variant pattern naming an unknown enum on an Int value: the pattern
+    // expect runs FIRST (TYPE_MATCH_PATTERN expected=Ghost found=Int), then
+    // TYPE_UNKNOWN_ENUM — two lines, both at the value span.
+    assert_matches_oracle(
+        "fn f(n: Int) -> Int { match n { Ghost.A -> { }, _ -> { } } return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_match_unknown_variant_pattern() {
+    // TYPE_UNKNOWN_VARIANT name=Z at the value span; the wildcard keeps the
+    // match exhaustive.
+    assert_matches_oracle(
+        "enum E { A } fn f(e: E) -> Int { match e { E.Z -> { }, _ -> { } } return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_match_pattern_arity_unbound() {
+    // E.A carries a payload but binds nothing: TYPE_ENUM_PATTERN_ARITY
+    // kind=unbound. The mis-bound pattern STILL covers A, so exhaustiveness
+    // passes — one line total.
+    assert_matches_oracle(
+        "enum E { A(Int), B } fn f(e: E) -> Int { match e { E.A -> { }, E.B -> { } } return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_match_pattern_arity_spurious_no_binding() {
+    // E.B carries no payload but binds x: kind=spurious AND x is NOT bound —
+    // its arm-body use infers "<error>" and the let suppresses. One line.
+    assert_matches_oracle(
+        "enum E { A(Int), B } fn f(e: E) -> Int { match e { E.A(n) -> { }, E.B(x) -> { let z: Int = x; } } return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_match_non_exhaustive_enum() {
+    // B is uncovered: TYPE_MATCH_NON_EXHAUSTIVE name=E at the value span.
+    assert_matches_oracle(
+        "enum E { A(Int), B } fn f(e: E) -> Int { match e { E.A(n) -> { } } return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_match_wildcard_exhaustive() {
+    // `_` covers everything: zero lines.
+    assert_matches_oracle(
+        "enum E { A(Int), B } fn f(e: E) -> Int { match e { E.A(n) -> { }, _ -> { } } return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_match_name_pattern_exhaustive() {
+    // A name pattern covers everything too (and binds the value's type).
+    assert_matches_oracle(
+        "enum E { A(Int), B } fn f(e: E) -> Int { match e { other -> { let x: E = other; } } return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_match_bool_non_exhaustive() {
+    // Bool needs BOTH literals (or `_`): the one-arm match reports the
+    // fixed-message TYPE_MATCH_NON_EXHAUSTIVE...
+    assert_matches_oracle("fn f(b: Bool) -> Int { match b { true -> { } } return 0; }");
+    // ...and the two-arm match is clean.
+    assert_matches_oracle(
+        "fn f(b: Bool) -> Int { match b { true -> { }, false -> { } } return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_std_enum_match_exhaustive() {
+    // Std variants drive exhaustiveness like user ones, and Some's payload
+    // binds Int: zero lines.
+    assert_matches_oracle(
+        "import std.core; fn f(o: OptionInt) -> Int { match o { OptionInt.Some(v) -> { let z: Int = v; }, OptionInt.None -> { } } return 0; }",
+    );
+}
+
+#[test]
+fn typecheck_match_wrong_enum_pattern_covered() {
+    // The F.A pattern mismatches the E value (TYPE_MATCH_PATTERN expected=F
+    // found=E) and contributes NOTHING to coverage — but E.A covers E's only
+    // variant, so no NON_EXHAUSTIVE line. One line total.
+    assert_matches_oracle(
+        "enum E { A } enum F { A } fn f(e: E) -> Int { match e { F.A -> { }, E.A -> { } } return 0; }",
     );
 }

@@ -3298,6 +3298,42 @@ fn pattern_binding(pattern: String) -> String {
   return "";
 }
 
+// The enum name inside a `variant:E.V` / `variant:E.V(b)` pattern text: the
+// bytes between the 8-byte "variant:" prefix and the '.' (byte 46).
+fn pattern_variant_enum(pattern: String) -> String {
+  let len: Int = string_len(pattern);
+  let mut i: Int = 8;
+  while i < len {
+    if string_byte_at(pattern, i) == 46 {
+      return string_byte_slice(pattern, 8, i - 8);
+    }
+    i = i + 1;
+  }
+  return "";
+}
+
+// The variant name inside a `variant:E.V` / `variant:E.V(b)` pattern text:
+// the bytes between the '.' and the '(' (byte 40) or the end.
+fn pattern_variant_name(pattern: String) -> String {
+  let len: Int = string_len(pattern);
+  let mut dot: Int = 0 - 1;
+  let mut i: Int = 8;
+  while i < len {
+    if string_byte_at(pattern, i) == 46 && dot < 0 {
+      dot = i;
+    }
+    i = i + 1;
+  }
+  if dot < 0 {
+    return "";
+  }
+  let mut end: Int = dot + 1;
+  while end < len && string_byte_at(pattern, end) != 40 {
+    end = end + 1;
+  }
+  return string_byte_slice(pattern, dot + 1, end - dot - 1);
+}
+
 // Does `text` begin with `prefix`?
 fn string_starts_with(text: String, prefix: String) -> Bool {
   let plen: Int = string_len(prefix);
@@ -3531,6 +3567,9 @@ export fn typecheck_report(source: String) -> String {
     sigs = sig_std_io(sigs);
   }
   sigs = sig_user_functions(sigs, arena, types);
+  // M4 slice #4: the enum-variant table (std rows first, user enums last —
+  // tc_variant_index's reverse scan reproduces the Rust map's precedence).
+  let enums: EnumTable = enum_table_build(arena, has_std_core, has_std_io);
   // M4 slice #2: after declared-type validation (whose diagnostics all come
   // first, mirroring the Rust check()), run expression type inference over
   // every function body in item order.
@@ -3538,6 +3577,7 @@ export fn typecheck_report(source: String) -> String {
     arena: arena,
     types: types,
     sigs: sigs,
+    enums: enums,
     local_names: string_array_empty(),
     local_types: string_array_empty(),
     local_muts: int_array_empty(),
@@ -3640,15 +3680,17 @@ fn validate_stmt(report: String, arena: Arena, types: StringArray, index: Int) -
 // such names).
 //
 // Slice 3 covers Call / StructLiteral / ArrayLiteral / Index / FieldAccess
-// inference plus Assign-target checking. Remaining gaps (the differential
-// corpus must not touch them):
-//   * Enum-variant CALLS (`E.V(x)`, TYPE_ENUM_VARIANT_ARITY/_PAYLOAD) and enum
-//     VALUES (`E.V`, TYPE_ENUM_VARIANT_ARITY / TYPE_UNKNOWN_VARIANT): both
-//     infer to "<error>" without reporting or visiting children (slice 4).
-//   * Match patterns are not type-checked (TYPE_MATCH_PATTERN /
-//     exhaustiveness); variant payload bindings get type "<error>".
+// inference plus Assign-target checking. Slice 4 (the last) adds enum-variant
+// CALLS (`E.V(x)`, TYPE_ENUM_VARIANT_ARITY/_PAYLOAD), enum VALUES (`E.V`,
+// TYPE_ENUM_VARIANT_ARITY kind=uncalled / TYPE_UNKNOWN_VARIANT), match-pattern
+// checking (TYPE_MATCH_PATTERN / TYPE_UNKNOWN_ENUM / TYPE_UNKNOWN_VARIANT /
+// TYPE_ENUM_PATTERN_ARITY) and match exhaustiveness
+// (TYPE_MATCH_NON_EXHAUSTIVE). Remaining corpus restrictions:
 //   * TYPE_MISSING_FIELD iterates Rust's HashMap in RANDOM order — every
 //     struct literal in the corpus must miss at most ONE field.
+//   * Two user enums sharing one NAME: the flat EnumTable keeps both variant
+//     row sets, while Rust's HashMap overwrite keeps only the later — the
+//     corpus never declares duplicate enums.
 // ---------------------------------------------------------------------------
 
 // Threaded typecheck state. `local_names`/`local_types` form the same logical
@@ -3661,6 +3703,7 @@ struct TcState {
   arena: Arena,
   types: StringArray,
   sigs: SigTable,
+  enums: EnumTable,
   local_names: StringArray,
   local_types: StringArray,
   local_muts: IntArray,
@@ -3821,16 +3864,94 @@ fn tc_struct_field_type(arena: Arena, sindex: Int, field: String) -> String {
   return "";
 }
 
-// Is `name` a user-defined enum? (Std enums are slice-4 territory.)
-fn tc_is_enum_name(arena: Arena, name: String) -> Bool {
+// Enum variants, mirroring the Rust `enums` map (enum_types + or_insert of the
+// std-import enums). `enum_names` answers existence (user + std); the parallel
+// v_enums/v_names/v_payloads triples hold one row per declared variant — a ""
+// payload means the variant carries none, and payload TEXT is stored verbatim:
+// Rust runs it through parse_type, which is the identity in display-string
+// space (even an unknown name like `Ghost` displays as itself). Std rows are
+// pushed FIRST and user enums LAST; tc_variant_index scans in REVERSE so a
+// user enum shadows a std enum of the same name (Rust's or_insert keeps the
+// user entry) and a later duplicate variant shadows an earlier one.
+struct EnumTable {
+  enum_names: StringArray,
+  v_enums: StringArray,
+  v_names: StringArray,
+  v_payloads: StringArray,
+}
+
+// Append one variant row to the table.
+fn enum_row_push(table: EnumTable, ename: String, vname: String, payload: String) -> EnumTable {
+  let mut t: EnumTable = table;
+  t.v_enums = string_array_push(t.v_enums, ename);
+  t.v_names = string_array_push(t.v_names, vname);
+  t.v_payloads = string_array_push(t.v_payloads, payload);
+  return t;
+}
+
+// Build the whole enum table: std enums first (gated on the imports, mirroring
+// standard_external_enums — std.core grants OptionInt{Some(Int),None} and
+// ResultInt{Ok(Int),Err(String)}, std.io grants ResultString{Ok(String),
+// Err(String)}), then every user enum in item order.
+fn enum_table_build(arena: Arena, has_std_core: Bool, has_std_io: Bool) -> EnumTable {
+  let mut t: EnumTable = EnumTable {
+    enum_names: string_array_empty(),
+    v_enums: string_array_empty(),
+    v_names: string_array_empty(),
+    v_payloads: string_array_empty(),
+  };
+  if has_std_core {
+    t.enum_names = string_array_push(t.enum_names, "OptionInt");
+    t = enum_row_push(t, "OptionInt", "Some", "Int");
+    t = enum_row_push(t, "OptionInt", "None", "");
+    t.enum_names = string_array_push(t.enum_names, "ResultInt");
+    t = enum_row_push(t, "ResultInt", "Ok", "Int");
+    t = enum_row_push(t, "ResultInt", "Err", "String");
+  }
+  if has_std_io {
+    t.enum_names = string_array_push(t.enum_names, "ResultString");
+    t = enum_row_push(t, "ResultString", "Ok", "String");
+    t = enum_row_push(t, "ResultString", "Err", "String");
+  }
+  let mut e: Int = 0;
+  while e < arena.enum_name.len {
+    t.enum_names = string_array_push(t.enum_names, arena.enum_name[e]);
+    let vstart: Int = arena.enum_variant_start[e];
+    let vcount: Int = arena.enum_variant_count[e];
+    let mut v: Int = 0;
+    while v < vcount {
+      t = enum_row_push(t, arena.enum_name[e],
+                        arena.variant_name[vstart + v], arena.variant_payload[vstart + v]);
+      v = v + 1;
+    }
+    e = e + 1;
+  }
+  return t;
+}
+
+// Is `name` an enum (user-defined or granted by a std import)?
+fn tc_enum_exists(table: EnumTable, name: String) -> Bool {
   let mut i: Int = 0;
-  while i < arena.enum_name.len {
-    if arena.enum_name[i] == name {
+  while i < table.enum_names.len {
+    if table.enum_names[i] == name {
       return true;
     }
     i = i + 1;
   }
   return false;
+}
+
+// Find the variant row for (ename, vname); -1 on miss. REVERSE scan — see the
+// EnumTable comment for why this reproduces the Rust map's precedence.
+fn tc_variant_index(table: EnumTable, ename: String, vname: String) -> Int {
+  let mut i: Int = table.v_enums.len - 1;
+  while i >= 0 {
+    if table.v_enums[i] == ename && table.v_names[i] == vname {
+      return i;
+    }
+    i = i - 1;
+  }
+  return 0 - 1;
 }
 
 // Does `text` end with `suffix`? Used to recognize Array display strings.
@@ -3850,18 +3971,17 @@ fn string_ends_with(text: String, suffix: String) -> Bool {
   return true;
 }
 
-// Does `text` contain a '.' (byte 46)? Dotted callees never hit the function
-// table (and enum-variant calls are a slice-4 gap).
-fn string_has_dot(text: String) -> Bool {
-  let len: Int = string_len(text);
-  let mut i: Int = 0;
-  while i < len {
+// Index of the LAST '.' (byte 46) in `text`, or -1 — Rust rsplits a dotted
+// callee at the last dot to extract a candidate (enum, variant) pair.
+fn string_last_dot(text: String) -> Int {
+  let mut i: Int = string_len(text) - 1;
+  while i >= 0 {
     if string_byte_at(text, i) == 46 {
-      return true;
+      return i;
     }
-    i = i + 1;
+    i = i - 1;
   }
-  return false;
+  return 0 - 1;
 }
 
 // Mirror of expect_type: equal types pass; an "<error>" on EITHER side is
@@ -3921,6 +4041,46 @@ fn tc_report_arity(state: TcState, callee: String, expected: Int, found: Int,
   s.report = string_concat(s.report, int_to_string(expected));
   s.report = string_concat(s.report, " found=");
   s.report = string_concat(s.report, int_to_string(found));
+  s.report = string_concat(s.report, span_suffix(span_start, span_end));
+  s.report = string_concat(s.report, "\n");
+  return s;
+}
+
+// TYPE_ENUM_VARIANT_ARITY in its CALL forms carries the dotted variant path
+// plus the expected/found argument counts (expected is 1 for a payload variant
+// and 0 for a bare one): `TYPE_ENUM_VARIANT_ARITY name=E.V expected=N found=M
+// span=S..E`.
+fn tc_report_variant_arity(state: TcState, ename: String, vname: String,
+                           expected: Int, found: Int,
+                           span_start: Int, span_end: Int) -> TcState {
+  let mut s: TcState = state;
+  s.report = string_concat(s.report, "TYPE_ENUM_VARIANT_ARITY name=");
+  s.report = string_concat(s.report, ename);
+  s.report = string_concat(s.report, ".");
+  s.report = string_concat(s.report, vname);
+  s.report = string_concat(s.report, " expected=");
+  s.report = string_concat(s.report, int_to_string(expected));
+  s.report = string_concat(s.report, " found=");
+  s.report = string_concat(s.report, int_to_string(found));
+  s.report = string_concat(s.report, span_suffix(span_start, span_end));
+  s.report = string_concat(s.report, "\n");
+  return s;
+}
+
+// Kind-carrying variant diagnostics: TYPE_ENUM_VARIANT_ARITY kind=uncalled
+// (a payload variant used as a bare value) and TYPE_ENUM_PATTERN_ARITY
+// kind=unbound / kind=spurious (a payload pattern without a binding / a bare
+// pattern with one): `CODE name=E.V kind=K span=S..E`.
+fn tc_report_variant_kind(state: TcState, code: String, ename: String, vname: String,
+                          kind: String, span_start: Int, span_end: Int) -> TcState {
+  let mut s: TcState = state;
+  s.report = string_concat(s.report, code);
+  s.report = string_concat(s.report, " name=");
+  s.report = string_concat(s.report, ename);
+  s.report = string_concat(s.report, ".");
+  s.report = string_concat(s.report, vname);
+  s.report = string_concat(s.report, " kind=");
+  s.report = string_concat(s.report, kind);
   s.report = string_concat(s.report, span_suffix(span_start, span_end));
   s.report = string_concat(s.report, "\n");
   return s;
@@ -4186,28 +4346,69 @@ fn tc_stmt(state: TcState, index: Int) -> TcState {
   if kind == match_stmt() {
     let value: InferResult = tc_infer(s, arena.stmt_expr[index]);
     s = value.st;
+    // EVERY pattern diagnostic (and the exhaustiveness one) points at the
+    // match VALUE expression, mirroring the Rust value.span() everywhere.
+    let vs: Int = arena.node_full_start[arena.stmt_expr[index]];
+    let ve: Int = arena.node_full_end[arena.stmt_expr[index]];
     let astart: Int = arena.stmt_then_start[index];
     let acount: Int = arena.stmt_then_count[index];
     let mut ai: Int = 0;
     while ai < acount {
-      // Each arm gets a child scope. A `name:x` pattern binds the value's
-      // type; a variant payload binding gets "<error>" (payload typing is a
-      // slice-3 gap). Pattern type checks / exhaustiveness are slice 3 too.
+      // Each arm gets a child scope: pattern check + bindings first (Rust's
+      // check_pattern), then the body. The arm_pattern text was rendered by
+      // pattern_text: int:N / string:"x" / bool:true / _ / name:x /
+      // variant:E.V / variant:E.V(b).
       let saved: Int = s.count;
       let pattern: String = arena.arm_pattern[astart + ai];
-      let binding: String = pattern_binding(pattern);
-      if binding != "" {
-        if string_starts_with(pattern, "name:") {
-          s = tc_bind(s, binding, value.ty, 0);
+      if string_starts_with(pattern, "variant:") {
+        let ename: String = pattern_variant_enum(pattern);
+        let vname: String = pattern_variant_name(pattern);
+        let binding: String = pattern_binding(pattern);
+        // The value must match the pattern's enum FIRST; then the enum and
+        // variant lookups, then the payload/binding arity. A payload binding
+        // carries the payload's declared text (parse_type identity); a
+        // SPURIOUS binding (kind=spurious) binds nothing.
+        s = tc_expect(s, value.ty, ename, "TYPE_MATCH_PATTERN", vs, ve);
+        if !tc_enum_exists(s.enums, ename) {
+          s = tc_report_name(s, "TYPE_UNKNOWN_ENUM", ename, vs, ve);
         } else {
-          s = tc_bind(s, binding, "<error>", 0);
+          let vrow: Int = tc_variant_index(s.enums, ename, vname);
+          if vrow < 0 {
+            s = tc_report_name(s, "TYPE_UNKNOWN_VARIANT", vname, vs, ve);
+          } else {
+            let payload: String = s.enums.v_payloads[vrow];
+            if payload != "" && binding != "" {
+              s = tc_bind(s, binding, payload, 0);
+            }
+            if payload != "" && binding == "" {
+              s = tc_report_variant_kind(s, "TYPE_ENUM_PATTERN_ARITY",
+                                         ename, vname, "unbound", vs, ve);
+            }
+            if payload == "" && binding != "" {
+              s = tc_report_variant_kind(s, "TYPE_ENUM_PATTERN_ARITY",
+                                         ename, vname, "spurious", vs, ve);
+            }
+          }
         }
       }
+      if string_starts_with(pattern, "int:") {
+        s = tc_expect(s, value.ty, "Int", "TYPE_MATCH_PATTERN", vs, ve);
+      }
+      if string_starts_with(pattern, "string:") {
+        s = tc_expect(s, value.ty, "String", "TYPE_MATCH_PATTERN", vs, ve);
+      }
+      if string_starts_with(pattern, "bool:") {
+        s = tc_expect(s, value.ty, "Bool", "TYPE_MATCH_PATTERN", vs, ve);
+      }
+      if string_starts_with(pattern, "name:") {
+        s = tc_bind(s, pattern_binding(pattern), value.ty, 0);
+      }
+      // `_`: no check, no binding.
       s = tc_block(s, arena.arm_body_start[astart + ai], arena.arm_body_count[astart + ai]);
       s.count = saved;
       ai = ai + 1;
     }
-    return s;
+    return tc_match_exhaustiveness(s, value.ty, vs, ve, astart, acount);
   }
   if kind == break_stmt() {
     if s.loop_depth == 0 {
@@ -4301,12 +4502,18 @@ fn tc_infer(state: TcState, node: Int) -> InferResult {
   }
   if kind == call_node() {
     let callee: String = arena.node_text[node];
-    // A dotted callee never hits the function table: in Rust an enum-variant
-    // call (`E.V(x)`) takes the infer_enum_variant_call path — a slice-4 gap
-    // the corpus must not touch — and any OTHER dotted path misses the map
-    // (its keys are plain idents) and returns Error silently, arguments
-    // unvisited. Either way: silent "<error>", children unvisited.
-    if string_has_dot(callee) {
+    // Rust rsplits the callee at the LAST '.': an enum prefix takes the
+    // infer_enum_variant_call path; any OTHER dotted path misses the function
+    // map (its keys are plain idents) and returns Error silently, arguments
+    // unvisited.
+    let dot: Int = string_last_dot(callee);
+    if dot >= 0 {
+      let ename: String = string_byte_slice(callee, 0, dot);
+      if tc_enum_exists(s.enums, ename) {
+        let vname: String = string_byte_slice(callee, dot + 1,
+                                              string_len(callee) - 1 - dot);
+        return tc_infer_variant_call(s, node, ename, vname);
+      }
       return InferResult { st: s, ty: "<error>" };
     }
     let sig: Int = tc_sig_index(s.sigs, callee);
@@ -4455,13 +4662,27 @@ fn tc_infer(state: TcState, node: Int) -> InferResult {
     let field: String = arena.node_text[node];
     let bnode: Int = arena.node_a[node];
     // Enum VALUE access (`E.V` where E is a Name that is no local but IS an
-    // enum) takes Rust's enum branch — a slice-4 gap the corpus must not
-    // touch. Silent "<error>", base uninferred. (Std-import enums are slice-4
-    // territory too and equally corpus-forbidden.)
+    // enum — a local named E shadows the enum and falls through to the normal
+    // field path). The base is never inferred. All three outcomes recover with
+    // Named(E): a payload variant must be CALLED (TYPE_ENUM_VARIANT_ARITY
+    // kind=uncalled at the field ident), a bare variant is silent, a missing
+    // variant is TYPE_UNKNOWN_VARIANT at the field ident.
     if arena.node_kind[bnode] == name_node()
         && tc_lookup_slot(s, arena.node_text[bnode]) < 0
-        && tc_is_enum_name(arena, arena.node_text[bnode]) {
-      return InferResult { st: s, ty: "<error>" };
+        && tc_enum_exists(s.enums, arena.node_text[bnode]) {
+      let ename: String = arena.node_text[bnode];
+      let vrow: Int = tc_variant_index(s.enums, ename, field);
+      if vrow >= 0 {
+        if s.enums.v_payloads[vrow] != "" {
+          s = tc_report_variant_kind(s, "TYPE_ENUM_VARIANT_ARITY", ename, field,
+                                     "uncalled",
+                                     arena.node_span_start[node], arena.node_span_end[node]);
+        }
+        return InferResult { st: s, ty: ename };
+      }
+      s = tc_report_name(s, "TYPE_UNKNOWN_VARIANT", field,
+                         arena.node_span_start[node], arena.node_span_end[node]);
+      return InferResult { st: s, ty: ename };
     }
     let base: InferResult = tc_infer(s, bnode);
     s = base.st;
@@ -4506,4 +4727,125 @@ fn tc_infer(state: TcState, node: Int) -> InferResult {
   // Unreachable: every node kind is handled above. Keep the "<error>" fallback
   // so the function always returns.
   return InferResult { st: s, ty: "<error>" };
+}
+
+// Mirror of infer_enum_variant_call: a call whose dotted callee names a known
+// enum. ALL paths recover with Named(E). A payload variant demands exactly one
+// argument (TYPE_ENUM_VARIANT_ARITY at the callee span) and — arity right or
+// WRONG — every argument is inferred and expected against the payload type
+// (TYPE_ENUM_VARIANT_PAYLOAD at the argument). A bare variant demands zero
+// (same arity code) and its arguments are inferred but their types DISCARDED.
+// An unknown variant reports TYPE_UNKNOWN_VARIANT at the callee span and
+// never visits the arguments.
+fn tc_infer_variant_call(state: TcState, node: Int, ename: String, vname: String) -> InferResult {
+  let arena: Arena = state.arena;
+  let mut s: TcState = state;
+  let vrow: Int = tc_variant_index(s.enums, ename, vname);
+  if vrow < 0 {
+    s = tc_report_name(s, "TYPE_UNKNOWN_VARIANT", vname,
+                       arena.node_span_start[node], arena.node_span_end[node]);
+    return InferResult { st: s, ty: ename };
+  }
+  let astart: Int = arena.node_a[node];
+  let acount: Int = arena.node_b[node];
+  let payload: String = s.enums.v_payloads[vrow];
+  if payload != "" {
+    if acount != 1 {
+      s = tc_report_variant_arity(s, ename, vname, 1, acount,
+                                  arena.node_span_start[node], arena.node_span_end[node]);
+    }
+    let mut ai: Int = 0;
+    while ai < acount {
+      let argn: Int = arena.child_list[astart + ai];
+      let arg: InferResult = tc_infer(s, argn);
+      s = tc_expect(arg.st, arg.ty, payload, "TYPE_ENUM_VARIANT_PAYLOAD",
+                    arena.node_full_start[argn], arena.node_full_end[argn]);
+      ai = ai + 1;
+    }
+    return InferResult { st: s, ty: ename };
+  }
+  if acount != 0 {
+    s = tc_report_variant_arity(s, ename, vname, 0, acount,
+                                arena.node_span_start[node], arena.node_span_end[node]);
+  }
+  let mut ai: Int = 0;
+  while ai < acount {
+    let arg: InferResult = tc_infer(s, arena.child_list[astart + ai]);
+    s = arg.st;
+    ai = ai + 1;
+  }
+  return InferResult { st: s, ty: ename };
+}
+
+// Mirror of check_match_exhaustiveness, run AFTER every arm. A `_` or `name:`
+// arm covers everything. A Bool value needs both `bool:true` and `bool:false`
+// (fixed-message TYPE_MATCH_NON_EXHAUSTIVE). An enum value needs every
+// declared variant covered by a variant pattern whose ENUM is the value's
+// (a wrong-enum pattern contributes nothing); the report carries the enum
+// name. Every other type (Int / String / arrays / Range / Unit / "<error>" /
+// non-enum named) is never checked.
+fn tc_match_exhaustiveness(state: TcState, value_ty: String, vs: Int, ve: Int,
+                           astart: Int, acount: Int) -> TcState {
+  let arena: Arena = state.arena;
+  let mut s: TcState = state;
+  let mut ai: Int = 0;
+  while ai < acount {
+    let pattern: String = arena.arm_pattern[astart + ai];
+    if pattern == "_" || string_starts_with(pattern, "name:") {
+      return s;
+    }
+    ai = ai + 1;
+  }
+  if value_ty == "Bool" {
+    let mut has_true: Bool = false;
+    let mut has_false: Bool = false;
+    ai = 0;
+    while ai < acount {
+      if arena.arm_pattern[astart + ai] == "bool:true" {
+        has_true = true;
+      }
+      if arena.arm_pattern[astart + ai] == "bool:false" {
+        has_false = true;
+      }
+      ai = ai + 1;
+    }
+    if !has_true || !has_false {
+      s = tc_report_fixed(s, "TYPE_MATCH_NON_EXHAUSTIVE", vs, ve);
+    }
+    return s;
+  }
+  if tc_enum_exists(s.enums, value_ty) {
+    let mut covered: Bool = true;
+    let mut vi: Int = 0;
+    while vi < s.enums.v_enums.len {
+      if s.enums.v_enums[vi] == value_ty {
+        if !tc_arms_cover_variant(arena, astart, acount, value_ty, s.enums.v_names[vi]) {
+          covered = false;
+        }
+      }
+      vi = vi + 1;
+    }
+    if !covered {
+      s = tc_report_name(s, "TYPE_MATCH_NON_EXHAUSTIVE", value_ty, vs, ve);
+    }
+    return s;
+  }
+  return s;
+}
+
+// Does any arm's pattern name exactly the (ename, vname) variant? (Binding or
+// not is irrelevant — even a mis-bound pattern still covers its variant.)
+fn tc_arms_cover_variant(arena: Arena, astart: Int, acount: Int,
+                         ename: String, vname: String) -> Bool {
+  let mut ai: Int = 0;
+  while ai < acount {
+    let pattern: String = arena.arm_pattern[astart + ai];
+    if string_starts_with(pattern, "variant:")
+        && pattern_variant_enum(pattern) == ename
+        && pattern_variant_name(pattern) == vname {
+      return true;
+    }
+    ai = ai + 1;
+  }
+  return false;
 }
