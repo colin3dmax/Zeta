@@ -43,6 +43,7 @@ fn index_node() -> Int { return 7; }
 fn field_node() -> Int { return 8; }
 fn array_node() -> Int { return 9; }
 fn struct_lit_node() -> Int { return 10; }
+fn range_node() -> Int { return 11; }
 
 // Top-level item kinds (the item list is dumped in source order).
 fn item_import() -> Int { return 0; }
@@ -57,6 +58,11 @@ fn if_stmt() -> Int { return 2; }
 fn while_stmt() -> Int { return 3; }
 fn assign_stmt() -> Int { return 4; }
 fn expr_stmt() -> Int { return 5; }
+fn break_stmt() -> Int { return 6; }
+fn continue_stmt() -> Int { return 7; }
+fn for_in_stmt() -> Int { return 8; }
+fn for_c_stmt() -> Int { return 9; }
+fn match_stmt() -> Int { return 10; }
 
 // ---------------------------------------------------------------------------
 // Arena: a bundle of parallel arrays threaded functionally through the parser.
@@ -125,8 +131,19 @@ struct Arena {
   stmt_then_count: IntArray,
   stmt_else_start: IntArray,
   stmt_else_count: IntArray,
+  // Complex assignment target expr (-1 when the Assign uses a simple `name=`).
+  stmt_target: IntArray,
+  // ForC: statement-arena indices of the init and step statements.
+  stmt_init: IntArray,
+  stmt_step: IntArray,
   // Flat list of statement indices; blocks reference contiguous slices of it.
   block_list: IntArray,
+  // Match arms: parallel pattern-text / body-slice arrays. A Match statement
+  // slices these via (then_start, then_count); each arm's body is a contiguous
+  // run in block_list referenced by (arm_body_start, arm_body_count).
+  arm_pattern: StringArray,
+  arm_body_start: IntArray,
+  arm_body_count: IntArray,
 }
 
 fn arena_empty() -> Arena {
@@ -177,7 +194,13 @@ fn arena_empty() -> Arena {
     stmt_then_count: int_array_empty(),
     stmt_else_start: int_array_empty(),
     stmt_else_count: int_array_empty(),
+    stmt_target: int_array_empty(),
+    stmt_init: int_array_empty(),
+    stmt_step: int_array_empty(),
     block_list: int_array_empty(),
+    arm_pattern: string_array_empty(),
+    arm_body_start: int_array_empty(),
+    arm_body_count: int_array_empty(),
   };
 }
 
@@ -294,6 +317,16 @@ fn push_array_node(arena: Arena, elem_start: Int, elem_count: Int) -> Arena {
   a.node_kind = int_array_push(a.node_kind, array_node());
   a.node_a = int_array_push(a.node_a, elem_start);
   a.node_b = int_array_push(a.node_b, elem_count);
+  a.node_text = string_array_push(a.node_text, "");
+  return a;
+}
+
+// Range: node_a is the start expr, node_b is the end expr.
+fn push_range_node(arena: Arena, start: Int, end: Int) -> Arena {
+  let mut a: Arena = arena;
+  a.node_kind = int_array_push(a.node_kind, range_node());
+  a.node_a = int_array_push(a.node_a, start);
+  a.node_b = int_array_push(a.node_b, end);
   a.node_text = string_array_push(a.node_text, "");
   return a;
 }
@@ -607,12 +640,33 @@ fn parse_stmt(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> Pa
   if kinds[pos] == token_while() {
     return parse_while(arena, kinds, texts, pos);
   }
+  if kinds[pos] == token_break() {
+    return parse_break(arena, kinds, texts, pos);
+  }
+  if kinds[pos] == token_continue() {
+    return parse_continue(arena, kinds, texts, pos);
+  }
+  if kinds[pos] == token_for() {
+    return parse_for(arena, kinds, texts, pos);
+  }
+  if kinds[pos] == token_match() {
+    return parse_match(arena, kinds, texts, pos);
+  }
   return parse_assign(arena, kinds, texts, pos);
 }
 
 // Append a fully-described statement to the statement arena, returning its index.
 fn push_stmt(arena: Arena, kind: Int, name: String, ty: String, has_type: Int, is_mut: Int, expr: Int,
              then_start: Int, then_count: Int, else_start: Int, else_count: Int) -> Arena {
+  return push_stmt_full(arena, kind, name, ty, has_type, is_mut, expr,
+                        then_start, then_count, else_start, else_count, 0 - 1, 0 - 1, 0 - 1);
+}
+
+// Extended pusher carrying the complex-assign target and ForC init/step indices
+// (all -1 for statements that do not use them).
+fn push_stmt_full(arena: Arena, kind: Int, name: String, ty: String, has_type: Int, is_mut: Int, expr: Int,
+                  then_start: Int, then_count: Int, else_start: Int, else_count: Int,
+                  target: Int, init: Int, step: Int) -> Arena {
   let mut a: Arena = arena;
   a.stmt_kind = int_array_push(a.stmt_kind, kind);
   a.stmt_name = string_array_push(a.stmt_name, name);
@@ -624,6 +678,9 @@ fn push_stmt(arena: Arena, kind: Int, name: String, ty: String, has_type: Int, i
   a.stmt_then_count = int_array_push(a.stmt_then_count, then_count);
   a.stmt_else_start = int_array_push(a.stmt_else_start, else_start);
   a.stmt_else_count = int_array_push(a.stmt_else_count, else_count);
+  a.stmt_target = int_array_push(a.stmt_target, target);
+  a.stmt_init = int_array_push(a.stmt_init, init);
+  a.stmt_step = int_array_push(a.stmt_step, step);
   return a;
 }
 
@@ -748,40 +805,333 @@ fn parse_while(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> P
   return ParseResult { arena: a, node: index, pos: p };
 }
 
-// Statement starting with an expression: either a simple-name assignment
-//   assign   := NAME "=" expr ";"
-// or a bare expression statement (e.g. a call used for its effect)
-//   exprstmt := expr ";"
-// Complex assignment targets (a.b = / a[i] =) and compound assignment are out of
-// this slice; the simple-name lookahead below keeps us within it.
-fn parse_assign(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
-  if pos + 1 < kinds.len && kinds[pos] == token_ident() && kinds[pos + 1] == token_eq() {
-    let mut a: Arena = arena;
-    let mut p: Int = pos;
-    let name: String = texts[p];
-    p = p + 1;
-    // "="
-    p = p + 1;
-    let r: ParseResult = parse_expr(a, kinds, texts, p);
-    a = r.arena;
-    p = r.pos;
-    if p < kinds.len && kinds[p] == token_semicolon() {
-      p = p + 1;
-    }
-    let index: Int = a.stmt_kind.len;
-    a = push_stmt(a, assign_stmt(), name, "", 0, 0, r.node, 0, 0, 0, 0);
-    return ParseResult { arena: a, node: index, pos: p };
-  }
-  // Bare expression statement.
-  let r: ParseResult = parse_expr(arena, kinds, texts, pos);
-  let mut a: Arena = r.arena;
-  let mut p: Int = r.pos;
+// break := "break" ";"  — a leaf statement carrying no children.
+fn parse_break(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let mut a: Arena = arena;
+  let mut p: Int = pos + 1;
   if p < kinds.len && kinds[p] == token_semicolon() {
     p = p + 1;
   }
   let index: Int = a.stmt_kind.len;
-  a = push_stmt(a, expr_stmt(), "", "", 0, 0, r.node, 0, 0, 0, 0);
+  a = push_stmt(a, break_stmt(), "", "", 0, 0, 0 - 1, 0, 0, 0, 0);
   return ParseResult { arena: a, node: index, pos: p };
+}
+
+// continue := "continue" ";"  — a leaf statement carrying no children.
+fn parse_continue(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let mut a: Arena = arena;
+  let mut p: Int = pos + 1;
+  if p < kinds.len && kinds[p] == token_semicolon() {
+    p = p + 1;
+  }
+  let index: Int = a.stmt_kind.len;
+  a = push_stmt(a, continue_stmt(), "", "", 0, 0, 0 - 1, 0, 0, 0, 0);
+  return ParseResult { arena: a, node: index, pos: p };
+}
+
+// for := for-in | for-c
+//   for-in := "for" NAME "in" expr block   (expr may be a `start..end` Range)
+//   for-c  := "for" "(" init ";" cond ";" step ")" block
+// A "(" directly after "for" picks the C-style form.
+fn parse_for(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  if pos + 1 < kinds.len && kinds[pos + 1] == token_lparen() {
+    return parse_for_c(arena, kinds, texts, pos);
+  }
+  return parse_for_in(arena, kinds, texts, pos);
+}
+
+// for-in := "for" NAME "in" iterable block. The iterable's struct-literal flag is
+// off (matching the oracle: `Name {` after `in` opens the loop body, not a
+// struct literal). A top-level `..` makes the iterable a Range node.
+fn parse_for_in(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let mut a: Arena = arena;
+  let mut p: Int = pos;
+  // "for"
+  p = p + 1;
+  let binding: String = texts[p];
+  p = p + 1;
+  // "in"
+  if p < kinds.len && kinds[p] == token_in() {
+    p = p + 1;
+  }
+  let startr: ParseResult = parse_expr_with(a, kinds, texts, p, 0);
+  a = startr.arena;
+  p = startr.pos;
+  let mut iter: Int = startr.node;
+  if p < kinds.len && kinds[p] == token_dotdot() {
+    p = p + 1;
+    let endr: ParseResult = parse_expr_with(a, kinds, texts, p, 0);
+    a = endr.arena;
+    p = endr.pos;
+    let range_index: Int = a.node_kind.len;
+    a = push_range_node(a, startr.node, endr.node);
+    iter = range_index;
+  }
+  let body: BlockResult = parse_block(a, kinds, texts, p);
+  a = body.arena;
+  p = body.pos;
+  let index: Int = a.stmt_kind.len;
+  a = push_stmt(a, for_in_stmt(), binding, "", 0, 0, iter,
+                body.start, body.count, 0, 0);
+  return ParseResult { arena: a, node: index, pos: p };
+}
+
+// for-c := "for" "(" init ";" cond ";" step ")" block. init is parsed as a full
+// statement (typically a `let`, which consumes its own ";"); cond is an
+// expression terminated by ";"; step is an assignment without a trailing ";".
+fn parse_for_c(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let mut a: Arena = arena;
+  let mut p: Int = pos;
+  // "for"
+  p = p + 1;
+  // "("
+  if p < kinds.len && kinds[p] == token_lparen() {
+    p = p + 1;
+  }
+  // init statement (consumes its own trailing ";").
+  let init: ParseResult = parse_stmt(a, kinds, texts, p);
+  a = init.arena;
+  p = init.pos;
+  // cond expr ";"
+  let cond: ParseResult = parse_expr(a, kinds, texts, p);
+  a = cond.arena;
+  p = cond.pos;
+  if p < kinds.len && kinds[p] == token_semicolon() {
+    p = p + 1;
+  }
+  // step assignment (no trailing ";"; ends at ")").
+  let step: ParseResult = parse_assign_no_semi(a, kinds, texts, p);
+  a = step.arena;
+  p = step.pos;
+  if p < kinds.len && kinds[p] == token_rparen() {
+    p = p + 1;
+  }
+  let body: BlockResult = parse_block(a, kinds, texts, p);
+  a = body.arena;
+  p = body.pos;
+  let index: Int = a.stmt_kind.len;
+  a = push_stmt_full(a, for_c_stmt(), "", "", 0, 0, cond.node,
+                     body.start, body.count, 0, 0, 0 - 1, init.node, step.node);
+  return ParseResult { arena: a, node: index, pos: p };
+}
+
+// match := "match" value "{" (arm ("," arm)* ","?)? "}"
+//   arm := pattern "->" block
+// Patterns are rendered to text up front (see pattern_text); arm bodies are
+// ordinary blocks. The value's struct-literal flag is off so `match X {` opens
+// the match body rather than parsing `X { ... }` as a struct literal.
+fn parse_match(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let mut a: Arena = arena;
+  let mut p: Int = pos;
+  // "match"
+  p = p + 1;
+  let value: ParseResult = parse_expr_with(a, kinds, texts, p, 0);
+  a = value.arena;
+  p = value.pos;
+  if p < kinds.len && kinds[p] == token_lbrace() {
+    p = p + 1;
+  }
+  // Gather each arm's (pattern, body slice) locally, then commit to the arm
+  // arrays as one contiguous run so the Match can slice them post-order.
+  let mut patterns: StringArray = string_array_empty();
+  let mut body_starts: IntArray = int_array_empty();
+  let mut body_counts: IntArray = int_array_empty();
+  while p < kinds.len && kinds[p] != token_rbrace() {
+    if kinds[p] == token_comma() {
+      p = p + 1;
+    } else {
+      // Pattern runs until the top-level "->".
+      let pat_start: Int = p;
+      let mut paren_depth: Int = 0;
+      while p < kinds.len && !(paren_depth == 0 && kinds[p] == token_arrow()) {
+        if kinds[p] == token_lparen() {
+          paren_depth = paren_depth + 1;
+        }
+        if kinds[p] == token_rparen() && paren_depth > 0 {
+          paren_depth = paren_depth - 1;
+        }
+        p = p + 1;
+      }
+      let pat: String = pattern_text(kinds, texts, pat_start, p);
+      // "->"
+      if p < kinds.len && kinds[p] == token_arrow() {
+        p = p + 1;
+      }
+      let body: BlockResult = parse_block(a, kinds, texts, p);
+      a = body.arena;
+      p = body.pos;
+      patterns = string_array_push(patterns, pat);
+      body_starts = int_array_push(body_starts, body.start);
+      body_counts = int_array_push(body_counts, body.count);
+    }
+  }
+  if p < kinds.len && kinds[p] == token_rbrace() {
+    p = p + 1;
+  }
+  let arm_start: Int = a.arm_pattern.len;
+  let arm_count: Int = patterns.len;
+  let mut i: Int = 0;
+  while i < arm_count {
+    a.arm_pattern = string_array_push(a.arm_pattern, patterns[i]);
+    a.arm_body_start = int_array_push(a.arm_body_start, body_starts[i]);
+    a.arm_body_count = int_array_push(a.arm_body_count, body_counts[i]);
+    i = i + 1;
+  }
+  let index: Int = a.stmt_kind.len;
+  a = push_stmt(a, match_stmt(), "", "", 0, 0, value.node,
+                arm_start, arm_count, 0, 0);
+  return ParseResult { arena: a, node: index, pos: p };
+}
+
+// Render a match pattern over tokens [start, end) to its dump text. Mirrors the
+// Stage1 frontend's rust_pattern_text:
+//   int:N  string:"x"  bool:true  _  name:x  variant:E.V  variant:E.V(b)
+fn pattern_text(kinds: IntArray, texts: StringArray, start: Int, end: Int) -> String {
+  if start >= end {
+    return "";
+  }
+  if start + 1 == end {
+    if kinds[start] == token_int() {
+      return string_concat("int:", texts[start]);
+    }
+    if kinds[start] == token_string() {
+      return string_concat("string:", texts[start]);
+    }
+    if kinds[start] == token_true() || kinds[start] == token_false() {
+      return string_concat("bool:", texts[start]);
+    }
+    if kinds[start] == token_ident() && texts[start] == "_" {
+      return "_";
+    }
+    if kinds[start] == token_ident() {
+      return string_concat("name:", texts[start]);
+    }
+  }
+  if start + 3 == end && kinds[start] == token_ident()
+      && kinds[start + 1] == token_dot() && kinds[start + 2] == token_ident() {
+    let mut out: String = "variant:";
+    out = string_concat(out, texts[start]);
+    out = string_concat(out, ".");
+    out = string_concat(out, texts[start + 2]);
+    return out;
+  }
+  if start + 6 == end && kinds[start] == token_ident()
+      && kinds[start + 1] == token_dot() && kinds[start + 2] == token_ident()
+      && kinds[start + 3] == token_lparen() && kinds[start + 4] == token_ident()
+      && kinds[start + 5] == token_rparen() {
+    let mut out: String = "variant:";
+    out = string_concat(out, texts[start]);
+    out = string_concat(out, ".");
+    out = string_concat(out, texts[start + 2]);
+    out = string_concat(out, "(");
+    out = string_concat(out, texts[start + 4]);
+    out = string_concat(out, ")");
+    return out;
+  }
+  return "";
+}
+
+// Statement starting with an expression: either a simple-name assignment
+//   assign   := NAME "=" expr ";"
+// or a bare expression statement (e.g. a call used for its effect)
+//   exprstmt := expr ";"
+//   assign   := target ("=" | "+=" | "-=" | "*=" | "/=" | "%=") expr ";"
+// The target may be a simple NAME, a field/index chain (a.b / a[i] / a.b.c /
+// a[i][j]), or any mix. A simple NAME target dumps as `Assign name=N`; richer
+// targets dump as `Assign` / `Target` / `Value`. Compound assignment desugars
+// `t op= rhs` into `t = (t op rhs)`, sharing the target node between the Assign
+// and the Binary's left operand.
+fn parse_assign(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  // Parse the leading expression: either the assignment target or a bare expr.
+  let lhs: ParseResult = parse_expr(arena, kinds, texts, pos);
+  let mut a: Arena = lhs.arena;
+  let mut p: Int = lhs.pos;
+  if p < kinds.len && kinds[p] == token_eq() {
+    p = p + 1;
+    let rhs: ParseResult = parse_expr(a, kinds, texts, p);
+    a = rhs.arena;
+    p = rhs.pos;
+    if p < kinds.len && kinds[p] == token_semicolon() {
+      p = p + 1;
+    }
+    let index: Int = a.stmt_kind.len;
+    a = emit_assign(a, lhs.node, rhs.node);
+    return ParseResult { arena: a, node: index, pos: p };
+  }
+  if p < kinds.len && is_compound_assign_op(kinds[p]) {
+    let op: String = compound_op_name(kinds[p]);
+    p = p + 1;
+    let rhs: ParseResult = parse_expr(a, kinds, texts, p);
+    a = rhs.arena;
+    p = rhs.pos;
+    if p < kinds.len && kinds[p] == token_semicolon() {
+      p = p + 1;
+    }
+    let bin_index: Int = a.node_kind.len;
+    a = push_binary_node(a, lhs.node, rhs.node, op);
+    let index: Int = a.stmt_kind.len;
+    a = emit_assign(a, lhs.node, bin_index);
+    return ParseResult { arena: a, node: index, pos: p };
+  }
+  // Bare expression statement.
+  if p < kinds.len && kinds[p] == token_semicolon() {
+    p = p + 1;
+  }
+  let index: Int = a.stmt_kind.len;
+  a = push_stmt(a, expr_stmt(), "", "", 0, 0, lhs.node, 0, 0, 0, 0);
+  return ParseResult { arena: a, node: index, pos: p };
+}
+
+// ForC step: like parse_assign but with no trailing ";" (the step ends at ")").
+// Always an assignment (simple or compound); never a bare expression.
+fn parse_assign_no_semi(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let lhs: ParseResult = parse_expr(arena, kinds, texts, pos);
+  let mut a: Arena = lhs.arena;
+  let mut p: Int = lhs.pos;
+  if p < kinds.len && kinds[p] == token_eq() {
+    p = p + 1;
+    let rhs: ParseResult = parse_expr(a, kinds, texts, p);
+    a = rhs.arena;
+    p = rhs.pos;
+    let index: Int = a.stmt_kind.len;
+    a = emit_assign(a, lhs.node, rhs.node);
+    return ParseResult { arena: a, node: index, pos: p };
+  }
+  let op: String = compound_op_name(kinds[p]);
+  p = p + 1;
+  let rhs: ParseResult = parse_expr(a, kinds, texts, p);
+  a = rhs.arena;
+  p = rhs.pos;
+  let bin_index: Int = a.node_kind.len;
+  a = push_binary_node(a, lhs.node, rhs.node, op);
+  let index: Int = a.stmt_kind.len;
+  a = emit_assign(a, lhs.node, bin_index);
+  return ParseResult { arena: a, node: index, pos: p };
+}
+
+// Push an Assign statement for `target = value`. A bare Name target collapses to
+// the `Assign name=N` form (target=-1); any other target keeps the explicit
+// Target/Value shape with the target expr stored in stmt_target.
+fn emit_assign(arena: Arena, target: Int, value: Int) -> Arena {
+  let mut a: Arena = arena;
+  if a.node_kind[target] == name_node() {
+    return push_stmt(a, assign_stmt(), a.node_text[target], "", 0, 0, value, 0, 0, 0, 0);
+  }
+  return push_stmt_full(a, assign_stmt(), "", "", 0, 0, value, 0, 0, 0, 0, target, 0 - 1, 0 - 1);
+}
+
+fn is_compound_assign_op(kind: Int) -> Bool {
+  return kind == token_plus_eq() || kind == token_minus_eq() || kind == token_star_eq()
+      || kind == token_slash_eq() || kind == token_percent_eq();
+}
+
+// The arithmetic op name a compound-assign desugars to (matching binary_op_name).
+fn compound_op_name(kind: Int) -> String {
+  if kind == token_plus_eq() { return "add"; }
+  if kind == token_minus_eq() { return "sub"; }
+  if kind == token_star_eq() { return "mul"; }
+  if kind == token_slash_eq() { return "div"; }
+  return "mod";
 }
 
 // ---------------------------------------------------------------------------
@@ -1326,11 +1676,89 @@ fn dump_stmt(out: String, arena: Arena, index: Int, depth: Int) -> String {
     return next;
   }
   if kind == assign_stmt() {
+    if arena.stmt_target[index] >= 0 {
+      // Complex target: explicit Target / Value subtrees.
+      let mut next: String = string_concat(out, pad);
+      next = string_concat(next, "Assign\n");
+      let cpad: String = indent_of(depth + 1);
+      next = string_concat(next, cpad);
+      next = string_concat(next, "Target\n");
+      next = dump_expr(next, arena, arena.stmt_target[index], depth + 2);
+      next = string_concat(next, cpad);
+      next = string_concat(next, "Value\n");
+      next = dump_expr(next, arena, arena.stmt_expr[index], depth + 2);
+      return next;
+    }
     let mut next: String = string_concat(out, pad);
     next = string_concat(next, "Assign name=");
     next = string_concat(next, arena.stmt_name[index]);
     next = string_concat(next, "\n");
     next = dump_expr(next, arena, arena.stmt_expr[index], depth + 1);
+    return next;
+  }
+  if kind == break_stmt() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "Break\n");
+    return next;
+  }
+  if kind == continue_stmt() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "Continue\n");
+    return next;
+  }
+  if kind == for_in_stmt() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "For binding=");
+    next = string_concat(next, arena.stmt_name[index]);
+    next = string_concat(next, "\n");
+    let cpad: String = indent_of(depth + 1);
+    next = string_concat(next, cpad);
+    next = string_concat(next, "Iterable\n");
+    next = dump_expr(next, arena, arena.stmt_expr[index], depth + 2);
+    next = string_concat(next, cpad);
+    next = string_concat(next, "Body\n");
+    next = dump_block(next, arena, arena.stmt_then_start[index],
+                      arena.stmt_then_count[index], depth + 2);
+    return next;
+  }
+  if kind == for_c_stmt() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "ForC\n");
+    let cpad: String = indent_of(depth + 1);
+    next = string_concat(next, cpad);
+    next = string_concat(next, "Init\n");
+    next = dump_stmt(next, arena, arena.stmt_init[index], depth + 2);
+    next = string_concat(next, cpad);
+    next = string_concat(next, "Condition\n");
+    next = dump_expr(next, arena, arena.stmt_expr[index], depth + 2);
+    next = string_concat(next, cpad);
+    next = string_concat(next, "Step\n");
+    next = dump_stmt(next, arena, arena.stmt_step[index], depth + 2);
+    next = string_concat(next, cpad);
+    next = string_concat(next, "Body\n");
+    next = dump_block(next, arena, arena.stmt_then_start[index],
+                      arena.stmt_then_count[index], depth + 2);
+    return next;
+  }
+  if kind == match_stmt() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "Match\n");
+    let cpad: String = indent_of(depth + 1);
+    next = string_concat(next, cpad);
+    next = string_concat(next, "Value\n");
+    next = dump_expr(next, arena, arena.stmt_expr[index], depth + 2);
+    let astart: Int = arena.stmt_then_start[index];
+    let acount: Int = arena.stmt_then_count[index];
+    let mut ai: Int = 0;
+    while ai < acount {
+      next = string_concat(next, cpad);
+      next = string_concat(next, "Arm pattern=");
+      next = string_concat(next, arena.arm_pattern[astart + ai]);
+      next = string_concat(next, "\n");
+      next = dump_block(next, arena, arena.arm_body_start[astart + ai],
+                        arena.arm_body_count[astart + ai], depth + 2);
+      ai = ai + 1;
+    }
     return next;
   }
   if kind == expr_stmt() {
@@ -1486,6 +1914,13 @@ fn dump_expr(out: String, arena: Arena, node: Int, depth: Int) -> String {
       next = dump_expr(next, arena, arena.sl_field_value[start + i], depth + 2);
       i = i + 1;
     }
+    return next;
+  }
+  if kind == range_node() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "Range\n");
+    next = dump_expr(next, arena, arena.node_a[node], depth + 1);
+    next = dump_expr(next, arena, arena.node_b[node], depth + 1);
     return next;
   }
   // binary
@@ -1695,6 +2130,15 @@ fn symbol_width(source: String, index: Int) -> Int {
   if byte == 62 && index + 1 < len && string_byte_at(source, index + 1) == 61 {
     return 2;
   }
+  // ".." range operator.
+  if byte == 46 && index + 1 < len && string_byte_at(source, index + 1) == 46 {
+    return 2;
+  }
+  // Compound assignment operators "+=" "-=" "*=" "/=" "%=".
+  if (byte == 43 || byte == 45 || byte == 42 || byte == 47 || byte == 37)
+      && index + 1 < len && string_byte_at(source, index + 1) == 61 {
+    return 2;
+  }
   return 1;
 }
 
@@ -1746,6 +2190,21 @@ fn keyword_or_ident(text: String) -> Int {
   if text == "while" {
     return token_while();
   }
+  if text == "for" {
+    return token_for();
+  }
+  if text == "in" {
+    return token_in();
+  }
+  if text == "match" {
+    return token_match();
+  }
+  if text == "break" {
+    return token_break();
+  }
+  if text == "continue" {
+    return token_continue();
+  }
   if text == "true" {
     return token_true();
   }
@@ -1786,11 +2245,17 @@ fn symbol_kind(source: String, index: Int) -> Int {
     return token_comma();
   }
   if byte == 46 {
+    if index + 1 < len && string_byte_at(source, index + 1) == 46 {
+      return token_dotdot();
+    }
     return token_dot();
   }
   if byte == 45 {
     if index + 1 < len && string_byte_at(source, index + 1) == 62 {
       return token_arrow();
+    }
+    if index + 1 < len && string_byte_at(source, index + 1) == 61 {
+      return token_minus_eq();
     }
     return token_minus();
   }
@@ -1837,15 +2302,27 @@ fn symbol_kind(source: String, index: Int) -> Int {
     return token_tilde();
   }
   if byte == 43 {
+    if index + 1 < len && string_byte_at(source, index + 1) == 61 {
+      return token_plus_eq();
+    }
     return token_plus();
   }
   if byte == 42 {
+    if index + 1 < len && string_byte_at(source, index + 1) == 61 {
+      return token_star_eq();
+    }
     return token_star();
   }
   if byte == 47 {
+    if index + 1 < len && string_byte_at(source, index + 1) == 61 {
+      return token_slash_eq();
+    }
     return token_slash();
   }
   if byte == 37 {
+    if index + 1 < len && string_byte_at(source, index + 1) == 61 {
+      return token_percent_eq();
+    }
     return token_percent();
   }
   return token_unknown();
@@ -1903,4 +2380,15 @@ fn token_caret() -> Int { return 56; }
 fn token_tilde() -> Int { return 57; }
 fn token_andand() -> Int { return 58; }
 fn token_oror() -> Int { return 59; }
+fn token_break() -> Int { return 60; }
+fn token_continue() -> Int { return 61; }
+fn token_for() -> Int { return 62; }
+fn token_in() -> Int { return 63; }
+fn token_match() -> Int { return 64; }
+fn token_dotdot() -> Int { return 65; }
+fn token_plus_eq() -> Int { return 66; }
+fn token_minus_eq() -> Int { return 67; }
+fn token_star_eq() -> Int { return 68; }
+fn token_slash_eq() -> Int { return 69; }
+fn token_percent_eq() -> Int { return 70; }
 fn token_unknown() -> Int { return 99; }

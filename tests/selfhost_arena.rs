@@ -306,9 +306,9 @@ fn arena_matches_oracle_on_empty_return_and_no_return_type() {
     assert_matches_oracle("module it.basic; fn main() { return; }");
 }
 
-// --- Regression: existing stage1 parity probes that use only this batch's
-// constructs. Probes relying on break/continue/for/match/compound-assign are
-// intentionally skipped (see the test returned summary for the list).
+// --- Regression: targeted stage1 parity probe groups. (The full corpus is
+// gated by arena_matches_oracle_on_all_stage1_parity_probes below; these keep
+// per-category failures easy to localize.)
 fn assert_probe(path: &str) {
     let source = std::fs::read_to_string(path).expect("probe source should read");
     assert_matches_oracle(&source);
@@ -356,14 +356,147 @@ fn arena_matches_oracle_on_bitwise_neg_mod_probes() {
 
 #[test]
 fn arena_matches_oracle_on_control_flow_probes() {
-    // cf_05/cf_11/cf_12/cf_15 use break/continue and are skipped (not in this
-    // batch); for_* are skipped too.
-    for name in [
-        "cf_01", "cf_02", "cf_03", "cf_04", "cf_06", "cf_07", "cf_08", "cf_09", "cf_10",
-        "cf_13", "cf_14", "elif_01",
-    ] {
+    for n in 1..=15 {
+        assert_probe(&format!("testdata/stage1_parity/cf_{n:02}.zeta"));
+    }
+    for name in ["elif_01", "for_01", "forc_01", "forrange_01", "control_flow_core"] {
         assert_probe(&format!("testdata/stage1_parity/{name}.zeta"));
     }
+}
+
+#[test]
+fn arena_matches_oracle_on_match_probes() {
+    for n in 1..=14 {
+        assert_probe(&format!("testdata/stage1_parity/mt_{n:02}.zeta"));
+    }
+}
+
+#[test]
+fn arena_matches_oracle_on_assignment_probes() {
+    for name in ["asn_01", "cae_01"] {
+        assert_probe(&format!("testdata/stage1_parity/{name}.zeta"));
+    }
+}
+
+// --- Batch 4 (final): match / for (in / range / C-style) / break / continue /
+// complex assignment targets / compound assignment ---
+
+#[test]
+fn arena_matches_oracle_on_break_continue() {
+    assert_matches_oracle("fn f() -> Int { while c { break; } return 0; }");
+    assert_matches_oracle("fn f() -> Int { while c { continue; } return 0; }");
+    assert_matches_oracle(
+        "fn f() -> Int { while c { if a { break; } else { continue; } } return 0; }",
+    );
+}
+
+#[test]
+fn arena_matches_oracle_on_for_in() {
+    assert_matches_oracle("fn f() -> Int { for x in arr { y = x; } return 0; }");
+    assert_matches_oracle("fn f() -> Int { for item in xs.items { use(item); } return 0; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_for_range() {
+    assert_matches_oracle("fn f() -> Int { for i in a..b { y = i; } return 0; }");
+    assert_matches_oracle("fn f() -> Int { for i in 0..n { s = s + i; } return 0; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_for_c() {
+    assert_matches_oracle(
+        "fn f() -> Int { for (let mut i: Int = 0; i < n; i = i + 1) { s = s + i; } return s; }",
+    );
+    assert_matches_oracle(
+        "fn f() -> Int { for (let mut i: Int = 0; i < n; i += 1) { s = s + i; } return s; }",
+    );
+}
+
+#[test]
+fn arena_matches_oracle_on_match_patterns() {
+    assert_matches_oracle(
+        "fn f(x: Int) -> Int { match x { 1 -> { return 1; }, 2 -> { return 2; } } }",
+    );
+    assert_matches_oracle(
+        "fn f(x: String) -> Int { match x { \"a\" -> { return 1; }, _ -> { return 0; } } }",
+    );
+    assert_matches_oracle(
+        "fn f(x: Bool) -> Int { match x { true -> { return 1; }, false -> { return 0; } } }",
+    );
+    assert_matches_oracle(
+        "fn f(x: Int) -> Int { match x { n -> { return n; } } }",
+    );
+    assert_matches_oracle(
+        "fn f(c: Color) -> Int { match c { Color.Red -> { return 1; }, Color.Green -> { return 2; }, _ -> { return 0; } } }",
+    );
+    assert_matches_oracle(
+        "fn f(s: Shape) -> Int { match s { Shape.Box(b) -> { return b; }, Shape.Tag(t) -> { return t; } } }",
+    );
+}
+
+#[test]
+fn arena_matches_oracle_on_nested_match() {
+    assert_matches_oracle(
+        "fn f(x: Int, y: Int) -> Int { match x { 1 -> { match y { 2 -> { return 3; }, _ -> { return 4; } } }, _ -> { return 0; } } }",
+    );
+}
+
+#[test]
+fn arena_matches_oracle_on_complex_assign_targets() {
+    assert_matches_oracle("fn f() -> Int { a.b = x; return 0; }");
+    assert_matches_oracle("fn f() -> Int { a[i] = x; return 0; }");
+    assert_matches_oracle("fn f() -> Int { a.b.c = x; return 0; }");
+    assert_matches_oracle("fn f() -> Int { a[i][j] = x; return 0; }");
+    assert_matches_oracle("fn f() -> Int { a.b[i].c = x; return 0; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_compound_assign_simple() {
+    assert_matches_oracle("fn f() -> Int { a += 1; return 0; }");
+    assert_matches_oracle("fn f() -> Int { a -= 2; return 0; }");
+    assert_matches_oracle("fn f() -> Int { a *= 3; return 0; }");
+    assert_matches_oracle("fn f() -> Int { a /= 4; return 0; }");
+    assert_matches_oracle("fn f() -> Int { a %= 5; return 0; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_compound_assign_complex() {
+    assert_matches_oracle("fn f() -> Int { a.b += 1; return 0; }");
+    assert_matches_oracle("fn f() -> Int { a[i] *= 2; return 0; }");
+    assert_matches_oracle("fn f() -> Int { a.b.c -= n + 1; return 0; }");
+}
+
+// Full-coverage gate: every Stage1 parity probe must produce arena dump text
+// identical to the oracle. This is the M2 completeness milestone — the arena
+// structural frontend now matches the text-based Stage1 frontend across the
+// entire probe corpus (match / for / break / continue / compound + complex
+// assignment included).
+#[test]
+fn arena_matches_oracle_on_all_stage1_parity_probes() {
+    let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir("testdata/stage1_parity")
+        .expect("stage1_parity dir should exist")
+        .map(|e| e.expect("dir entry").path())
+        .filter(|p| p.extension().map(|x| x == "zeta").unwrap_or(false))
+        .collect();
+    paths.sort();
+    assert_eq!(paths.len(), 243, "expected 243 stage1 parity probes");
+
+    let mut failures = Vec::new();
+    for path in &paths {
+        let source = std::fs::read_to_string(path).expect("probe source should read");
+        let oracle = zeta::dump_ast(&source).expect("oracle ast-dump should succeed");
+        let arena = arena_dump(&source);
+        if arena.trim_end() != oracle.trim_end() {
+            failures.push(path.display().to_string());
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {} probes diverged from the oracle:\n{}",
+        failures.len(),
+        paths.len(),
+        failures.join("\n")
+    );
 }
 
 #[test]
@@ -377,5 +510,12 @@ fn arena_matches_oracle_on_review_kitchen_sink() {
 fn arena_matches_oracle_on_items_and_postfix_kitchen_sink() {
     assert_matches_oracle(
         "module demo.app; import demo.math; import demo.text as txt; export struct User { id: Int, name: String } enum Result { Ok(Int), Err(String), None } export fn build(n: Int) -> User { let items: IntArray = [1, n + 1, compute(n)[0]]; let u: User = User { id: next(), name: \"a\\nb\" }; return User { id: u.child.items[0], name: txt.fmt(u.name, [n][0]) }; }",
+    );
+}
+
+#[test]
+fn arena_matches_oracle_on_final_kitchen_sink() {
+    assert_matches_oracle(
+        "fn f(n: Int) -> Int { let mut s: Int = 0; for i in 0..n { s += i; } for x in [1,2,3] { s = s + x; } for (let mut j: Int = 0; j < n; j += 1) { if j == 2 { continue; } s.acc[j] = j; } match s { 0 -> { return 0; }, _ -> { match n { 1 -> { break; }, _ -> { return s; } } } } return s; }",
     );
 }
