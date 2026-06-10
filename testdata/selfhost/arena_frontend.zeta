@@ -152,6 +152,15 @@ struct Arena {
   // end); -1/-1 for every other node kind.
   node_span_start: IntArray,
   node_span_end: IntArray,
+  // Full expression spans per expr node, mirroring the Rust Expr::span():
+  // every node kind records the byte range of its complete source text
+  // (literals: the token; unary: op..operand end; binary/range: left start..
+  // right end; call: callee start..")"; index: base..."]"; field: base..field
+  // ident end; array: "["..."]"; struct literal: type name..."}"). A
+  // parenthesized expression keeps the inner node's span unchanged — the Rust
+  // parser does the same (parse_primary returns the inner expr as-is).
+  node_full_start: IntArray,
+  node_full_end: IntArray,
   // Start offset of the binding ident for let rows and of the target ident for
   // simple-assign rows; -1 for other statement kinds. Single-ident spans store
   // only the start — the end is always start + len(name).
@@ -232,6 +241,8 @@ fn arena_empty() -> Arena {
     token_start: int_array_empty(),
     node_span_start: int_array_empty(),
     node_span_end: int_array_empty(),
+    node_full_start: int_array_empty(),
+    node_full_end: int_array_empty(),
     stmt_name_span_start: int_array_empty(),
     param_name_span_start: int_array_empty(),
     fn_name_span_start: int_array_empty(),
@@ -268,7 +279,7 @@ struct BlockResult {
 // Node allocation (post-order). Each pusher appends to every parallel array so
 // the arrays stay the same length and the new node's index is the pre-push len.
 // ---------------------------------------------------------------------------
-fn push_int_node(arena: Arena, text: String) -> Arena {
+fn push_int_node(arena: Arena, text: String, full_start: Int, full_end: Int) -> Arena {
   let mut a: Arena = arena;
   a.node_kind = int_array_push(a.node_kind, int_node());
   a.node_a = int_array_push(a.node_a, 0);
@@ -276,6 +287,8 @@ fn push_int_node(arena: Arena, text: String) -> Arena {
   a.node_text = string_array_push(a.node_text, text);
   a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
   a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
+  a.node_full_start = int_array_push(a.node_full_start, full_start);
+  a.node_full_end = int_array_push(a.node_full_end, full_end);
   return a;
 }
 
@@ -289,10 +302,13 @@ fn push_name_node(arena: Arena, text: String, span_start: Int, span_end: Int) ->
   a.node_text = string_array_push(a.node_text, text);
   a.node_span_start = int_array_push(a.node_span_start, span_start);
   a.node_span_end = int_array_push(a.node_span_end, span_end);
+  // A Name's full span IS its ident token span.
+  a.node_full_start = int_array_push(a.node_full_start, span_start);
+  a.node_full_end = int_array_push(a.node_full_end, span_end);
   return a;
 }
 
-fn push_bool_node(arena: Arena, text: String) -> Arena {
+fn push_bool_node(arena: Arena, text: String, full_start: Int, full_end: Int) -> Arena {
   let mut a: Arena = arena;
   a.node_kind = int_array_push(a.node_kind, bool_node());
   a.node_a = int_array_push(a.node_a, 0);
@@ -300,10 +316,12 @@ fn push_bool_node(arena: Arena, text: String) -> Arena {
   a.node_text = string_array_push(a.node_text, text);
   a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
   a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
+  a.node_full_start = int_array_push(a.node_full_start, full_start);
+  a.node_full_end = int_array_push(a.node_full_end, full_end);
   return a;
 }
 
-fn push_unary_node(arena: Arena, operand: Int, op: String) -> Arena {
+fn push_unary_node(arena: Arena, operand: Int, op: String, full_start: Int, full_end: Int) -> Arena {
   let mut a: Arena = arena;
   a.node_kind = int_array_push(a.node_kind, unary_node());
   a.node_a = int_array_push(a.node_a, operand);
@@ -311,10 +329,12 @@ fn push_unary_node(arena: Arena, operand: Int, op: String) -> Arena {
   a.node_text = string_array_push(a.node_text, op);
   a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
   a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
+  a.node_full_start = int_array_push(a.node_full_start, full_start);
+  a.node_full_end = int_array_push(a.node_full_end, full_end);
   return a;
 }
 
-fn push_binary_node(arena: Arena, left: Int, right: Int, op: String) -> Arena {
+fn push_binary_node(arena: Arena, left: Int, right: Int, op: String, full_start: Int, full_end: Int) -> Arena {
   let mut a: Arena = arena;
   a.node_kind = int_array_push(a.node_kind, binary_node());
   a.node_a = int_array_push(a.node_a, left);
@@ -322,12 +342,14 @@ fn push_binary_node(arena: Arena, left: Int, right: Int, op: String) -> Arena {
   a.node_text = string_array_push(a.node_text, op);
   a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
   a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
+  a.node_full_start = int_array_push(a.node_full_start, full_start);
+  a.node_full_end = int_array_push(a.node_full_end, full_end);
   return a;
 }
 
 // String literal: text is the raw token slice (quotes included); the dump pass
 // normalizes escapes to match Rust's Debug formatting.
-fn push_string_node(arena: Arena, text: String) -> Arena {
+fn push_string_node(arena: Arena, text: String, full_start: Int, full_end: Int) -> Arena {
   let mut a: Arena = arena;
   a.node_kind = int_array_push(a.node_kind, string_node());
   a.node_a = int_array_push(a.node_a, 0);
@@ -335,13 +357,17 @@ fn push_string_node(arena: Arena, text: String) -> Arena {
   a.node_text = string_array_push(a.node_text, text);
   a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
   a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
+  // Quotes included: the raw token slice length IS the Rust token span length.
+  a.node_full_start = int_array_push(a.node_full_start, full_start);
+  a.node_full_end = int_array_push(a.node_full_end, full_end);
   return a;
 }
 
 // Call: text is the dotted callee path; (arg_start, arg_count) slice child_list.
 // The span covers the callee path only (first ident start .. last ident end),
 // matching the Rust parser's callee_span.
-fn push_call_node(arena: Arena, callee: String, arg_start: Int, arg_count: Int, span_start: Int, span_end: Int) -> Arena {
+fn push_call_node(arena: Arena, callee: String, arg_start: Int, arg_count: Int, span_start: Int, span_end: Int,
+                  full_start: Int, full_end: Int) -> Arena {
   let mut a: Arena = arena;
   a.node_kind = int_array_push(a.node_kind, call_node());
   a.node_a = int_array_push(a.node_a, arg_start);
@@ -349,11 +375,13 @@ fn push_call_node(arena: Arena, callee: String, arg_start: Int, arg_count: Int, 
   a.node_text = string_array_push(a.node_text, callee);
   a.node_span_start = int_array_push(a.node_span_start, span_start);
   a.node_span_end = int_array_push(a.node_span_end, span_end);
+  a.node_full_start = int_array_push(a.node_full_start, full_start);
+  a.node_full_end = int_array_push(a.node_full_end, full_end);
   return a;
 }
 
 // Index: node_a is the base expr, node_b is the index expr.
-fn push_index_node(arena: Arena, base: Int, index: Int) -> Arena {
+fn push_index_node(arena: Arena, base: Int, index: Int, full_start: Int, full_end: Int) -> Arena {
   let mut a: Arena = arena;
   a.node_kind = int_array_push(a.node_kind, index_node());
   a.node_a = int_array_push(a.node_a, base);
@@ -361,11 +389,13 @@ fn push_index_node(arena: Arena, base: Int, index: Int) -> Arena {
   a.node_text = string_array_push(a.node_text, "");
   a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
   a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
+  a.node_full_start = int_array_push(a.node_full_start, full_start);
+  a.node_full_end = int_array_push(a.node_full_end, full_end);
   return a;
 }
 
 // FieldAccess: node_a is the base expr, text is the field name.
-fn push_field_node(arena: Arena, base: Int, field: String) -> Arena {
+fn push_field_node(arena: Arena, base: Int, field: String, full_start: Int, full_end: Int) -> Arena {
   let mut a: Arena = arena;
   a.node_kind = int_array_push(a.node_kind, field_node());
   a.node_a = int_array_push(a.node_a, base);
@@ -373,11 +403,13 @@ fn push_field_node(arena: Arena, base: Int, field: String) -> Arena {
   a.node_text = string_array_push(a.node_text, field);
   a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
   a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
+  a.node_full_start = int_array_push(a.node_full_start, full_start);
+  a.node_full_end = int_array_push(a.node_full_end, full_end);
   return a;
 }
 
 // ArrayLiteral: (elem_start, elem_count) slice child_list.
-fn push_array_node(arena: Arena, elem_start: Int, elem_count: Int) -> Arena {
+fn push_array_node(arena: Arena, elem_start: Int, elem_count: Int, full_start: Int, full_end: Int) -> Arena {
   let mut a: Arena = arena;
   a.node_kind = int_array_push(a.node_kind, array_node());
   a.node_a = int_array_push(a.node_a, elem_start);
@@ -385,11 +417,13 @@ fn push_array_node(arena: Arena, elem_start: Int, elem_count: Int) -> Arena {
   a.node_text = string_array_push(a.node_text, "");
   a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
   a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
+  a.node_full_start = int_array_push(a.node_full_start, full_start);
+  a.node_full_end = int_array_push(a.node_full_end, full_end);
   return a;
 }
 
 // Range: node_a is the start expr, node_b is the end expr.
-fn push_range_node(arena: Arena, start: Int, end: Int) -> Arena {
+fn push_range_node(arena: Arena, start: Int, end: Int, full_start: Int, full_end: Int) -> Arena {
   let mut a: Arena = arena;
   a.node_kind = int_array_push(a.node_kind, range_node());
   a.node_a = int_array_push(a.node_a, start);
@@ -397,12 +431,15 @@ fn push_range_node(arena: Arena, start: Int, end: Int) -> Arena {
   a.node_text = string_array_push(a.node_text, "");
   a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
   a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
+  a.node_full_start = int_array_push(a.node_full_start, full_start);
+  a.node_full_end = int_array_push(a.node_full_end, full_end);
   return a;
 }
 
 // StructLiteral: text is the type name; (field_start, field_count) slice the
 // parallel sl_field_name / sl_field_value arrays.
-fn push_struct_lit_node(arena: Arena, type_name: String, field_start: Int, field_count: Int) -> Arena {
+fn push_struct_lit_node(arena: Arena, type_name: String, field_start: Int, field_count: Int,
+                        full_start: Int, full_end: Int) -> Arena {
   let mut a: Arena = arena;
   a.node_kind = int_array_push(a.node_kind, struct_lit_node());
   a.node_a = int_array_push(a.node_a, field_start);
@@ -410,6 +447,8 @@ fn push_struct_lit_node(arena: Arena, type_name: String, field_start: Int, field
   a.node_text = string_array_push(a.node_text, type_name);
   a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
   a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
+  a.node_full_start = int_array_push(a.node_full_start, full_start);
+  a.node_full_end = int_array_push(a.node_full_end, full_end);
   return a;
 }
 
@@ -926,6 +965,8 @@ fn parse_break(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> P
   }
   let index: Int = a.stmt_kind.len;
   a = push_stmt(a, break_stmt(), "", "", 0, 0, 0 - 1, 0, 0, 0, 0);
+  // Keyword token start — TYPE_BREAK_OUTSIDE_LOOP points at `break` itself.
+  a.stmt_name_span_start[index] = a.token_start[pos];
   return ParseResult { arena: a, node: index, pos: p };
 }
 
@@ -938,6 +979,8 @@ fn parse_continue(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -
   }
   let index: Int = a.stmt_kind.len;
   a = push_stmt(a, continue_stmt(), "", "", 0, 0, 0 - 1, 0, 0, 0, 0);
+  // Keyword token start — TYPE_CONTINUE_OUTSIDE_LOOP points at `continue`.
+  a.stmt_name_span_start[index] = a.token_start[pos];
   return ParseResult { arena: a, node: index, pos: p };
 }
 
@@ -976,7 +1019,8 @@ fn parse_for_in(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> 
     a = endr.arena;
     p = endr.pos;
     let range_index: Int = a.node_kind.len;
-    a = push_range_node(a, startr.node, endr.node);
+    a = push_range_node(a, startr.node, endr.node,
+                        a.node_full_start[startr.node], a.node_full_end[endr.node]);
     iter = range_index;
   }
   let body: BlockResult = parse_block(a, kinds, texts, p);
@@ -1180,7 +1224,8 @@ fn parse_assign(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> 
       p = p + 1;
     }
     let bin_index: Int = a.node_kind.len;
-    a = push_binary_node(a, lhs.node, rhs.node, op);
+    a = push_binary_node(a, lhs.node, rhs.node, op,
+                         a.node_full_start[lhs.node], a.node_full_end[rhs.node]);
     let index: Int = a.stmt_kind.len;
     a = emit_assign(a, lhs.node, bin_index);
     return ParseResult { arena: a, node: index, pos: p };
@@ -1215,7 +1260,8 @@ fn parse_assign_no_semi(arena: Arena, kinds: IntArray, texts: StringArray, pos: 
   a = rhs.arena;
   p = rhs.pos;
   let bin_index: Int = a.node_kind.len;
-  a = push_binary_node(a, lhs.node, rhs.node, op);
+  a = push_binary_node(a, lhs.node, rhs.node, op,
+                       a.node_full_start[lhs.node], a.node_full_end[rhs.node]);
   let index: Int = a.stmt_kind.len;
   a = emit_assign(a, lhs.node, bin_index);
   return ParseResult { arena: a, node: index, pos: p };
@@ -1307,7 +1353,8 @@ fn parse_or(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, allow_s
     a = rhs.arena;
     p = rhs.pos;
     let new_index: Int = a.node_kind.len;
-    a = push_binary_node(a, node, rhs.node, op);
+    a = push_binary_node(a, node, rhs.node, op,
+                         a.node_full_start[node], a.node_full_end[rhs.node]);
     node = new_index;
   }
   return ParseResult { arena: a, node: node, pos: p };
@@ -1324,7 +1371,8 @@ fn parse_and(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, allow_
     a = rhs.arena;
     p = rhs.pos;
     let new_index: Int = a.node_kind.len;
-    a = push_binary_node(a, node, rhs.node, op);
+    a = push_binary_node(a, node, rhs.node, op,
+                         a.node_full_start[node], a.node_full_end[rhs.node]);
     node = new_index;
   }
   return ParseResult { arena: a, node: node, pos: p };
@@ -1341,7 +1389,8 @@ fn parse_bit(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, allow_
     a = rhs.arena;
     p = rhs.pos;
     let new_index: Int = a.node_kind.len;
-    a = push_binary_node(a, node, rhs.node, op);
+    a = push_binary_node(a, node, rhs.node, op,
+                         a.node_full_start[node], a.node_full_end[rhs.node]);
     node = new_index;
   }
   return ParseResult { arena: a, node: node, pos: p };
@@ -1358,7 +1407,8 @@ fn parse_cmp(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, allow_
     a = rhs.arena;
     p = rhs.pos;
     let new_index: Int = a.node_kind.len;
-    a = push_binary_node(a, node, rhs.node, op);
+    a = push_binary_node(a, node, rhs.node, op,
+                         a.node_full_start[node], a.node_full_end[rhs.node]);
     node = new_index;
   }
   return ParseResult { arena: a, node: node, pos: p };
@@ -1375,7 +1425,8 @@ fn parse_add(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, allow_
     a = rhs.arena;
     p = rhs.pos;
     let new_index: Int = a.node_kind.len;
-    a = push_binary_node(a, node, rhs.node, op);
+    a = push_binary_node(a, node, rhs.node, op,
+                         a.node_full_start[node], a.node_full_end[rhs.node]);
     node = new_index;
   }
   return ParseResult { arena: a, node: node, pos: p };
@@ -1392,7 +1443,8 @@ fn parse_mul(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, allow_
     a = rhs.arena;
     p = rhs.pos;
     let new_index: Int = a.node_kind.len;
-    a = push_binary_node(a, node, rhs.node, op);
+    a = push_binary_node(a, node, rhs.node, op,
+                         a.node_full_start[node], a.node_full_end[rhs.node]);
     node = new_index;
   }
   return ParseResult { arena: a, node: node, pos: p };
@@ -1405,7 +1457,9 @@ fn parse_unary(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, allo
     let operand: ParseResult = parse_unary(arena, kinds, texts, pos + 1, allow_struct);
     let mut a: Arena = operand.arena;
     let new_index: Int = a.node_kind.len;
-    a = push_unary_node(a, operand.node, op);
+    // Full span: op token start .. operand end (matching the Rust parser).
+    a = push_unary_node(a, operand.node, op,
+                        a.token_start[pos], a.node_full_end[operand.node]);
     return ParseResult { arena: a, node: new_index, pos: operand.pos };
   }
   return parse_postfix(arena, kinds, texts, pos, allow_struct);
@@ -1432,7 +1486,9 @@ fn parse_postfix(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, al
         p = p + 1;
       }
       let new_index: Int = a.node_kind.len;
-      a = push_index_node(a, node, idx.node);
+      // Full span: base start .. "]" end (token p-1 is the consumed "]").
+      a = push_index_node(a, node, idx.node,
+                          a.node_full_start[node], a.token_start[p - 1] + 1);
       node = new_index;
     } else {
       // "." NAME — field access (calls were already absorbed in parse_primary).
@@ -1440,7 +1496,9 @@ fn parse_postfix(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, al
       let field: String = texts[p];
       p = p + 1;
       let new_index: Int = a.node_kind.len;
-      a = push_field_node(a, node, field);
+      // Full span: base start .. field ident end (token p-1 is the field).
+      a = push_field_node(a, node, field,
+                          a.node_full_start[node], a.token_start[p - 1] + string_len(field));
       node = new_index;
     }
   }
@@ -1453,6 +1511,9 @@ fn parse_postfix(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, al
 //          | "(" expr ")"
 fn parse_primary(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, allow_struct: Int) -> ParseResult {
   if kinds[pos] == token_lparen() {
+    // A parenthesized expression keeps the inner node (and its full span)
+    // unchanged — the Rust parser's LParen branch likewise returns the inner
+    // expr without widening its span to the parens.
     let inner: ParseResult = parse_expr_with(arena, kinds, texts, pos + 1, allow_struct);
     let mut p: Int = inner.pos;
     if p < kinds.len && kinds[p] == token_rparen() {
@@ -1465,17 +1526,22 @@ fn parse_primary(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, al
   }
   if kinds[pos] == token_int() {
     let index: Int = arena.node_kind.len;
-    let a: Arena = push_int_node(arena, texts[pos]);
+    let a: Arena = push_int_node(arena, texts[pos], arena.token_start[pos],
+                                 arena.token_start[pos] + string_len(texts[pos]));
     return ParseResult { arena: a, node: index, pos: pos + 1 };
   }
   if kinds[pos] == token_string() {
+    // The raw token text keeps its quotes, so its length equals the Rust
+    // lexer's String token span length.
     let index: Int = arena.node_kind.len;
-    let a: Arena = push_string_node(arena, texts[pos]);
+    let a: Arena = push_string_node(arena, texts[pos], arena.token_start[pos],
+                                    arena.token_start[pos] + string_len(texts[pos]));
     return ParseResult { arena: a, node: index, pos: pos + 1 };
   }
   if kinds[pos] == token_true() || kinds[pos] == token_false() {
     let index: Int = arena.node_kind.len;
-    let a: Arena = push_bool_node(arena, texts[pos]);
+    let a: Arena = push_bool_node(arena, texts[pos], arena.token_start[pos],
+                                  arena.token_start[pos] + string_len(texts[pos]));
     return ParseResult { arena: a, node: index, pos: pos + 1 };
   }
   // identifier: scan a dotted name path.
@@ -1509,7 +1575,9 @@ fn parse_primary(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, al
   let mut q: Int = pos + 1;
   while q + 1 < kinds.len && kinds[q] == token_dot() && kinds[q + 1] == token_ident() {
     let new_index: Int = a.node_kind.len;
-    a = push_field_node(a, node, texts[q + 1]);
+    // Full span: chain start .. this segment's ident end.
+    a = push_field_node(a, node, texts[q + 1], a.node_full_start[node],
+                        a.token_start[q + 1] + string_len(texts[q + 1]));
     node = new_index;
     q = q + 2;
   }
@@ -1544,7 +1612,9 @@ fn parse_call(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, calle
     i = i + 1;
   }
   let new_index: Int = a.node_kind.len;
-  a = push_call_node(a, callee, start, count, callee_span_start, callee_span_end);
+  // Full span: callee path start .. ")" end (token p-1 is the consumed ")").
+  a = push_call_node(a, callee, start, count, callee_span_start, callee_span_end,
+                     callee_span_start, a.token_start[p - 1] + 1);
   return ParseResult { arena: a, node: new_index, pos: p };
 }
 
@@ -1574,7 +1644,9 @@ fn parse_array_literal(arena: Arena, kinds: IntArray, texts: StringArray, pos: I
     i = i + 1;
   }
   let new_index: Int = a.node_kind.len;
-  a = push_array_node(a, start, count);
+  // Full span: "[" start .. "]" end (token p-1 is the consumed "]").
+  a = push_array_node(a, start, count,
+                      a.token_start[pos], a.token_start[p - 1] + 1);
   return ParseResult { arena: a, node: new_index, pos: p };
 }
 
@@ -1613,7 +1685,9 @@ fn parse_struct_literal(arena: Arena, kinds: IntArray, texts: StringArray, pos: 
     i = i + 1;
   }
   let new_index: Int = a.node_kind.len;
-  a = push_struct_lit_node(a, type_name, start, count);
+  // Full span: type-name ident (token pos-1) start .. "}" end (token p-1).
+  a = push_struct_lit_node(a, type_name, start, count,
+                           a.token_start[pos - 1], a.token_start[p - 1] + 1);
   return ParseResult { arena: a, node: new_index, pos: p };
 }
 
@@ -3416,7 +3490,27 @@ export fn typecheck_report(source: String) -> String {
     }
     ii = ii + 1;
   }
-  return report;
+  // M4 slice #2: after declared-type validation (whose diagnostics all come
+  // first, mirroring the Rust check()), run expression type inference over
+  // every function body in item order.
+  let mut tc: TcState = TcState {
+    arena: arena,
+    types: types,
+    local_names: string_array_empty(),
+    local_types: string_array_empty(),
+    count: 0,
+    report: report,
+    ret: "",
+    loop_depth: 0,
+  };
+  let mut tci: Int = 0;
+  while tci < arena.item_kind.len {
+    if arena.item_kind[tci] == item_function() {
+      tc = tc_function(tc, arena.item_ref[tci]);
+    }
+    tci = tci + 1;
+  }
+  return tc.report;
 }
 
 // Append one TYPE_UNKNOWN_TYPE line when `name` is not in the legal type set.
@@ -3487,4 +3581,410 @@ fn validate_stmt(report: String, arena: Arena, types: StringArray, index: Int) -
   }
   // assign / return / break / continue / expr: no declared types.
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// M4 vertical slice #2: minimal expression type inference, mirroring
+// src/typecheck.rs's check_function / check_stmts / infer_expr / expect_type.
+//
+// Types are represented by their Rust display strings: "Int" / "String" /
+// "Bool" / "IntArray" / "StringArray" / "BoolArray" / "Unit" / "Range" /
+// user struct & enum names verbatim / "<error>" for Type::Error. Equality is
+// plain string equality, exactly matching the oracle's Type comparison for
+// every type this slice can produce.
+//
+// Slice gaps (the differential corpus must not touch them):
+//   * Call / Index / FieldAccess / ArrayLiteral / StructLiteral exprs infer to
+//     "<error>" without reporting or visiting children (slice 3 territory).
+//   * Assign targets are not checked (TYPE_ASSIGN_MISMATCH / _IMMUTABLE /
+//     TYPE_UNKNOWN_NAME); only the assigned value is inferred.
+//   * Match patterns are not type-checked (TYPE_MATCH_PATTERN /
+//     exhaustiveness); variant payload bindings get type "<error>".
+// ---------------------------------------------------------------------------
+
+// Threaded typecheck state. `local_names`/`local_types` form the same logical
+// scope stack as the resolver's (write at `count`, save/restore `count` per
+// block); lookups scan BACKWARDS so the newest visible binding wins, matching
+// the Rust HashMap's insert-overwrite semantics under per-block clones. `ret`
+// is the enclosing function's return type string; `loop_depth` gates
+// break/continue.
+struct TcState {
+  arena: Arena,
+  types: StringArray,
+  local_names: StringArray,
+  local_types: StringArray,
+  count: Int,
+  report: String,
+  ret: String,
+  loop_depth: Int,
+}
+
+// Zeta multi-return: infer hands back the threaded state plus the type string.
+struct InferResult {
+  st: TcState,
+  ty: String,
+}
+
+// Mirror of the Rust parse_declared_type: a declared type name resolves to
+// itself when legal (builtin / user struct / user enum / std-import enum — the
+// slice-1 `types` set is exactly that) and to "<error>" otherwise.
+fn tc_declared_type(types: StringArray, name: String) -> String {
+  if name_in_list(types, types.len, name) {
+    return name;
+  }
+  return "<error>";
+}
+
+// Mirror of expect_type: equal types pass; an "<error>" on EITHER side is
+// silently suppressed (error recovery never cascades); otherwise report one
+// line `CODE expected=E found=F span=S..E`.
+fn tc_expect(state: TcState, found: String, expected: String, code: String,
+             span_start: Int, span_end: Int) -> TcState {
+  if found == expected {
+    return state;
+  }
+  if found == "<error>" || expected == "<error>" {
+    return state;
+  }
+  let mut s: TcState = state;
+  s.report = string_concat(s.report, code);
+  s.report = string_concat(s.report, " expected=");
+  s.report = string_concat(s.report, expected);
+  s.report = string_concat(s.report, " found=");
+  s.report = string_concat(s.report, found);
+  s.report = string_concat(s.report, span_suffix(span_start, span_end));
+  s.report = string_concat(s.report, "\n");
+  return s;
+}
+
+// Fixed-message diagnostics (TYPE_FOR_ITERABLE / TYPE_BREAK_OUTSIDE_LOOP /
+// TYPE_CONTINUE_OUTSIDE_LOOP) carry no expected/found pair.
+fn tc_report_fixed(state: TcState, code: String, span_start: Int, span_end: Int) -> TcState {
+  let mut s: TcState = state;
+  s.report = string_concat(s.report, code);
+  s.report = string_concat(s.report, span_suffix(span_start, span_end));
+  s.report = string_concat(s.report, "\n");
+  return s;
+}
+
+// Push a (name, type) binding onto the logical scope stack — same overwrite-
+// at-count discipline as bind_local_silent, kept in lockstep across BOTH
+// parallel arrays.
+fn tc_bind(state: TcState, name: String, ty: String) -> TcState {
+  let mut s: TcState = state;
+  if s.count < s.local_names.len {
+    s.local_names[s.count] = name;
+    s.local_types[s.count] = ty;
+  } else {
+    s.local_names = string_array_push(s.local_names, name);
+    s.local_types = string_array_push(s.local_types, ty);
+  }
+  s.count = s.count + 1;
+  return s;
+}
+
+// Look a name up in the scope stack, NEWEST binding first (reverse scan) — an
+// inner shadowing `let` must win over the outer binding, exactly like the
+// Rust HashMap clone where the inner insert overwrote the entry. A miss is
+// "<error>" WITHOUT a diagnostic (unknown names are the resolver's job).
+fn tc_lookup(state: TcState, name: String) -> String {
+  let mut i: Int = state.count - 1;
+  while i >= 0 {
+    if state.local_names[i] == name {
+      return state.local_types[i];
+    }
+    i = i - 1;
+  }
+  return "<error>";
+}
+
+// The Binary ops that demand Int on both sides (TYPE_BINARY_OPERAND); the op
+// names are the arena's node_text strings produced by binary_op_name.
+fn tc_is_arith_op(op: String) -> Bool {
+  return op == "add" || op == "sub" || op == "mul" || op == "div" || op == "mod"
+      || op == "bit_and" || op == "bit_or" || op == "bit_xor";
+}
+
+// Typecheck one function: reset the scope stack, seed it with the parameters
+// (typed via parse_declared_type, so an unknown param type binds "<error>"),
+// set the return type ("Unit" when there is no `->` clause), then walk the
+// body with loop_depth 0.
+fn tc_function(state: TcState, ref: Int) -> TcState {
+  let mut s: TcState = state;
+  let arena: Arena = s.arena;
+  s.count = 0;
+  s.loop_depth = 0;
+  if arena.fn_has_ret[ref] == 1 {
+    s.ret = tc_declared_type(s.types, arena.fn_ret[ref]);
+  } else {
+    s.ret = "Unit";
+  }
+  let pstart: Int = arena.fn_param_start[ref];
+  let pcount: Int = arena.fn_param_count[ref];
+  let mut pi: Int = 0;
+  while pi < pcount {
+    s = tc_bind(s, arena.param_name[pstart + pi],
+                tc_declared_type(s.types, arena.param_type[pstart + pi]));
+    pi = pi + 1;
+  }
+  return tc_block(s, arena.fn_body_start[ref], arena.fn_body_count[ref]);
+}
+
+// Typecheck a contiguous run of statements with block scoping: save the
+// logical count on entry, restore it on exit (the Rust check_stmts callers
+// clone `locals` per nested block — saving/restoring the count is the same
+// observable behaviour under reverse lookup).
+fn tc_block(state: TcState, start: Int, count: Int) -> TcState {
+  let mut s: TcState = state;
+  let saved: Int = s.count;
+  let arena: Arena = s.arena;
+  let mut i: Int = 0;
+  while i < count {
+    s = tc_stmt(s, arena.block_list[start + i]);
+    i = i + 1;
+  }
+  s.count = saved;
+  return s;
+}
+
+// Typecheck one statement, mirroring the Rust check_stmts arm for arm.
+fn tc_stmt(state: TcState, index: Int) -> TcState {
+  let arena: Arena = state.arena;
+  let kind: Int = arena.stmt_kind[index];
+  let mut s: TcState = state;
+  if kind == let_stmt() {
+    let value: InferResult = tc_infer(s, arena.stmt_expr[index]);
+    s = value.st;
+    if arena.stmt_has_type[index] == 1 {
+      // Annotated let: the value must match the declared type (span = the
+      // value expression), and the binding carries the DECLARED type even on
+      // mismatch — later uses follow the annotation, like the oracle.
+      let declared: String = tc_declared_type(s.types, arena.stmt_type[index]);
+      s = tc_expect(s, value.ty, declared, "TYPE_LET_MISMATCH",
+                    arena.node_full_start[arena.stmt_expr[index]],
+                    arena.node_full_end[arena.stmt_expr[index]]);
+      return tc_bind(s, arena.stmt_name[index], declared);
+    }
+    // Untyped let: the binding takes the inferred type.
+    return tc_bind(s, arena.stmt_name[index], value.ty);
+  }
+  if kind == return_stmt() {
+    if arena.stmt_expr[index] >= 0 {
+      let value: InferResult = tc_infer(s, arena.stmt_expr[index]);
+      s = value.st;
+      return tc_expect(s, value.ty, s.ret, "TYPE_RETURN_MISMATCH",
+                       arena.node_full_start[arena.stmt_expr[index]],
+                       arena.node_full_end[arena.stmt_expr[index]]);
+    }
+    // Bare `return;` returns Unit — the oracle reports the mismatch (against a
+    // non-Unit return type) at the fixed span 0..0.
+    return tc_expect(s, "Unit", s.ret, "TYPE_RETURN_MISMATCH", 0, 0);
+  }
+  if kind == expr_stmt() {
+    let value: InferResult = tc_infer(s, arena.stmt_expr[index]);
+    return value.st;
+  }
+  if kind == assign_stmt() {
+    // Slice gap: only the value is inferred (its inner diagnostics still
+    // report); target mutability/type checks are slice 3.
+    let value: InferResult = tc_infer(s, arena.stmt_expr[index]);
+    return value.st;
+  }
+  if kind == if_stmt() {
+    let cond: InferResult = tc_infer(s, arena.stmt_expr[index]);
+    s = tc_expect(cond.st, cond.ty, "Bool", "TYPE_IF_CONDITION",
+                  arena.node_full_start[arena.stmt_expr[index]],
+                  arena.node_full_end[arena.stmt_expr[index]]);
+    s = tc_block(s, arena.stmt_then_start[index], arena.stmt_then_count[index]);
+    s = tc_block(s, arena.stmt_else_start[index], arena.stmt_else_count[index]);
+    return s;
+  }
+  if kind == while_stmt() {
+    let cond: InferResult = tc_infer(s, arena.stmt_expr[index]);
+    s = tc_expect(cond.st, cond.ty, "Bool", "TYPE_WHILE_CONDITION",
+                  arena.node_full_start[arena.stmt_expr[index]],
+                  arena.node_full_end[arena.stmt_expr[index]]);
+    s.loop_depth = s.loop_depth + 1;
+    s = tc_block(s, arena.stmt_then_start[index], arena.stmt_then_count[index]);
+    s.loop_depth = s.loop_depth - 1;
+    return s;
+  }
+  if kind == for_in_stmt() {
+    let iter: InferResult = tc_infer(s, arena.stmt_expr[index]);
+    s = iter.st;
+    // Element type per the oracle: builtin arrays -> their element, Range ->
+    // Int, "<error>" stays silent, anything else reports TYPE_FOR_ITERABLE
+    // (fixed message, span = the iterable) and degrades to "<error>".
+    let mut elem: String = "";
+    let mut matched: Bool = false;
+    if iter.ty == "IntArray" {
+      elem = "Int";
+      matched = true;
+    }
+    if iter.ty == "StringArray" {
+      elem = "String";
+      matched = true;
+    }
+    if iter.ty == "BoolArray" {
+      elem = "Bool";
+      matched = true;
+    }
+    if iter.ty == "Range" {
+      elem = "Int";
+      matched = true;
+    }
+    if iter.ty == "<error>" {
+      elem = "<error>";
+      matched = true;
+    }
+    if !matched {
+      s = tc_report_fixed(s, "TYPE_FOR_ITERABLE",
+                          arena.node_full_start[arena.stmt_expr[index]],
+                          arena.node_full_end[arena.stmt_expr[index]]);
+      elem = "<error>";
+    }
+    let saved: Int = s.count;
+    s = tc_bind(s, arena.stmt_name[index], elem);
+    s.loop_depth = s.loop_depth + 1;
+    s = tc_block(s, arena.stmt_then_start[index], arena.stmt_then_count[index]);
+    s.loop_depth = s.loop_depth - 1;
+    s.count = saved;
+    return s;
+  }
+  if kind == for_c_stmt() {
+    // One loop scope shared by init/cond/step/body. The oracle checks init at
+    // the CURRENT loop_depth, then cond, then step and body at depth + 1.
+    let saved: Int = s.count;
+    s = tc_stmt(s, arena.stmt_init[index]);
+    let cond: InferResult = tc_infer(s, arena.stmt_expr[index]);
+    s = tc_expect(cond.st, cond.ty, "Bool", "TYPE_FORC_CONDITION",
+                  arena.node_full_start[arena.stmt_expr[index]],
+                  arena.node_full_end[arena.stmt_expr[index]]);
+    s.loop_depth = s.loop_depth + 1;
+    s = tc_stmt(s, arena.stmt_step[index]);
+    s = tc_block(s, arena.stmt_then_start[index], arena.stmt_then_count[index]);
+    s.loop_depth = s.loop_depth - 1;
+    s.count = saved;
+    return s;
+  }
+  if kind == match_stmt() {
+    let value: InferResult = tc_infer(s, arena.stmt_expr[index]);
+    s = value.st;
+    let astart: Int = arena.stmt_then_start[index];
+    let acount: Int = arena.stmt_then_count[index];
+    let mut ai: Int = 0;
+    while ai < acount {
+      // Each arm gets a child scope. A `name:x` pattern binds the value's
+      // type; a variant payload binding gets "<error>" (payload typing is a
+      // slice-3 gap). Pattern type checks / exhaustiveness are slice 3 too.
+      let saved: Int = s.count;
+      let pattern: String = arena.arm_pattern[astart + ai];
+      let binding: String = pattern_binding(pattern);
+      if binding != "" {
+        if string_starts_with(pattern, "name:") {
+          s = tc_bind(s, binding, value.ty);
+        } else {
+          s = tc_bind(s, binding, "<error>");
+        }
+      }
+      s = tc_block(s, arena.arm_body_start[astart + ai], arena.arm_body_count[astart + ai]);
+      s.count = saved;
+      ai = ai + 1;
+    }
+    return s;
+  }
+  if kind == break_stmt() {
+    if s.loop_depth == 0 {
+      let bspan: Int = arena.stmt_name_span_start[index];
+      s = tc_report_fixed(s, "TYPE_BREAK_OUTSIDE_LOOP", bspan, bspan + 5);
+    }
+    return s;
+  }
+  // continue
+  if s.loop_depth == 0 {
+    let cspan: Int = arena.stmt_name_span_start[index];
+    s = tc_report_fixed(s, "TYPE_CONTINUE_OUTSIDE_LOOP", cspan, cspan + 8);
+  }
+  return s;
+}
+
+// Infer one expression's type, reporting operand diagnostics in the oracle's
+// visit order (children are fully inferred BEFORE the parent's expects run).
+fn tc_infer(state: TcState, node: Int) -> InferResult {
+  let arena: Arena = state.arena;
+  let kind: Int = arena.node_kind[node];
+  let mut s: TcState = state;
+  if kind == name_node() {
+    // A miss is "<error>" with no report — unknown names belong to the
+    // resolver, and "<error>" then suppresses every downstream expect.
+    return InferResult { st: s, ty: tc_lookup(s, arena.node_text[node]) };
+  }
+  if kind == int_node() {
+    return InferResult { st: s, ty: "Int" };
+  }
+  if kind == string_node() {
+    return InferResult { st: s, ty: "String" };
+  }
+  if kind == bool_node() {
+    return InferResult { st: s, ty: "Bool" };
+  }
+  if kind == binary_node() {
+    let left: InferResult = tc_infer(s, arena.node_a[node]);
+    let right: InferResult = tc_infer(left.st, arena.node_b[node]);
+    s = right.st;
+    let op: String = arena.node_text[node];
+    let ls: Int = arena.node_full_start[arena.node_a[node]];
+    let le: Int = arena.node_full_end[arena.node_a[node]];
+    let rs: Int = arena.node_full_start[arena.node_b[node]];
+    let re: Int = arena.node_full_end[arena.node_b[node]];
+    if tc_is_arith_op(op) {
+      s = tc_expect(s, left.ty, "Int", "TYPE_BINARY_OPERAND", ls, le);
+      s = tc_expect(s, right.ty, "Int", "TYPE_BINARY_OPERAND", rs, re);
+      return InferResult { st: s, ty: "Int" };
+    }
+    if op == "and" || op == "or" {
+      s = tc_expect(s, left.ty, "Bool", "TYPE_LOGICAL_OPERAND", ls, le);
+      s = tc_expect(s, right.ty, "Bool", "TYPE_LOGICAL_OPERAND", rs, re);
+      return InferResult { st: s, ty: "Bool" };
+    }
+    if op == "eq" || op == "not_eq" {
+      // Equality only demands that the RIGHT side match the left's type.
+      s = tc_expect(s, right.ty, left.ty, "TYPE_EQUALITY_OPERAND", rs, re);
+      return InferResult { st: s, ty: "Bool" };
+    }
+    // lt / lte / gt / gte: ordering demands Int on both sides.
+    s = tc_expect(s, left.ty, "Int", "TYPE_ORDERING_OPERAND", ls, le);
+    s = tc_expect(s, right.ty, "Int", "TYPE_ORDERING_OPERAND", rs, re);
+    return InferResult { st: s, ty: "Bool" };
+  }
+  if kind == unary_node() {
+    let operand: InferResult = tc_infer(s, arena.node_a[node]);
+    s = operand.st;
+    let os: Int = arena.node_full_start[arena.node_a[node]];
+    let oe: Int = arena.node_full_end[arena.node_a[node]];
+    if arena.node_text[node] == "not" {
+      s = tc_expect(s, operand.ty, "Bool", "TYPE_UNARY_OPERAND", os, oe);
+      return InferResult { st: s, ty: "Bool" };
+    }
+    // neg / bit_not
+    s = tc_expect(s, operand.ty, "Int", "TYPE_UNARY_OPERAND", os, oe);
+    return InferResult { st: s, ty: "Int" };
+  }
+  if kind == range_node() {
+    // Oracle order: infer + expect the start bound, THEN infer + expect the
+    // end bound (each expect points at its own bound expression).
+    let startr: InferResult = tc_infer(s, arena.node_a[node]);
+    s = tc_expect(startr.st, startr.ty, "Int", "TYPE_RANGE_BOUND",
+                  arena.node_full_start[arena.node_a[node]],
+                  arena.node_full_end[arena.node_a[node]]);
+    let endr: InferResult = tc_infer(s, arena.node_b[node]);
+    s = tc_expect(endr.st, endr.ty, "Int", "TYPE_RANGE_BOUND",
+                  arena.node_full_start[arena.node_b[node]],
+                  arena.node_full_end[arena.node_b[node]]);
+    return InferResult { st: s, ty: "Range" };
+  }
+  // Call / Index / FieldAccess / ArrayLiteral / StructLiteral: slice-3 gap —
+  // infer to "<error>" without reporting or visiting children, so every
+  // surrounding expect stays silent.
+  return InferResult { st: s, ty: "<error>" };
 }
