@@ -2446,7 +2446,13 @@ export fn resolve_report(source: String) -> String {
   let parsed: ParseResult = parse_module(arena_empty(), kinds, texts, 0);
   let arena: Arena = parsed.arena;
   // Gather top-level names (function / struct / enum) — these shadow nothing but
-  // make a bare reference to them legal.
+  // make a bare reference to them legal. The same pass detects top-level
+  // duplicates (RESOLVE_DUPLICATE_ITEM): the Rust resolver's check_top_level
+  // runs BEFORE any function body is resolved, so all duplicate-item reports
+  // come first in the report, in item order. `top` doubles as the "names seen
+  // so far" set — a named item whose name is already in top[0..top_count] is a
+  // duplicate (imports and module decls have no item name and never count).
+  let mut report: String = "";
   let mut top: StringArray = string_array_empty();
   let mut top_count: Int = 0;
   // Function names only — the callee set consulted for RESOLVE_UNKNOWN_FUNCTION.
@@ -2456,24 +2462,34 @@ export fn resolve_report(source: String) -> String {
   while ii < arena.item_kind.len {
     let kind: Int = arena.item_kind[ii];
     let ref: Int = arena.item_ref[ii];
+    let mut name: String = "";
+    let mut named: Bool = false;
     if kind == item_struct() {
-      top = string_array_push(top, arena.struct_name[ref]);
-      top_count = top_count + 1;
+      name = arena.struct_name[ref];
+      named = true;
     }
     if kind == item_enum() {
-      top = string_array_push(top, arena.enum_name[ref]);
-      top_count = top_count + 1;
+      name = arena.enum_name[ref];
+      named = true;
     }
     if kind == item_function() {
-      top = string_array_push(top, arena.fn_name[ref]);
-      top_count = top_count + 1;
-      fns = string_array_push(fns, arena.fn_name[ref]);
+      name = arena.fn_name[ref];
+      named = true;
+      fns = string_array_push(fns, name);
       fn_count = fn_count + 1;
+    }
+    if named {
+      if name_in_list(top, top_count, name) {
+        report = string_concat(report, "RESOLVE_DUPLICATE_ITEM name=");
+        report = string_concat(report, name);
+        report = string_concat(report, "\n");
+      }
+      top = string_array_push(top, name);
+      top_count = top_count + 1;
     }
     ii = ii + 1;
   }
   // Resolve each function body in source order.
-  let mut report: String = "";
   let mut fi: Int = 0;
   while fi < arena.item_kind.len {
     if arena.item_kind[fi] == item_function() {
@@ -2529,6 +2545,19 @@ fn top_in_scope(state: ResolveState, name: String) -> Bool {
   let mut i: Int = 0;
   while i < state.top_count {
     if state.top[i] == name {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// Is `name` among the first `count` entries of `list`? Plain prefix scan used
+// for the top-level duplicate-item check (before ResolveState exists).
+fn name_in_list(list: StringArray, count: Int, name: String) -> Bool {
+  let mut i: Int = 0;
+  while i < count {
+    if list[i] == name {
       return true;
     }
     i = i + 1;

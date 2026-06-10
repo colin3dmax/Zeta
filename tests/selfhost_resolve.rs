@@ -1,9 +1,12 @@
-// M3 self-hosting vertical slice #1/#2: a minimal name resolver written in Zeta
+// M3 self-hosting vertical slices: a minimal name resolver written in Zeta
 // (testdata/selfhost/arena_frontend.zeta, `resolve_report`) consumes the arena
-// AST and reports three resolver diagnostics — unknown name references
-// (RESOLVE_UNKNOWN_NAME), unknown function calls (RESOLVE_UNKNOWN_FUNCTION), and
-// duplicate local definitions (RESOLVE_DUPLICATE_LOCAL). Its report text must
-// match the Rust resolver's diagnostics for those three codes, in emit order.
+// AST and reports resolver diagnostics — unknown name references
+// (RESOLVE_UNKNOWN_NAME), unknown function calls (RESOLVE_UNKNOWN_FUNCTION),
+// duplicate local definitions (RESOLVE_DUPLICATE_LOCAL), and duplicate
+// top-level items (RESOLVE_DUPLICATE_ITEM). Its report text must match the
+// Rust resolver's diagnostics for those codes, in emit order (top-level item
+// diagnostics are emitted before any function-body diagnostics, mirroring
+// check_top_level running first).
 //
 // Each case runs a tiny Zeta caller app that imports the frontend module and
 // calls `resolve_report(<source>)`, then asserts the returned string equals the
@@ -74,6 +77,7 @@ fn oracle_report(program_source: &str) -> String {
                 "RESOLVE_UNKNOWN_NAME" => "RESOLVE_UNKNOWN_NAME name=",
                 "RESOLVE_UNKNOWN_FUNCTION" => "RESOLVE_UNKNOWN_FUNCTION name=",
                 "RESOLVE_DUPLICATE_LOCAL" => "RESOLVE_DUPLICATE_LOCAL name=",
+                "RESOLVE_DUPLICATE_ITEM" => "RESOLVE_DUPLICATE_ITEM name=",
                 _ => continue,
             };
             let name = extract_backtick_name(&diagnostic.message)
@@ -358,6 +362,58 @@ fn resolve_for_c_init_shadowing_outer_local_is_duplicate() {
     // (unlike a plain for-in binding).
     assert_matches_oracle(
         "fn f(i: Int) -> Int { for (let mut i: Int = 0; i < 3; i = i + 1) { return i; } return 0; }",
+    );
+}
+
+// --- slice #3: RESOLVE_DUPLICATE_ITEM ---------------------------------------
+
+#[test]
+fn resolve_duplicate_top_level_fns() {
+    assert_matches_oracle("fn f() -> Int { return 0; } fn f() -> Int { return 1; }");
+}
+
+#[test]
+fn resolve_duplicate_struct_and_fn_same_name() {
+    // Duplicate detection is purely name-based across item kinds.
+    assert_matches_oracle("struct s { x: Int } fn s() -> Int { return 0; }");
+}
+
+#[test]
+fn resolve_duplicate_enum_and_struct_same_name() {
+    assert_matches_oracle("enum T { A, B } struct T { x: Int } fn f() -> Int { return 0; }");
+}
+
+#[test]
+fn resolve_triple_duplicate_reports_twice() {
+    // Every occurrence after the first reports (the second and third).
+    assert_matches_oracle(
+        "fn f() -> Int { return 0; } fn f() -> Int { return 1; } fn f() -> Int { return 2; }",
+    );
+}
+
+#[test]
+fn resolve_distinct_top_level_names_no_duplicate() {
+    assert_matches_oracle(
+        "struct A { x: Int } enum B { C } fn d() -> Int { return 0; }",
+    );
+}
+
+#[test]
+fn resolve_duplicate_item_reported_before_function_diagnostics() {
+    // check_top_level runs before function bodies: the duplicate-item report for
+    // `f` precedes the unknown-name report from the FIRST function's body even
+    // though the body appears earlier in the source.
+    assert_matches_oracle(
+        "fn f() -> Int { return miss; } fn f() -> Int { return 0; }",
+    );
+}
+
+#[test]
+fn resolve_duplicate_fn_still_resolves_both_bodies() {
+    // Both duplicate definitions' bodies are resolved (each reports its own
+    // unknown name, after the duplicate-item line).
+    assert_matches_oracle(
+        "fn f() -> Int { return one; } fn f() -> Int { return two; }",
     );
 }
 
