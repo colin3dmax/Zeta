@@ -1,0 +1,28 @@
+// Short-circuit observation: the right-hand operand of `&&` (when the left is
+// false) and of `||` (when the left is true) must NOT be evaluated. Here the
+// skipped operand is a function that recurses without a terminating base case
+// for the given argument -- if either operator wrongly evaluated it, the
+// program would diverge (stack overflow) instead of returning. Reaching a
+// finite answer therefore proves both branches short-circuited.
+fn diverge(n: Int) -> Bool {
+  // No base case is hit for positive n: recurses upward forever.
+  return diverge(n + 1);
+}
+
+fn count_truthy(g0: Bool, g1: Bool) -> Int {
+  let mut c: Int = 0;
+  // left=false -> diverge(1) must be skipped.
+  if g0 && diverge(1) {
+    c = c + 1;
+  }
+  // left=true -> diverge(1) must be skipped.
+  if g1 || diverge(1) {
+    c = c + 10;
+  }
+  return c;
+}
+
+fn main() -> Int {
+  // g0=false skips the && RHS (c stays); g1=true skips the || RHS (c += 10).
+  return count_truthy(false, true);
+}

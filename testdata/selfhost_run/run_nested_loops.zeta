@@ -1,0 +1,22 @@
+// Nested while loops with break/continue in the inner loop: the inner break
+// must not escape the outer loop, and the inner continue must keep `i` stable
+// while skipping the accumulation.
+fn main() -> Int {
+  let mut total: Int = 0;
+  let mut i: Int = 0;
+  while i < 4 {
+    let mut j: Int = 0;
+    while j < 5 {
+      j = j + 1;
+      if j == 2 {
+        continue;
+      }
+      if j == 4 {
+        break;
+      }
+      total = total + (i * 10 + j);
+    }
+    i = i + 1;
+  }
+  return total;
+}

@@ -1,0 +1,20 @@
+// Multi-parameter function chain: results flow through several frames, each of
+// which binds its own parameters. Validates argument evaluation order and that
+// callee frames are isolated from one another.
+fn add3(a: Int, b: Int, c: Int) -> Int {
+  return a + b + c;
+}
+
+fn scale(x: Int, factor: Int) -> Int {
+  return x * factor;
+}
+
+fn combine(p: Int, q: Int) -> Int {
+  return scale(add3(p, q, 1), 2) - q;
+}
+
+fn main() -> Int {
+  // combine(3, 4): add3(3,4,1)=8, scale(8,2)=16, 16-4=12
+  // combine(12, 5): add3(12,5,1)=18, scale=36, 36-5=31
+  return combine(combine(3, 4), 5);
+}

@@ -6130,3 +6130,619 @@ export fn mir_dump_pipeline_via_arena(source: String) -> String {
   }
   return mir_dump_with_std(arena, has_std_core, has_std_io);
 }
+
+// ===========================================================================
+// M6 slice 1: MIR-arena evaluator.
+//
+// Walks the MIR arena built above and evaluates `main()` exactly the way
+// `zeta::runtime::MirRuntime` does, returning the byte-for-byte same result
+// string as `zeta::run_source(source).to_string()`. This slice covers
+// scalars (Int / Bool / Unit), arithmetic / bitwise / comparison / boolean
+// (with short-circuit), control flow (if / while / for-range / for-c), and
+// user-function calls with an isolated call frame. String / Struct / Enum /
+// Array values and the std builtins are reserved for slice 2/3; the schema
+// below already carries the fields those slices need.
+// ===========================================================================
+
+// Value arena: append-only parallel arrays, threaded copy-on-write through the
+// evaluator. A value is a handle (index) into these arrays.
+struct Values {
+  kind: IntArray,        // 0 Int, 1 String, 2 Bool, 3 Struct, 4 Enum, 5 Array, 6 Unit
+  intval: IntArray,      // Int value; Bool stores 0/1; otherwise 0
+  text: StringArray,     // String value / Struct type name / Enum ty; otherwise ""
+  variant: StringArray,  // Enum variant; otherwise ""
+  a: IntArray,           // Enum payload handle (-1 none); Array/Struct child slice start
+  b: IntArray,           // Array element count; Struct field count
+  elems: IntArray,       // flat array-element handle pool (Array slices via a/b)
+  fnames: StringArray,   // flat struct field-name pool (Struct slices via a/b, sorted)
+  fvals: IntArray,       // flat struct field-value handle pool (parallel to fnames)
+}
+
+fn values_empty() -> Values {
+  return Values {
+    kind: int_array_empty(),
+    intval: int_array_empty(),
+    text: string_array_empty(),
+    variant: string_array_empty(),
+    a: int_array_empty(),
+    b: int_array_empty(),
+    elems: int_array_empty(),
+    fnames: string_array_empty(),
+    fvals: int_array_empty(),
+  };
+}
+
+// Packed (Values arena + handle) return so constructors can thread the arena.
+struct ValuesH {
+  vals: Values,
+  h: Int,
+}
+
+fn vpush(vals: Values, kind: Int, intval: Int, text: String, variant: String,
+         a: Int, b: Int) -> ValuesH {
+  let mut v: Values = vals;
+  let h: Int = v.kind.len;
+  v.kind = int_array_push(v.kind, kind);
+  v.intval = int_array_push(v.intval, intval);
+  v.text = string_array_push(v.text, text);
+  v.variant = string_array_push(v.variant, variant);
+  v.a = int_array_push(v.a, a);
+  v.b = int_array_push(v.b, b);
+  return ValuesH { vals: v, h: h };
+}
+
+fn vmake_int(vals: Values, n: Int) -> ValuesH {
+  return vpush(vals, 0, n, "", "", 0, 0);
+}
+
+fn vmake_bool(vals: Values, flag: Int) -> ValuesH {
+  return vpush(vals, 2, flag, "", "", 0, 0);
+}
+
+fn vmake_unit(vals: Values) -> ValuesH {
+  return vpush(vals, 6, 0, "", "", 0, 0);
+}
+
+// Structural equality on values. Slice 1 only needs Int/Bool (kind + intval);
+// String/Struct/Enum/Array recursion is reserved for slice 2/3 (the fallback
+// keeps unequal handles unequal unless kind+intval coincide).
+fn value_equal(vals: Values, h1: Int, h2: Int) -> Bool {
+  if vals.kind[h1] != vals.kind[h2] {
+    return false;
+  }
+  return vals.intval[h1] == vals.intval[h2];
+}
+
+fn value_to_string(vals: Values, h: Int) -> String {
+  let kind: Int = vals.kind[h];
+  if kind == 0 {
+    return int_to_string(vals.intval[h]);
+  }
+  if kind == 2 {
+    if vals.intval[h] == 1 {
+      return "true";
+    }
+    return "false";
+  }
+  if kind == 6 {
+    return "()";
+  }
+  if kind == 1 {
+    return vals.text[h];
+  }
+  // Struct / Enum / Array: placeholder until slice 2/3.
+  return "";
+}
+
+// Parse a non-negative decimal literal token (negatives arrive as unary neg).
+fn decimal_to_int(text: String) -> Int {
+  let len: Int = string_len(text);
+  let mut acc: Int = 0;
+  let mut i: Int = 0;
+  while i < len {
+    let c: Int = string_byte_at(text, i);
+    acc = acc * 10 + (c - 48);
+    i = i + 1;
+  }
+  return acc;
+}
+
+// Execution state. The locals stack is two parallel arrays; `base` is the
+// current frame's floor (lookups never cross below it) and `count` is the
+// logical stack height (block-scoped lets pop back to a saved count).
+struct Exec {
+  mir: Mir,
+  vals: Values,
+  lnames: StringArray,
+  lhandles: IntArray,
+  base: Int,
+  count: Int,
+  signal: Int,    // 0 normal, 1 break, 2 continue, 3 return
+  retval: Int,    // handle when signal==3, else -1
+}
+
+struct EvalResult {
+  ex: Exec,
+  h: Int,
+}
+
+// Find the slot of `name`, scanning the current frame top-down to `base`.
+// Returns -1 on miss (typecheck guarantees valid programs never miss).
+fn local_slot(ex: Exec, name: String) -> Int {
+  let mut i: Int = ex.count - 1;
+  while i >= ex.base {
+    if ex.lnames[i] == name {
+      return i;
+    }
+    i = i - 1;
+  }
+  return 0 - 1;
+}
+
+// Push (name, handle) at the logical top of the stack, extending the parallel
+// arrays only when the stack has actually grown past their physical length.
+fn local_push(ex: Exec, name: String, handle: Int) -> Exec {
+  let mut e: Exec = ex;
+  if e.count < e.lnames.len {
+    let mut names: StringArray = e.lnames;
+    let mut handles: IntArray = e.lhandles;
+    names[e.count] = name;
+    handles[e.count] = handle;
+    e.lnames = names;
+    e.lhandles = handles;
+  } else {
+    e.lnames = string_array_push(e.lnames, name);
+    e.lhandles = int_array_push(e.lhandles, handle);
+  }
+  e.count = e.count + 1;
+  return e;
+}
+
+// Overwrite the handle stored in an existing slot (Store to a Local place).
+fn local_set(ex: Exec, slot: Int, handle: Int) -> Exec {
+  let mut e: Exec = ex;
+  let mut handles: IntArray = e.lhandles;
+  handles[slot] = handle;
+  e.lhandles = handles;
+  return e;
+}
+
+// Find the function row whose name matches (mf_name).
+fn fn_row(mir: Mir, name: String) -> Int {
+  let mut i: Int = 0;
+  while i < mir.mf_name.len {
+    if mir.mf_name[i] == name {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+fn ev_expr(ex: Exec, node: Int) -> EvalResult {
+  let kind: Int = ex.mir.me_kind[node];
+  if kind == mir_load_expr() {
+    let slot: Int = local_slot(ex, ex.mir.me_text[node]);
+    return EvalResult { ex: ex, h: ex.lhandles[slot] };
+  }
+  if kind == mir_int_expr() {
+    let n: Int = decimal_to_int(ex.mir.me_text[node]);
+    let r: ValuesH = vmake_int(ex.vals, n);
+    let mut e: Exec = ex;
+    e.vals = r.vals;
+    return EvalResult { ex: e, h: r.h };
+  }
+  if kind == mir_bool_expr() {
+    let mut flag: Int = 0;
+    if ex.mir.me_text[node] == "true" {
+      flag = 1;
+    }
+    let r: ValuesH = vmake_bool(ex.vals, flag);
+    let mut e: Exec = ex;
+    e.vals = r.vals;
+    return EvalResult { ex: e, h: r.h };
+  }
+  if kind == mir_unary_expr() {
+    let op: String = ex.mir.me_text[node];
+    let operand: EvalResult = ev_expr(ex, ex.mir.me_a[node]);
+    let mut e: Exec = operand.ex;
+    if op == "not" {
+      let mut flag: Int = 1;
+      if e.vals.intval[operand.h] == 1 {
+        flag = 0;
+      }
+      let r: ValuesH = vmake_bool(e.vals, flag);
+      e.vals = r.vals;
+      return EvalResult { ex: e, h: r.h };
+    }
+    if op == "neg" {
+      let r: ValuesH = vmake_int(e.vals, 0 - e.vals.intval[operand.h]);
+      e.vals = r.vals;
+      return EvalResult { ex: e, h: r.h };
+    }
+    // bit_not
+    let r: ValuesH = vmake_int(e.vals, ~e.vals.intval[operand.h]);
+    e.vals = r.vals;
+    return EvalResult { ex: e, h: r.h };
+  }
+  if kind == mir_binary_expr() {
+    let op: String = ex.mir.me_text[node];
+    // Short-circuit boolean operators: only the left operand is guaranteed to
+    // be evaluated.
+    if op == "and" {
+      let left: EvalResult = ev_expr(ex, ex.mir.me_a[node]);
+      let mut e: Exec = left.ex;
+      if e.vals.intval[left.h] == 0 {
+        let r: ValuesH = vmake_bool(e.vals, 0);
+        e.vals = r.vals;
+        return EvalResult { ex: e, h: r.h };
+      }
+      let right: EvalResult = ev_expr(e, ex.mir.me_b[node]);
+      let mut e2: Exec = right.ex;
+      let r2: ValuesH = vmake_bool(e2.vals, e2.vals.intval[right.h]);
+      e2.vals = r2.vals;
+      return EvalResult { ex: e2, h: r2.h };
+    }
+    if op == "or" {
+      let left: EvalResult = ev_expr(ex, ex.mir.me_a[node]);
+      let mut e: Exec = left.ex;
+      if e.vals.intval[left.h] == 1 {
+        let r: ValuesH = vmake_bool(e.vals, 1);
+        e.vals = r.vals;
+        return EvalResult { ex: e, h: r.h };
+      }
+      let right: EvalResult = ev_expr(e, ex.mir.me_b[node]);
+      let mut e2: Exec = right.ex;
+      let r2: ValuesH = vmake_bool(e2.vals, e2.vals.intval[right.h]);
+      e2.vals = r2.vals;
+      return EvalResult { ex: e2, h: r2.h };
+    }
+    // All remaining operators evaluate left then right.
+    let left: EvalResult = ev_expr(ex, ex.mir.me_a[node]);
+    let right: EvalResult = ev_expr(left.ex, ex.mir.me_b[node]);
+    let mut e: Exec = right.ex;
+    let lh: Int = left.h;
+    let rh: Int = right.h;
+    if op == "eq" {
+      let mut flag: Int = 0;
+      if value_equal(e.vals, lh, rh) {
+        flag = 1;
+      }
+      let r: ValuesH = vmake_bool(e.vals, flag);
+      e.vals = r.vals;
+      return EvalResult { ex: e, h: r.h };
+    }
+    if op == "not_eq" {
+      let mut flag: Int = 1;
+      if value_equal(e.vals, lh, rh) {
+        flag = 0;
+      }
+      let r: ValuesH = vmake_bool(e.vals, flag);
+      e.vals = r.vals;
+      return EvalResult { ex: e, h: r.h };
+    }
+    let lv: Int = e.vals.intval[lh];
+    let rv: Int = e.vals.intval[rh];
+    // Integer comparisons -> Bool.
+    if op == "lt" {
+      let mut flag: Int = 0;
+      if lv < rv { flag = 1; }
+      let r: ValuesH = vmake_bool(e.vals, flag);
+      e.vals = r.vals;
+      return EvalResult { ex: e, h: r.h };
+    }
+    if op == "lte" {
+      let mut flag: Int = 0;
+      if lv <= rv { flag = 1; }
+      let r: ValuesH = vmake_bool(e.vals, flag);
+      e.vals = r.vals;
+      return EvalResult { ex: e, h: r.h };
+    }
+    if op == "gt" {
+      let mut flag: Int = 0;
+      if lv > rv { flag = 1; }
+      let r: ValuesH = vmake_bool(e.vals, flag);
+      e.vals = r.vals;
+      return EvalResult { ex: e, h: r.h };
+    }
+    if op == "gte" {
+      let mut flag: Int = 0;
+      if lv >= rv { flag = 1; }
+      let r: ValuesH = vmake_bool(e.vals, flag);
+      e.vals = r.vals;
+      return EvalResult { ex: e, h: r.h };
+    }
+    // Integer arithmetic / bitwise -> Int.
+    let mut out: Int = 0;
+    if op == "add" { out = lv + rv; }
+    if op == "sub" { out = lv - rv; }
+    if op == "mul" { out = lv * rv; }
+    if op == "div" { out = lv / rv; }
+    if op == "mod" { out = lv % rv; }
+    if op == "bit_and" { out = lv & rv; }
+    if op == "bit_or" { out = lv | rv; }
+    if op == "bit_xor" { out = lv ^ rv; }
+    let r: ValuesH = vmake_int(e.vals, out);
+    e.vals = r.vals;
+    return EvalResult { ex: e, h: r.h };
+  }
+  if kind == mir_call_expr() {
+    let callee: String = ex.mir.me_text[node];
+    let arg_start: Int = ex.mir.me_a[node];
+    let arg_count: Int = ex.mir.me_b[node];
+    // Evaluate the arguments in the CALLER frame first.
+    let mut e: Exec = ex;
+    let mut argh: IntArray = int_array_empty();
+    let mut i: Int = 0;
+    while i < arg_count {
+      let r: EvalResult = ev_expr(e, e.mir.mchild_list[arg_start + i]);
+      e = r.ex;
+      argh = int_array_push(argh, r.h);
+      i = i + 1;
+    }
+    // Switch into a fresh frame: save the caller's base/count, set base to the
+    // current top so the callee can never see caller locals.
+    let row: Int = fn_row(e.mir, callee);
+    let pstart: Int = e.mir.mf_param_start[row];
+    let pcount: Int = e.mir.mf_param_count[row];
+    let base0: Int = e.base;
+    let count0: Int = e.count;
+    e.base = e.count;
+    let mut pi: Int = 0;
+    while pi < pcount {
+      e = local_push(e, e.mir.mp_name[pstart + pi], argh[pi]);
+      pi = pi + 1;
+    }
+    e = ev_block(e, e.mir.mf_body_start[row], e.mir.mf_body_count[row]);
+    let mut result: Int = 0 - 1;
+    if e.signal == 3 {
+      result = e.retval;
+    } else {
+      let u: ValuesH = vmake_unit(e.vals);
+      e.vals = u.vals;
+      result = u.h;
+    }
+    // Restore the caller frame.
+    e.base = base0;
+    e.count = count0;
+    e.signal = 0;
+    e.retval = 0 - 1;
+    return EvalResult { ex: e, h: result };
+  }
+  // string / enum / struct / field / array / index reserved for slice 2/3.
+  let u: ValuesH = vmake_unit(ex.vals);
+  let mut e: Exec = ex;
+  e.vals = u.vals;
+  return EvalResult { ex: e, h: u.h };
+}
+
+fn ev_block(ex: Exec, start: Int, count: Int) -> Exec {
+  let mut e: Exec = ex;
+  let saved: Int = e.count;
+  let mut i: Int = 0;
+  while i < count {
+    if e.signal != 0 {
+      i = count;
+    } else {
+      e = ev_stmt(e, e.mir.mblock_list[start + i]);
+      i = i + 1;
+    }
+  }
+  // Block-scoped lets fall out of scope when the block exits (short-circuit or
+  // not). The slots stay physically allocated; only the logical height resets.
+  e.count = saved;
+  return e;
+}
+
+fn ev_stmt(ex: Exec, index: Int) -> Exec {
+  let kind: Int = ex.mir.ms_kind[index];
+  if kind == mir_local_stmt() {
+    let r: EvalResult = ev_expr(ex, ex.mir.ms_expr[index]);
+    let mut e: Exec = r.ex;
+    e = local_push(e, e.mir.ms_name[index], r.h);
+    e.signal = 0;
+    return e;
+  }
+  if kind == mir_store_stmt() {
+    let r: EvalResult = ev_expr(ex, ex.mir.ms_expr[index]);
+    let mut e: Exec = r.ex;
+    // Slice 1 places are always Local; field/index reserved for slice 2.
+    let place: Int = e.mir.ms_place[index];
+    let root: String = e.mir.mpl_name[place];
+    let slot: Int = local_slot(e, root);
+    e = local_set(e, slot, r.h);
+    e.signal = 0;
+    return e;
+  }
+  if kind == mir_if_stmt() {
+    let cond: EvalResult = ev_expr(ex, ex.mir.ms_expr[index]);
+    let mut e: Exec = cond.ex;
+    if e.vals.intval[cond.h] == 1 {
+      e = ev_block(e, e.mir.ms_then_start[index], e.mir.ms_then_count[index]);
+    } else {
+      e = ev_block(e, e.mir.ms_else_start[index], e.mir.ms_else_count[index]);
+    }
+    return e;
+  }
+  if kind == mir_while_stmt() {
+    let mut e: Exec = ex;
+    let mut looping: Int = 1;
+    while looping == 1 {
+      let cond: EvalResult = ev_expr(e, e.mir.ms_expr[index]);
+      e = cond.ex;
+      if e.vals.intval[cond.h] == 0 {
+        looping = 0;
+      } else {
+        e = ev_block(e, e.mir.ms_then_start[index], e.mir.ms_then_count[index]);
+        if e.signal == 1 {
+          e.signal = 0;
+          looping = 0;
+        } else {
+          if e.signal == 2 {
+            e.signal = 0;
+          } else {
+            if e.signal == 3 {
+              looping = 0;
+            }
+          }
+        }
+      }
+    }
+    return e;
+  }
+  if kind == mir_for_range_stmt() {
+    let startr: EvalResult = ev_expr(ex, ex.mir.ms_expr[index]);
+    let mut e: Exec = startr.ex;
+    let endr: EvalResult = ev_expr(e, e.mir.ms_expr2[index]);
+    e = endr.ex;
+    let lo: Int = e.vals.intval[startr.h];
+    let hi: Int = e.vals.intval[endr.h];
+    let binding: String = e.mir.ms_name[index];
+    let mut i: Int = lo;
+    let mut looping: Int = 1;
+    while looping == 1 {
+      if i >= hi {
+        looping = 0;
+      } else {
+        let saved: Int = e.count;
+        let iv: ValuesH = vmake_int(e.vals, i);
+        e.vals = iv.vals;
+        e = local_push(e, binding, iv.h);
+        e = ev_block(e, e.mir.ms_then_start[index], e.mir.ms_then_count[index]);
+        e.count = saved;
+        if e.signal == 1 {
+          e.signal = 0;
+          looping = 0;
+        } else {
+          if e.signal == 2 {
+            e.signal = 0;
+          } else {
+            if e.signal == 3 {
+              looping = 0;
+            }
+          }
+        }
+        i = i + 1;
+      }
+    }
+    return e;
+  }
+  if kind == mir_for_c_stmt() {
+    let mut e: Exec = ex;
+    let saved: Int = e.count;
+    // The init binding stays live on the stack across all iterations.
+    e = ev_stmt(e, e.mir.ms_init[index]);
+    e.signal = 0;
+    let mut looping: Int = 1;
+    while looping == 1 {
+      let cond: EvalResult = ev_expr(e, e.mir.ms_expr[index]);
+      e = cond.ex;
+      if e.vals.intval[cond.h] == 0 {
+        looping = 0;
+      } else {
+        e = ev_block(e, e.mir.ms_then_start[index], e.mir.ms_then_count[index]);
+        if e.signal == 1 {
+          e.signal = 0;
+          looping = 0;
+        } else {
+          if e.signal == 3 {
+            looping = 0;
+          } else {
+            // normal or continue: both fall through to the step.
+            e.signal = 0;
+            e = ev_stmt(e, e.mir.ms_step[index]);
+            e.signal = 0;
+          }
+        }
+      }
+    }
+    e.count = saved;
+    return e;
+  }
+  if kind == mir_return_stmt() {
+    let mut e: Exec = ex;
+    if e.mir.ms_expr[index] >= 0 {
+      let r: EvalResult = ev_expr(e, e.mir.ms_expr[index]);
+      e = r.ex;
+      e.retval = r.h;
+    } else {
+      let u: ValuesH = vmake_unit(e.vals);
+      e.vals = u.vals;
+      e.retval = u.h;
+    }
+    e.signal = 3;
+    return e;
+  }
+  if kind == mir_break_stmt() {
+    let mut e: Exec = ex;
+    e.signal = 1;
+    return e;
+  }
+  if kind == mir_continue_stmt() {
+    let mut e: Exec = ex;
+    e.signal = 2;
+    return e;
+  }
+  if kind == mir_drop_stmt() {
+    let r: EvalResult = ev_expr(ex, ex.mir.ms_expr[index]);
+    let mut e: Exec = r.ex;
+    e.signal = 0;
+    return e;
+  }
+  // for_in / match reserved for slice 2/3.
+  let mut e: Exec = ex;
+  e.signal = 0;
+  return e;
+}
+
+// Build the MIR (including std external enums, matching run_source's pipeline)
+// and evaluate `main()`, returning the result value's string.
+export fn run_main_via_arena(source: String) -> String {
+  let kinds: IntArray = lex_kinds(source);
+  let texts: StringArray = lex_texts(source);
+  let mut start_arena: Arena = arena_empty();
+  start_arena.token_start = lex_starts(source);
+  let parsed: ParseResult = parse_module(start_arena, kinds, texts, 0);
+  let arena: Arena = parsed.arena;
+  let mut has_std_core: Bool = false;
+  let mut has_std_io: Bool = false;
+  let mut si: Int = 0;
+  while si < arena.item_kind.len {
+    if arena.item_kind[si] == item_import() {
+      let path: String = arena.import_path[arena.item_ref[si]];
+      if path == "std.core" {
+        has_std_core = true;
+      }
+      if path == "std.io" {
+        has_std_io = true;
+      }
+    }
+    si = si + 1;
+  }
+  let enums: EnumTable = enum_table_build(arena, has_std_core, has_std_io);
+  let mut mir: Mir = mir_empty();
+  mir = mir_enum_dump_table(arena, mir, has_std_core, has_std_io);
+  mir = lower_module(arena, enums, mir);
+
+  let main_row: Int = fn_row(mir, "main");
+  let mut ex: Exec = Exec {
+    mir: mir,
+    vals: values_empty(),
+    lnames: string_array_empty(),
+    lhandles: int_array_empty(),
+    base: 0,
+    count: 0,
+    signal: 0,
+    retval: 0 - 1,
+  };
+  ex = ev_block(ex, ex.mir.mf_body_start[main_row], ex.mir.mf_body_count[main_row]);
+  let mut result: Int = 0 - 1;
+  if ex.signal == 3 {
+    result = ex.retval;
+  } else {
+    let u: ValuesH = vmake_unit(ex.vals);
+    ex.vals = u.vals;
+    result = u.h;
+  }
+  return value_to_string(ex.vals, result);
+}

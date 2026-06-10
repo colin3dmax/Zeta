@@ -1,0 +1,12 @@
+// Negation interleaved with bitwise operators: checks unary neg / bit_not and
+// the full set of binary bitwise ops together with two's-complement values.
+fn main() -> Int {
+  let a: Int = -5;          // neg
+  let b: Int = ~a;          // ~(-5) = 4
+  let c: Int = a & 12;      // -5 & 12 = 8
+  let d: Int = a | 2;       // -5 | 2 = -5
+  let e: Int = a ^ 3;       // -5 ^ 3 = -8
+  let f: Int = -(b + c);    // -(4 + 8) = -12
+  // 4 + 8 + (-5) + (-8) + (-12) = -13
+  return b + c + d + e + f;
+}
