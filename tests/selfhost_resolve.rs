@@ -1,8 +1,9 @@
-// M3 self-hosting vertical slice #1: a minimal name resolver written in Zeta
+// M3 self-hosting vertical slice #1/#2: a minimal name resolver written in Zeta
 // (testdata/selfhost/arena_frontend.zeta, `resolve_report`) consumes the arena
-// AST and reports every "unknown name reference" (RESOLVE_UNKNOWN_NAME). Its
-// report text must match the Rust resolver's RESOLVE_UNKNOWN_NAME diagnostics,
-// in AST-visit order.
+// AST and reports three resolver diagnostics — unknown name references
+// (RESOLVE_UNKNOWN_NAME), unknown function calls (RESOLVE_UNKNOWN_FUNCTION), and
+// duplicate local definitions (RESOLVE_DUPLICATE_LOCAL). Its report text must
+// match the Rust resolver's diagnostics for those three codes, in emit order.
 //
 // Each case runs a tiny Zeta caller app that imports the frontend module and
 // calls `resolve_report(<source>)`, then asserts the returned string equals the
@@ -59,20 +60,25 @@ fn main() -> String {{
     value.to_string()
 }
 
-/// Oracle: run the Rust resolver, keep only RESOLVE_UNKNOWN_NAME diagnostics in
-/// the order they were emitted, extract the name from each message
-/// (`unknown name `X` in ...`), and format them identically to the Zeta report.
+/// Oracle: run the Rust resolver, keep the three resolver diagnostics this slice
+/// reproduces (RESOLVE_UNKNOWN_NAME, RESOLVE_UNKNOWN_FUNCTION,
+/// RESOLVE_DUPLICATE_LOCAL) in the exact order they were emitted, extract the
+/// backtick-quoted name/callee from each message, and format them identically to
+/// the Zeta report.
 fn oracle_report(program_source: &str) -> String {
     let module = zeta::parse_source(program_source).expect("oracle parse should succeed");
     let mut out = String::new();
     if let Err(diagnostics) = zeta::resolver::resolve(&module) {
         for diagnostic in diagnostics {
-            if diagnostic.code != "RESOLVE_UNKNOWN_NAME" {
-                continue;
-            }
-            let name = extract_unknown_name(&diagnostic.message)
-                .expect("RESOLVE_UNKNOWN_NAME message should contain a backtick-quoted name");
-            out.push_str("RESOLVE_UNKNOWN_NAME name=");
+            let label = match diagnostic.code {
+                "RESOLVE_UNKNOWN_NAME" => "RESOLVE_UNKNOWN_NAME name=",
+                "RESOLVE_UNKNOWN_FUNCTION" => "RESOLVE_UNKNOWN_FUNCTION name=",
+                "RESOLVE_DUPLICATE_LOCAL" => "RESOLVE_DUPLICATE_LOCAL name=",
+                _ => continue,
+            };
+            let name = extract_backtick_name(&diagnostic.message)
+                .expect("resolver message should contain a backtick-quoted name");
+            out.push_str(label);
             out.push_str(name);
             out.push('\n');
         }
@@ -80,8 +86,11 @@ fn oracle_report(program_source: &str) -> String {
     out
 }
 
-/// Pull `X` out of a message of the form: unknown name `X` in function `fn`.
-fn extract_unknown_name(message: &str) -> Option<&str> {
+/// Pull `X` out of the first backtick pair in a message, e.g.
+///   unknown name `X` in function `fn`
+///   unknown function `a.b.f` in function `fn`
+///   duplicate local `X` in function `fn`
+fn extract_backtick_name(message: &str) -> Option<&str> {
     let start = message.find('`')? + 1;
     let rest = &message[start..];
     let end = rest.find('`')?;
@@ -234,5 +243,143 @@ fn resolve_matches_oracle_on_nested_scope_kitchen_sink() {
     // c(let init), e(in-if), then d/i/g all out-of-block at the tail → 5 unknowns in order.
     assert_matches_oracle(
         "fn f(a: Int) -> Int { let b: Int = a + c; if a < b { let d: Int = a; return d + e; } for i in 0..b { let g: Int = i; } return d + i + g; }",
+    );
+}
+
+// --- slice #2: RESOLVE_UNKNOWN_FUNCTION ------------------------------------
+
+#[test]
+fn resolve_call_undefined_function_reported() {
+    assert_matches_oracle("fn f() -> Int { return g(); }");
+}
+
+#[test]
+fn resolve_call_defined_top_level_fn_ok() {
+    // `g` is a top-level function → its call is not an unknown function.
+    assert_matches_oracle("fn g() -> Int { return 0; } fn f() -> Int { return g(); }");
+}
+
+#[test]
+fn resolve_call_qualified_path_is_unknown_function() {
+    // A dotted callee that is not an enum-variant call → unknown function
+    // (the path itself is reported, e.g. `demo.util.compute`).
+    assert_matches_oracle("fn f() -> Int { return demo.util.compute(); }");
+}
+
+#[test]
+fn resolve_call_local_variable_as_callee_is_unknown_function() {
+    // A local used as a callee is still an unknown function (locals are not
+    // consulted for the call set), so `g` is reported.
+    assert_matches_oracle("fn f() -> Int { let g: Int = 0; return g(); }");
+}
+
+#[test]
+fn resolve_enum_variant_call_is_not_unknown_function() {
+    // `Sh.Box` is an enum-variant call → not reported as an unknown function.
+    assert_matches_oracle(
+        "enum Sh { Box, Circle } fn f() -> Int { let x: Sh = Sh.Box(); return 0; }",
+    );
+}
+
+#[test]
+fn resolve_unknown_function_then_args_order() {
+    // Callee `g` is reported before its argument `arg` is checked.
+    assert_matches_oracle("fn f() -> Int { return g(arg); }");
+}
+
+// --- slice #2: RESOLVE_DUPLICATE_LOCAL -------------------------------------
+
+#[test]
+fn resolve_duplicate_two_lets_same_block() {
+    assert_matches_oracle("fn f() -> Int { let x: Int = 1; let x: Int = 2; return x; }");
+}
+
+#[test]
+fn resolve_duplicate_param_and_let() {
+    assert_matches_oracle("fn f(x: Int) -> Int { let x: Int = 1; return x; }");
+}
+
+#[test]
+fn resolve_duplicate_two_params() {
+    assert_matches_oracle("fn f(x: Int, x: Int) -> Int { return x; }");
+}
+
+#[test]
+fn resolve_inner_block_let_shadowing_outer_let_is_duplicate() {
+    // Counterintuitive: shadowing an outer `let` from a nested block reports a
+    // duplicate (the Rust resolver clones the locals map into the block).
+    assert_matches_oracle(
+        "fn f(c: Bool) -> Int { let x: Int = 1; if c { let x: Int = 2; } return x; }",
+    );
+}
+
+#[test]
+fn resolve_sibling_blocks_same_let_name_not_duplicate() {
+    // Two sibling blocks each declaring `x` are independent → no duplicate.
+    assert_matches_oracle(
+        "fn f(c: Bool) -> Int { if c { let x: Int = 1; } if c { let x: Int = 2; } return 0; }",
+    );
+}
+
+#[test]
+fn resolve_for_binding_then_let_same_name_is_duplicate() {
+    // The for body's `let i` collides with the loop binding `i` → duplicate.
+    assert_matches_oracle(
+        "fn f() -> Int { for i in 0..3 { let i: Int = 1; } return 0; }",
+    );
+}
+
+#[test]
+fn resolve_for_binding_shadowing_outer_local_not_duplicate() {
+    // A for binding shadowing an outer local is inserted unconditionally → no
+    // duplicate (only a body `let` of the same name would collide).
+    assert_matches_oracle(
+        "fn f(i: Int) -> Int { for i in 0..3 { return i; } return 0; }",
+    );
+}
+
+#[test]
+fn resolve_match_binding_then_let_same_name_is_duplicate() {
+    assert_matches_oracle(
+        "fn f(v: Int) -> Int { match v { n -> { let n: Int = 1; } } return 0; }",
+    );
+}
+
+#[test]
+fn resolve_match_binding_shadowing_outer_local_not_duplicate() {
+    assert_matches_oracle(
+        "fn f(n: Int) -> Int { match n { n -> { return n; } } return 0; }",
+    );
+}
+
+#[test]
+fn resolve_for_c_init_shadowing_outer_local_is_duplicate() {
+    // The C-for init is a `let`, so it shadowing an outer `i` reports a duplicate
+    // (unlike a plain for-in binding).
+    assert_matches_oracle(
+        "fn f(i: Int) -> Int { for (let mut i: Int = 0; i < 3; i = i + 1) { return i; } return 0; }",
+    );
+}
+
+// --- slice #2: all three codes mixed, order preserved ----------------------
+
+#[test]
+fn resolve_three_codes_mixed_in_order() {
+    // Expected emit order:
+    //   UNKNOWN_NAME miss      (first let initializer)
+    //   UNKNOWN_FUNCTION g     (second let: callee checked before args)
+    //   UNKNOWN_NAME arg       (call argument)
+    //   DUPLICATE_LOCAL x      (second `let x` after its initializer resolves)
+    assert_matches_oracle(
+        "fn f() -> Int { let x: Int = miss; let x: Int = g(arg); return x; }",
+    );
+}
+
+#[test]
+fn resolve_matches_oracle_on_three_code_reversal_kitchen_sink() {
+    // dup param x; unknown name; unknown fn; dup let a; for-in shadow (NOT dup);
+    // C-for init shadow (DUP) — the for-in vs for-C asymmetry, all vs oracle.
+    assert_matches_oracle(
+        "fn helper() -> Int { return 0; } fn f(x: Int, x: Int) -> Int { let a: Int = ghostVar; let b: Int = ghostFn(); let a: Int = 2; for x in [1, 2] { let c: Int = helper(); } for (let mut x: Int = 0; x < 1; x = x + 1) { let d: Int = a; } return helper(); }",
     );
 }

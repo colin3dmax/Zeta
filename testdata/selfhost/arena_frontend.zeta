@@ -2429,6 +2429,11 @@ struct ResolveState {
   arena: Arena,
   top: StringArray,
   top_count: Int,
+  // Top-level function names only (a subset of `top`). A call callee is "known"
+  // when it is in this set; otherwise it is RESOLVE_UNKNOWN_FUNCTION unless it is
+  // an enum-variant call (see is_enum_variant_call).
+  fns: StringArray,
+  fn_count: Int,
   locals: StringArray,
   count: Int,
   report: String,
@@ -2444,6 +2449,9 @@ export fn resolve_report(source: String) -> String {
   // make a bare reference to them legal.
   let mut top: StringArray = string_array_empty();
   let mut top_count: Int = 0;
+  // Function names only — the callee set consulted for RESOLVE_UNKNOWN_FUNCTION.
+  let mut fns: StringArray = string_array_empty();
+  let mut fn_count: Int = 0;
   let mut ii: Int = 0;
   while ii < arena.item_kind.len {
     let kind: Int = arena.item_kind[ii];
@@ -2459,6 +2467,8 @@ export fn resolve_report(source: String) -> String {
     if kind == item_function() {
       top = string_array_push(top, arena.fn_name[ref]);
       top_count = top_count + 1;
+      fns = string_array_push(fns, arena.fn_name[ref]);
+      fn_count = fn_count + 1;
     }
     ii = ii + 1;
   }
@@ -2468,7 +2478,7 @@ export fn resolve_report(source: String) -> String {
   while fi < arena.item_kind.len {
     if arena.item_kind[fi] == item_function() {
       let ref: Int = arena.item_ref[fi];
-      report = resolve_function(arena, top, top_count, ref, report);
+      report = resolve_function(arena, top, top_count, fns, fn_count, ref, report);
     }
     fi = fi + 1;
   }
@@ -2476,26 +2486,27 @@ export fn resolve_report(source: String) -> String {
 }
 
 // Resolve one function: seed locals with its parameters, then walk the body.
-fn resolve_function(arena: Arena, top: StringArray, top_count: Int, ref: Int, report: String) -> String {
-  let mut locals: StringArray = string_array_empty();
-  let mut count: Int = 0;
+fn resolve_function(arena: Arena, top: StringArray, top_count: Int, fns: StringArray, fn_count: Int, ref: Int, report: String) -> String {
+  let mut state: ResolveState = ResolveState {
+    arena: arena,
+    top: top,
+    top_count: top_count,
+    fns: fns,
+    fn_count: fn_count,
+    locals: string_array_empty(),
+    count: 0,
+    report: report,
+    fn_name: arena.fn_name[ref],
+  };
+  // Bind parameters through bind_local so a repeated parameter name reports
+  // RESOLVE_DUPLICATE_LOCAL, exactly like the Rust resolver's param loop.
   let pstart: Int = arena.fn_param_start[ref];
   let pcount: Int = arena.fn_param_count[ref];
   let mut pi: Int = 0;
   while pi < pcount {
-    locals = string_array_push(locals, arena.param_name[pstart + pi]);
-    count = count + 1;
+    state = bind_local(state, arena.param_name[pstart + pi]);
     pi = pi + 1;
   }
-  let state: ResolveState = ResolveState {
-    arena: arena,
-    top: top,
-    top_count: top_count,
-    locals: locals,
-    count: count,
-    report: report,
-    fn_name: arena.fn_name[ref],
-  };
   let after: ResolveState = resolve_block(state, arena.fn_body_start[ref], arena.fn_body_count[ref]);
   return after.report;
 }
@@ -2526,7 +2537,40 @@ fn top_in_scope(state: ResolveState, name: String) -> Bool {
 }
 
 // Push a binding onto the scope stack, bumping the logical length.
+//
+// Duplicate-local semantics (RESOLVE_DUPLICATE_LOCAL): the Rust resolver keeps a
+// single per-function `locals` map that is *cloned* on entry to every nested
+// block. A `let`/param binding reports a duplicate when `insert` finds the name
+// already present in that (possibly inherited) map. Our logical stack reproduces
+// this exactly: a name is "already present" iff it is visible in the current
+// scope (params + enclosing-block lets/bindings + earlier lets in this block) —
+// i.e. iff `local_in_scope` is true at the moment of binding. Consequences,
+// verified against the oracle:
+//   * two `let x` in one block -> duplicate (second sees the first).
+//   * param + `let` same name -> duplicate.
+//   * inner-block `let x` shadowing an outer `let x` -> duplicate (the clone
+//     carries the outer binding; this is the counterintuitive case).
+//   * sibling blocks each with `let x` -> NOT a duplicate (the first block's
+//     binding sits past the restored `count`, invisible to the second).
+//   * for/match binding then same-name `let` in the body -> duplicate (caught
+//     when the body's `let` runs, not when the loop/arm binding is introduced).
+// for/match bindings themselves NEVER report — the Rust resolver inserts them
+// unconditionally (a for/match binding shadowing an outer local is fine). Those
+// callers use bind_local_silent below; only `let` and parameters use bind_local.
+// (The C-for init is a `let` statement and so DOES go through bind_local, which
+// is why `for (let mut i ...)` shadowing an outer `i` reports while `for i`
+// shadowing it does not — matching the oracle exactly.)
 fn bind_local(state: ResolveState, name: String) -> ResolveState {
+  let mut s: ResolveState = state;
+  if local_in_scope(s, name) {
+    s = report_duplicate_local(s, name);
+  }
+  return bind_local_silent(s, name);
+}
+
+// Push a binding without ever reporting a duplicate. Used for for/match bindings
+// (Rust inserts these unconditionally). Same logical-stack write as bind_local.
+fn bind_local_silent(state: ResolveState, name: String) -> ResolveState {
   let mut s: ResolveState = state;
   // locals 是逻辑栈:写到逻辑位置 count(覆盖上一个块退出后残留、当前不可见的条目),
   // 仅当逻辑长度已达物理末尾时才真正扩展数组。否则残留条目会落在 count 之后,
@@ -2548,6 +2592,78 @@ fn report_unknown(state: ResolveState, name: String) -> ResolveState {
   s.report = string_concat(s.report, name);
   s.report = string_concat(s.report, "\n");
   return s;
+}
+
+// Append one unknown-function diagnostic line (callee = the dotted path string).
+fn report_unknown_function(state: ResolveState, callee: String) -> ResolveState {
+  let mut s: ResolveState = state;
+  s.report = string_concat(s.report, "RESOLVE_UNKNOWN_FUNCTION name=");
+  s.report = string_concat(s.report, callee);
+  s.report = string_concat(s.report, "\n");
+  return s;
+}
+
+// Append one duplicate-local diagnostic line.
+fn report_duplicate_local(state: ResolveState, name: String) -> ResolveState {
+  let mut s: ResolveState = state;
+  s.report = string_concat(s.report, "RESOLVE_DUPLICATE_LOCAL name=");
+  s.report = string_concat(s.report, name);
+  s.report = string_concat(s.report, "\n");
+  return s;
+}
+
+// Is `callee` an enum-variant call, i.e. `Enum.Variant` where `Enum` is a
+// (user-defined) enum and `Variant` is one of its variants? Mirrors the Rust
+// resolver's is_enum_variant_call: split at the LAST '.', then check the table.
+// (Standard-library enum variants like Option/Result are out of this slice and
+// are deliberately not exercised by the corpus.)
+fn is_enum_variant_call(arena: Arena, callee: String) -> Bool {
+  let len: Int = string_len(callee);
+  // find the last '.' (byte 46)
+  let mut dot: Int = 0 - 1;
+  let mut i: Int = len - 1;
+  while i >= 0 {
+    if string_byte_at(callee, i) == 46 {
+      dot = i;
+      i = 0 - 1;
+    } else {
+      i = i - 1;
+    }
+  }
+  if dot < 0 {
+    return false;
+  }
+  let enum_name: String = string_byte_slice(callee, 0, dot);
+  let variant: String = string_byte_slice(callee, dot + 1, len - 1 - dot);
+  // Scan the enum table for a matching enum name + variant.
+  let mut e: Int = 0;
+  while e < arena.enum_name.len {
+    if arena.enum_name[e] == enum_name {
+      let vstart: Int = arena.enum_variant_start[e];
+      let vcount: Int = arena.enum_variant_count[e];
+      let mut v: Int = 0;
+      while v < vcount {
+        if arena.variant_name[vstart + v] == variant {
+          return true;
+        }
+        v = v + 1;
+      }
+    }
+    e = e + 1;
+  }
+  return false;
+}
+
+// Is `callee` a known top-level function name?
+fn fn_in_scope(state: ResolveState, name: String) -> Bool {
+  let mut i: Int = 0;
+  while i < state.fn_count {
+    if state.fns[i] == name {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
 }
 
 // Resolve a contiguous run of statements (a block). Bindings introduced by the
@@ -2626,9 +2742,10 @@ fn resolve_stmt(state: ResolveState, index: Int) -> ResolveState {
   }
   if kind == for_in_stmt() {
     s = resolve_expr(s, arena.stmt_expr[index]);
-    // The loop binding is visible only inside the body.
+    // The loop binding is visible only inside the body. It is inserted
+    // unconditionally (no duplicate report even if it shadows an outer local).
     let saved: Int = s.count;
-    s = bind_local(s, arena.stmt_name[index]);
+    s = bind_local_silent(s, arena.stmt_name[index]);
     s = resolve_block(s, arena.stmt_then_start[index], arena.stmt_then_count[index]);
     s.count = saved;
     return s;
@@ -2654,7 +2771,7 @@ fn resolve_stmt(state: ResolveState, index: Int) -> ResolveState {
       let saved: Int = s.count;
       let binding: String = pattern_binding(arena.arm_pattern[astart + ai]);
       if binding != "" {
-        s = bind_local(s, binding);
+        s = bind_local_silent(s, binding);
       }
       s = resolve_block(s, arena.arm_body_start[astart + ai], arena.arm_body_count[astart + ai]);
       s.count = saved;
@@ -2742,9 +2859,16 @@ fn resolve_expr(state: ResolveState, node: Int) -> ResolveState {
     return s;
   }
   if kind == call_node() {
-    // The callee root is NOT a local name reference (an unknown callee is a
-    // separate RESOLVE_UNKNOWN_FUNCTION diagnostic, out of this slice). Only the
-    // arguments are resolved here.
+    // The callee is NOT a local name reference. It is RESOLVE_UNKNOWN_FUNCTION
+    // when it is neither a known top-level function nor an enum-variant call —
+    // mirroring the Rust resolver, which consults only the function set and the
+    // enum tables (locals are NOT considered, so a local used as a callee is
+    // still reported as an unknown function). The callee is checked BEFORE the
+    // arguments so the diagnostic order matches the oracle.
+    let callee: String = arena.node_text[node];
+    if !fn_in_scope(s, callee) && !is_enum_variant_call(arena, callee) {
+      s = report_unknown_function(s, callee);
+    }
     let start: Int = arena.node_a[node];
     let count: Int = arena.node_b[node];
     let mut i: Int = 0;
