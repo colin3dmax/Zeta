@@ -1,0 +1,27 @@
+fn classify_int(n: Int) -> Int {
+  match n {
+    7 -> { return 100; },
+    _ -> { return 200; },
+  }
+  return 0;
+}
+
+fn classify_bool(flag: Bool) -> Int {
+  match flag {
+    true -> { return 1; },
+    false -> { return 2; },
+  }
+  return 0;
+}
+
+fn classify_str(s: String) -> Int {
+  match s {
+    "zeta" -> { return 10; },
+    _ -> { return 20; },
+  }
+  return 0;
+}
+
+fn main() -> Int {
+  return classify_int(7) + classify_bool(false) + classify_str("zeta");
+}

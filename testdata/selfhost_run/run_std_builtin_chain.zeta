@@ -1,0 +1,7 @@
+import std.core;
+
+fn main() -> String {
+  let text: String = "zeta-lang";
+  let head: String = string_byte_slice(text, 0, 4);
+  return string_concat(string_concat(head, "="), int_to_string(string_len(text)));
+}

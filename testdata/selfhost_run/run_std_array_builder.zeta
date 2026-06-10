@@ -1,0 +1,9 @@
+import std.core;
+
+fn main() -> Int {
+  let mut xs: IntArray = int_array_empty();
+  xs = int_array_push(xs, 3);
+  xs = int_array_push(xs, 5);
+  xs = int_array_push(xs, 7);
+  return xs[0] + xs[2] + xs.len;
+}

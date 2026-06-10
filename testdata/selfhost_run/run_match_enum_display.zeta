@@ -1,0 +1,16 @@
+enum Shape {
+  Circle(Int),
+  Empty,
+}
+
+fn pick(flag: Bool) -> Shape {
+  match flag {
+    true -> { return Shape.Circle(5); },
+    false -> { return Shape.Empty; },
+  }
+  return Shape.Empty;
+}
+
+fn main() -> Shape {
+  return pick(true);
+}

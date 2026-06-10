@@ -1,0 +1,12 @@
+import std.core;
+import std.io;
+
+fn main() -> String {
+  let a: String = path_join("src/", "main.zeta");
+  let b: String = path_join("src", "/abs/path");
+  let c: String = path_join("", "solo");
+  let base: String = path_basename("a/b/c/");
+  return string_concat(string_concat(a, "|"),
+                       string_concat(string_concat(b, "|"),
+                                     string_concat(c, string_concat("|", base))));
+}

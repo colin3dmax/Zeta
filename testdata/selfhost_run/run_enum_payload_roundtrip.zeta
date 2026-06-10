@@ -1,0 +1,21 @@
+enum Option {
+  Some(Int),
+  None,
+}
+
+fn unwrap(value: Option) -> Int {
+  match value {
+    Option.Some(n) -> { return n; },
+    Option.None -> { return 0; },
+  }
+  return 0;
+}
+
+fn wrap(n: Int) -> Option {
+  return Option.Some(n);
+}
+
+fn main() -> Int {
+  let boxed: Option = wrap(41);
+  return unwrap(boxed) + 1;
+}

@@ -164,6 +164,53 @@ fn run_matches_oracle_on_for() {
     assert_runs(include_str!("../testdata/run_for.zeta"));
 }
 
+#[test]
+fn run_matches_oracle_on_struct() {
+    assert_runs(include_str!("../testdata/run_struct.zeta"));
+}
+
+// --- Slice-3 corpus: enum/match, string literals, std builtins, arrays. ---
+
+#[test]
+fn run_matches_oracle_on_enum() {
+    assert_runs(include_str!("../testdata/run_enum.zeta"));
+}
+
+#[test]
+fn run_matches_oracle_on_enum_payload() {
+    assert_runs(include_str!("../testdata/run_enum_payload.zeta"));
+}
+
+#[test]
+fn run_matches_oracle_on_match() {
+    assert_runs(include_str!("../testdata/run_match.zeta"));
+}
+
+#[test]
+fn run_matches_oracle_on_std_core() {
+    assert_runs(include_str!("../testdata/run_std_core.zeta"));
+}
+
+#[test]
+fn run_matches_oracle_on_string_scan() {
+    assert_runs(include_str!("../testdata/run_string_scan.zeta"));
+}
+
+#[test]
+fn run_matches_oracle_on_string_build() {
+    assert_runs(include_str!("../testdata/run_string_build.zeta"));
+}
+
+#[test]
+fn run_matches_oracle_on_io_path_diagnostic() {
+    assert_runs(include_str!("../testdata/run_io_path_diagnostic.zeta"));
+}
+
+#[test]
+fn run_matches_oracle_on_array_builder() {
+    assert_runs(include_str!("../testdata/run_array_builder.zeta"));
+}
+
 // --- Self-built slice-1 probes (testdata/selfhost_run/): recursion + call
 // frame isolation, nested loop control, multi-param chains, short-circuit,
 // negation/bitwise mix, deep nested loops. ---
@@ -181,7 +228,7 @@ fn zeta_paths(dir: &str) -> Vec<std::path::PathBuf> {
 #[test]
 fn run_matches_oracle_on_selfhost_run_probes() {
     let paths = zeta_paths("testdata/selfhost_run");
-    assert_eq!(paths.len(), 12, "expected 12 selfhost_run probes");
+    assert_eq!(paths.len(), 19, "expected 19 selfhost_run probes");
     let mut failures = Vec::new();
     for path in &paths {
         let source = std::fs::read_to_string(path).expect("probe source should read");

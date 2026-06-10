@@ -6221,6 +6221,38 @@ fn vmake_array(vals: Values, elem_handles: IntArray) -> ValuesH {
   return vpush(v, 5, 0, "", "", start, count);
 }
 
+// Build an Enum value: kind 4, text=ty, variant=variant, a=payload handle
+// (-1 = payload-less variant).
+fn vmake_enum(vals: Values, ty: String, variant: String, payload_h: Int) -> ValuesH {
+  return vpush(vals, 4, 0, ty, variant, payload_h, 0);
+}
+
+// Decode a raw double-quoted string token into its String value. The corpus
+// uses no escapes, but we still honor the lexer's escape contract for `\"`,
+// `\\` and a permissive `\<other>` (the backslash is dropped, the next byte is
+// emitted literally). KNOWN GAP: `\n`/`\t` would produce a literal `n`/`t`
+// here rather than a newline/tab — there is no byte->string primitive to emit
+// a control byte, and the run corpus never exercises these escapes.
+fn unquote_string(raw: String) -> String {
+  let len: Int = string_len(raw);
+  let mut out: String = "";
+  // Scan the interior bytes [1, len-1), skipping the surrounding quotes.
+  let mut i: Int = 1;
+  while i < len - 1 {
+    let c: Int = string_byte_at(raw, i);
+    if c == 92 {
+      // Backslash: emit the following byte literally (\" -> ", \\ -> \,
+      // \<other> -> <other>).
+      out = string_concat(out, string_byte_slice(raw, i + 1, 1));
+      i = i + 2;
+    } else {
+      out = string_concat(out, string_byte_slice(raw, i, 1));
+      i = i + 1;
+    }
+  }
+  return out;
+}
+
 // Lexicographic byte comparison: returns true iff `a` sorts strictly before
 // `b`. A shorter string that is a prefix of the longer sorts first.
 fn string_less(a: String, b: String) -> Bool {
@@ -6355,6 +6387,24 @@ fn value_equal(vals: Values, h1: Int, h2: Int) -> Bool {
     }
     return true;
   }
+  if kind == 4 {
+    // Enum: same ty + variant, and payloads both absent or both equal.
+    if vals.text[h1] != vals.text[h2] {
+      return false;
+    }
+    if vals.variant[h1] != vals.variant[h2] {
+      return false;
+    }
+    let p1: Int = vals.a[h1];
+    let p2: Int = vals.a[h2];
+    if p1 < 0 && p2 < 0 {
+      return true;
+    }
+    if p1 < 0 || p2 < 0 {
+      return false;
+    }
+    return value_equal(vals, p1, p2);
+  }
   return vals.intval[h1] == vals.intval[h2];
 }
 
@@ -6412,7 +6462,19 @@ fn value_to_string(vals: Values, h: Int) -> String {
     out = string_concat(out, "]");
     return out;
   }
-  // Enum: placeholder until slice 3.
+  if kind == 4 {
+    // `{ty}.{variant}` with an optional `({payload})` suffix.
+    let mut out: String = vals.text[h];
+    out = string_concat(out, ".");
+    out = string_concat(out, vals.variant[h]);
+    let payload: Int = vals.a[h];
+    if payload >= 0 {
+      out = string_concat(out, "(");
+      out = string_concat(out, value_to_string(vals, payload));
+      out = string_concat(out, ")");
+    }
+    return out;
+  }
   return "";
 }
 
@@ -6446,6 +6508,15 @@ struct Exec {
 struct EvalResult {
   ex: Exec,
   h: Int,
+}
+
+// Outcome of testing one match arm against a scrutinee. `matched` says the arm
+// applies; `ex` carries any binding pushed onto the locals stack; `bound` is 1
+// when the arm pushed a binding (so the caller restores the stack height).
+struct MatchTest {
+  matched: Bool,
+  ex: Exec,
+  bound: Int,
 }
 
 // Find the slot of `name`, scanning the current frame top-down to `base`.
@@ -6501,6 +6572,175 @@ fn fn_row(mir: Mir, name: String) -> Int {
   return 0 - 1;
 }
 
+// Is `s` one of the 18 std builtin function names? (No file_read_to_string —
+// the run corpus never touches file IO.) Std builtins are dispatched in the
+// Call expr arm before falling through to user-function lookup.
+fn is_std_builtin_name(s: String) -> Bool {
+  if s == "string_len" { return true; }
+  if s == "string_byte_at" { return true; }
+  if s == "string_byte_slice" { return true; }
+  if s == "string_concat" { return true; }
+  if s == "int_to_string" { return true; }
+  if s == "ascii_is_digit" { return true; }
+  if s == "ascii_is_alpha" { return true; }
+  if s == "ascii_is_alnum" { return true; }
+  if s == "ascii_is_whitespace" { return true; }
+  if s == "int_array_empty" { return true; }
+  if s == "int_array_push" { return true; }
+  if s == "string_array_empty" { return true; }
+  if s == "string_array_push" { return true; }
+  if s == "bool_array_empty" { return true; }
+  if s == "bool_array_push" { return true; }
+  if s == "path_join" { return true; }
+  if s == "path_basename" { return true; }
+  if s == "diagnostic_format" { return true; }
+  return false;
+}
+
+// path_join, mirroring src/runtime.rs join_path: empty operands pass through;
+// an absolute right (leading '/' or '\\') wins; otherwise join with a single
+// '/' unless `left` already ends in a separator.
+fn builtin_path_join(left: String, right: String) -> String {
+  if string_len(left) == 0 {
+    return right;
+  }
+  if string_len(right) == 0 {
+    return left;
+  }
+  let r0: Int = string_byte_at(right, 0);
+  if r0 == 47 || r0 == 92 {
+    return right;
+  }
+  let llast: Int = string_byte_at(left, string_len(left) - 1);
+  if llast == 47 || llast == 92 {
+    return string_concat(left, right);
+  }
+  return string_concat(string_concat(left, "/"), right);
+}
+
+// path_basename, mirroring src/runtime.rs: drop trailing separators, then
+// return the suffix after the last remaining separator (whole string if none,
+// "" if the path was all separators).
+fn builtin_path_basename(path: String) -> String {
+  // Drop trailing separators.
+  let mut end: Int = string_len(path);
+  let mut trimming: Int = 1;
+  while trimming == 1 {
+    if end == 0 {
+      trimming = 0;
+    } else {
+      let c: Int = string_byte_at(path, end - 1);
+      if c == 47 || c == 92 {
+        end = end - 1;
+      } else {
+        trimming = 0;
+      }
+    }
+  }
+  if end == 0 {
+    return "";
+  }
+  // Scan back to the separator before [0, end).
+  let mut start: Int = end;
+  let mut scanning: Int = 1;
+  while scanning == 1 {
+    if start == 0 {
+      scanning = 0;
+    } else {
+      let c: Int = string_byte_at(path, start - 1);
+      if c == 47 || c == 92 {
+        scanning = 0;
+      } else {
+        start = start - 1;
+      }
+    }
+  }
+  return string_byte_slice(path, start, end - start);
+}
+
+// Evaluate one std builtin given already-evaluated argument value handles.
+// Each case mirrors eval_std_builtin in src/runtime.rs.
+fn eval_builtin(vals: Values, callee: String, argh: IntArray, argn: Int) -> ValuesH {
+  if callee == "string_len" {
+    return vmake_int(vals, string_len(vals.text[argh[0]]));
+  }
+  if callee == "string_byte_at" {
+    return vmake_int(vals, string_byte_at(vals.text[argh[0]], vals.intval[argh[1]]));
+  }
+  if callee == "string_byte_slice" {
+    return vmake_string(vals, string_byte_slice(vals.text[argh[0]],
+                                                vals.intval[argh[1]],
+                                                vals.intval[argh[2]]));
+  }
+  if callee == "string_concat" {
+    return vmake_string(vals, string_concat(vals.text[argh[0]], vals.text[argh[1]]));
+  }
+  if callee == "int_to_string" {
+    return vmake_string(vals, int_to_string(vals.intval[argh[0]]));
+  }
+  // ASCII predicates. Rust returns false for bytes outside 0..=255; guard the
+  // range explicitly so the Zeta builtin never sees an out-of-range value.
+  if callee == "ascii_is_digit" {
+    let n: Int = vals.intval[argh[0]];
+    let mut flag: Int = 0;
+    if n >= 0 && n <= 255 && ascii_is_digit(n) { flag = 1; }
+    return vmake_bool(vals, flag);
+  }
+  if callee == "ascii_is_alpha" {
+    let n: Int = vals.intval[argh[0]];
+    let mut flag: Int = 0;
+    if n >= 0 && n <= 255 && ascii_is_alpha(n) { flag = 1; }
+    return vmake_bool(vals, flag);
+  }
+  if callee == "ascii_is_alnum" {
+    let n: Int = vals.intval[argh[0]];
+    let mut flag: Int = 0;
+    if n >= 0 && n <= 255 && ascii_is_alnum(n) { flag = 1; }
+    return vmake_bool(vals, flag);
+  }
+  if callee == "ascii_is_whitespace" {
+    let n: Int = vals.intval[argh[0]];
+    let mut flag: Int = 0;
+    if n >= 0 && n <= 255 && ascii_is_whitespace(n) { flag = 1; }
+    return vmake_bool(vals, flag);
+  }
+  if callee == "int_array_empty" || callee == "string_array_empty"
+     || callee == "bool_array_empty" {
+    return vmake_array(vals, int_array_empty());
+  }
+  if callee == "int_array_push" || callee == "string_array_push"
+     || callee == "bool_array_push" {
+    // COW: copy the source array's element handles, append the new value's
+    // handle, and build a fresh Array.
+    let arr: Int = argh[0];
+    let abase: Int = vals.a[arr];
+    let count: Int = vals.b[arr];
+    let mut handles: IntArray = int_array_empty();
+    let mut i: Int = 0;
+    while i < count {
+      handles = int_array_push(handles, vals.elems[abase + i]);
+      i = i + 1;
+    }
+    handles = int_array_push(handles, argh[1]);
+    return vmake_array(vals, handles);
+  }
+  if callee == "path_join" {
+    return vmake_string(vals, builtin_path_join(vals.text[argh[0]], vals.text[argh[1]]));
+  }
+  if callee == "path_basename" {
+    return vmake_string(vals, builtin_path_basename(vals.text[argh[0]]));
+  }
+  // diagnostic_format(code, line, col, msg) -> "{code} at {line}:{col}: {msg}".
+  let mut out: String = vals.text[argh[0]];
+  out = string_concat(out, " at ");
+  out = string_concat(out, int_to_string(vals.intval[argh[1]]));
+  out = string_concat(out, ":");
+  out = string_concat(out, int_to_string(vals.intval[argh[2]]));
+  out = string_concat(out, ": ");
+  out = string_concat(out, vals.text[argh[3]]);
+  return vmake_string(vals, out);
+}
+
 fn ev_expr(ex: Exec, node: Int) -> EvalResult {
   let kind: Int = ex.mir.me_kind[node];
   if kind == mir_load_expr() {
@@ -6521,6 +6761,30 @@ fn ev_expr(ex: Exec, node: Int) -> EvalResult {
     }
     let r: ValuesH = vmake_bool(ex.vals, flag);
     let mut e: Exec = ex;
+    e.vals = r.vals;
+    return EvalResult { ex: e, h: r.h };
+  }
+  if kind == mir_string_expr() {
+    // me_text is the raw quoted token; decode it to a String value.
+    let r: ValuesH = vmake_string(ex.vals, unquote_string(ex.mir.me_text[node]));
+    let mut e: Exec = ex;
+    e.vals = r.vals;
+    return EvalResult { ex: e, h: r.h };
+  }
+  if kind == mir_enum_expr() {
+    // me_text = "E.V"; me_a = payload expr (-1 = payload-less).
+    let path: String = ex.mir.me_text[node];
+    let dot: Int = string_last_dot(path);
+    let ty: String = string_byte_slice(path, 0, dot);
+    let variant: String = string_byte_slice(path, dot + 1, string_len(path) - dot - 1);
+    let mut e: Exec = ex;
+    let mut payload_h: Int = 0 - 1;
+    if ex.mir.me_a[node] >= 0 {
+      let pr: EvalResult = ev_expr(e, ex.mir.me_a[node]);
+      e = pr.ex;
+      payload_h = pr.h;
+    }
+    let r: ValuesH = vmake_enum(e.vals, ty, variant, payload_h);
     e.vals = r.vals;
     return EvalResult { ex: e, h: r.h };
   }
@@ -6661,6 +6925,13 @@ fn ev_expr(ex: Exec, node: Int) -> EvalResult {
       e = r.ex;
       argh = int_array_push(argh, r.h);
       i = i + 1;
+    }
+    // Std builtins are dispatched directly on the evaluated argument handles —
+    // there is no user-function frame to enter.
+    if is_std_builtin_name(callee) {
+      let r: ValuesH = eval_builtin(e.vals, callee, argh, arg_count);
+      e.vals = r.vals;
+      return EvalResult { ex: e, h: r.h };
     }
     // Switch into a fresh frame: save the caller's base/count, set base to the
     // current top so the callee can never see caller locals.
@@ -6914,6 +7185,79 @@ fn ev_block(ex: Exec, start: Int, count: Int) -> Exec {
   return e;
 }
 
+// Test one match arm `pat` against the scrutinee value handle `vh`. On a match
+// that introduces a binding, the binding is pushed onto `ex`'s locals stack and
+// `bound` is set to 1. Pattern texts mirror the MIR contract:
+//   `_`              wildcard
+//   `name:x`         binds the whole value to x
+//   `variant:E.V`    matches an Enum (ty E, variant V), payload ignored
+//   `variant:E.V(b)` like above, binds the payload to b
+//   `int:N`          matches an Int equal to N
+//   `bool:true|false`matches a Bool
+//   `string:"..."`   matches a String (raw quoted token after the prefix)
+fn match_arm(ex: Exec, vh: Int, pat: String) -> MatchTest {
+  if pat == "_" {
+    return MatchTest { matched: true, ex: ex, bound: 0 };
+  }
+  if string_starts_with(pat, "name:") {
+    let name: String = pattern_binding(pat);
+    let e: Exec = local_push(ex, name, vh);
+    return MatchTest { matched: true, ex: e, bound: 1 };
+  }
+  if string_starts_with(pat, "variant:") {
+    if ex.vals.kind[vh] != 4 {
+      return MatchTest { matched: false, ex: ex, bound: 0 };
+    }
+    let ename: String = pattern_variant_enum(pat);
+    let vname: String = pattern_variant_name(pat);
+    if ex.vals.text[vh] != ename {
+      return MatchTest { matched: false, ex: ex, bound: 0 };
+    }
+    if ex.vals.variant[vh] != vname {
+      return MatchTest { matched: false, ex: ex, bound: 0 };
+    }
+    let binding: String = pattern_binding(pat);
+    if string_len(binding) > 0 {
+      let payload: Int = ex.vals.a[vh];
+      let e: Exec = local_push(ex, binding, payload);
+      return MatchTest { matched: true, ex: e, bound: 1 };
+    }
+    return MatchTest { matched: true, ex: ex, bound: 0 };
+  }
+  if string_starts_with(pat, "int:") {
+    if ex.vals.kind[vh] != 0 {
+      return MatchTest { matched: false, ex: ex, bound: 0 };
+    }
+    let n: Int = decimal_to_int(string_byte_slice(pat, 4, string_len(pat) - 4));
+    let mut ok: Bool = false;
+    if ex.vals.intval[vh] == n { ok = true; }
+    return MatchTest { matched: ok, ex: ex, bound: 0 };
+  }
+  if string_starts_with(pat, "bool:") {
+    if ex.vals.kind[vh] != 2 {
+      return MatchTest { matched: false, ex: ex, bound: 0 };
+    }
+    let mut want: Int = 0;
+    if string_byte_slice(pat, 5, string_len(pat) - 5) == "true" { want = 1; }
+    let mut ok: Bool = false;
+    if ex.vals.intval[vh] == want { ok = true; }
+    return MatchTest { matched: ok, ex: ex, bound: 0 };
+  }
+  if string_starts_with(pat, "string:") {
+    if ex.vals.kind[vh] != 1 {
+      return MatchTest { matched: false, ex: ex, bound: 0 };
+    }
+    // The remainder after "string:" is the raw quoted token (Rust Debug
+    // escaping); decode it the same way string literals are decoded. KNOWN GAP:
+    // escapes like `\n` round-trip as literal `n` (see unquote_string).
+    let want: String = unquote_string(string_byte_slice(pat, 7, string_len(pat) - 7));
+    let mut ok: Bool = false;
+    if ex.vals.text[vh] == want { ok = true; }
+    return MatchTest { matched: ok, ex: ex, bound: 0 };
+  }
+  return MatchTest { matched: false, ex: ex, bound: 0 };
+}
+
 fn ev_stmt(ex: Exec, index: Int) -> Exec {
   let kind: Int = ex.mir.ms_kind[index];
   if kind == mir_local_stmt() {
@@ -7120,7 +7464,37 @@ fn ev_stmt(ex: Exec, index: Int) -> Exec {
     }
     return e;
   }
-  // match reserved for slice 3.
+  if kind == mir_match_stmt() {
+    // Evaluate the scrutinee, then test each arm in order. The FIRST matching
+    // arm runs and ends the match (its body's signal becomes the match result);
+    // later arms are never tried. This mirrors the Rust runtime's semantics.
+    let scrut: EvalResult = ev_expr(ex, ex.mir.ms_expr[index]);
+    let mut e: Exec = scrut.ex;
+    let vh: Int = scrut.h;
+    let arm_start: Int = e.mir.ms_then_start[index];
+    let arm_count: Int = e.mir.ms_then_count[index];
+    let mut ai: Int = 0;
+    let mut done: Int = 0;
+    while ai < arm_count && done == 0 {
+      let pat: String = e.mir.marm_pattern[arm_start + ai];
+      let saved: Int = e.count;
+      let test: MatchTest = match_arm(e, vh, pat);
+      e = test.ex;
+      if test.matched {
+        e = ev_block(e, e.mir.marm_body_start[arm_start + ai],
+                     e.mir.marm_body_count[arm_start + ai]);
+        e.count = saved;
+        done = 1;
+      } else {
+        // No binding survives a failed arm (match_arm only pushes on a match).
+        e.count = saved;
+        ai = ai + 1;
+      }
+    }
+    return e;
+  }
+  // Unreachable in valid programs (typecheck rejects non-exhaustive matches and
+  // every other statement kind is handled above).
   let mut e: Exec = ex;
   e.signal = 0;
   return e;

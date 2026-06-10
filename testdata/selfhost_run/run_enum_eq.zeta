@@ -1,0 +1,11 @@
+enum Color {
+  Red,
+  Blue,
+}
+
+fn main() -> Bool {
+  let a: Color = Color.Red;
+  let b: Color = Color.Red;
+  let c: Color = Color.Blue;
+  return a == b && a != c;
+}
