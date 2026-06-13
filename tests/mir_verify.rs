@@ -32,6 +32,7 @@ fn verifier_rejects_unknown_store_target() {
     let program = Program {
         enums: vec![],
         functions: vec![MirFunction {
+            reloadable: false,
             name: "main".to_string(),
             params: vec![],
             return_type: Some("Int".to_string()),
@@ -54,6 +55,7 @@ fn verifier_rejects_break_outside_loop() {
     let program = Program {
         enums: vec![],
         functions: vec![MirFunction {
+            reloadable: false,
             name: "main".to_string(),
             params: vec![],
             return_type: None,
@@ -70,6 +72,7 @@ fn verifier_rejects_continue_outside_loop() {
     let program = Program {
         enums: vec![],
         functions: vec![MirFunction {
+            reloadable: false,
             name: "main".to_string(),
             params: vec![],
             return_type: None,
@@ -86,6 +89,7 @@ fn verifier_rejects_return_type_mismatch() {
     let program = Program {
         enums: vec![],
         functions: vec![MirFunction {
+            reloadable: false,
             name: "main".to_string(),
             params: vec![],
             return_type: Some("Int".to_string()),
@@ -103,6 +107,7 @@ fn verifier_rejects_call_argument_type_mismatch() {
         enums: vec![],
         functions: vec![
             MirFunction {
+            reloadable: false,
                 name: "answer".to_string(),
                 params: vec![Param {
                     name: "value".to_string(),
@@ -114,6 +119,7 @@ fn verifier_rejects_call_argument_type_mismatch() {
                 body: vec![MirStmt::Return(Some(MirExpr::Load("value".to_string())))],
             },
             MirFunction {
+            reloadable: false,
                 name: "main".to_string(),
                 params: vec![],
                 return_type: Some("Int".to_string()),
@@ -139,6 +145,7 @@ fn verifier_rejects_missing_return_for_non_unit_function() {
     let program = Program {
         enums: vec![],
         functions: vec![MirFunction {
+            reloadable: false,
             name: "main".to_string(),
             params: vec![],
             return_type: Some("Int".to_string()),
@@ -160,6 +167,7 @@ fn verifier_accepts_if_else_when_both_paths_return() {
     let program = Program {
         enums: vec![],
         functions: vec![MirFunction {
+            reloadable: false,
             name: "main".to_string(),
             params: vec![],
             return_type: Some("Int".to_string()),
@@ -179,6 +187,7 @@ fn verifier_rejects_if_without_returning_else_path() {
     let program = Program {
         enums: vec![],
         functions: vec![MirFunction {
+            reloadable: false,
             name: "main".to_string(),
             params: vec![],
             return_type: Some("Int".to_string()),
@@ -204,6 +213,7 @@ fn verifier_accepts_match_when_all_arms_return_and_wildcard_covers_default() {
     let program = Program {
         enums: vec![],
         functions: vec![MirFunction {
+            reloadable: false,
             name: "main".to_string(),
             params: vec![],
             return_type: Some("Int".to_string()),
@@ -243,6 +253,7 @@ fn verifier_accepts_exhaustive_enum_match_when_all_arms_return() {
             ],
         }],
         functions: vec![MirFunction {
+            reloadable: false,
             name: "main".to_string(),
             params: vec![],
             return_type: Some("Int".to_string()),
@@ -282,6 +293,7 @@ fn verifier_accepts_exhaustive_bool_match_when_all_arms_return() {
     let program = Program {
         enums: vec![],
         functions: vec![MirFunction {
+            reloadable: false,
             name: "main".to_string(),
             params: vec![],
             return_type: Some("Int".to_string()),
@@ -321,6 +333,7 @@ fn verifier_rejects_non_exhaustive_enum_match_without_trailing_return() {
             ],
         }],
         functions: vec![MirFunction {
+            reloadable: false,
             name: "main".to_string(),
             params: vec![],
             return_type: Some("Int".to_string()),

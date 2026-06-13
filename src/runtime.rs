@@ -109,6 +109,29 @@ impl HotRuntime {
     pub fn has(&self, name: &str) -> bool {
         self.inner.functions.contains_key(name)
     }
+
+    /// Names of functions a hot reload to `next` would change but which are NOT
+    /// marked `reloadable` — i.e. boundary violations. A function present in both
+    /// the running table and `next` whose signature or body differs, and which
+    /// `next` does not mark `reloadable`, may not be swapped: in a native/release
+    /// build it could be inlined or statically dispatched, so changing it needs a
+    /// restart. Returns the offending names (sorted); empty means the swap is
+    /// allowed. Enforces the §3 coarse-grained-boundary discipline.
+    pub fn non_reloadable_changes(&self, next: &Program) -> Vec<String> {
+        let mut changed = Vec::new();
+        for new_fn in &next.functions {
+            if new_fn.reloadable {
+                continue;
+            }
+            if let Some(current) = self.inner.functions.get(&new_fn.name) {
+                if function_semantics_differ(current, new_fn) {
+                    changed.push(new_fn.name.clone());
+                }
+            }
+        }
+        changed.sort();
+        changed
+    }
 }
 
 /// A long-running hot-reloadable service over the `init` / `step` / `render`
@@ -158,10 +181,23 @@ impl ServiceDriver {
         Ok(self.state.to_string())
     }
 
-    /// Hot-swap to new source. On a compile error the running code AND state are
-    /// left untouched and the diagnostics returned — the service survives.
+    /// Hot-swap to new source. Rejected (leaving old code + state running) when:
+    /// (a) the new source fails to compile, or (b) it changes a function that is
+    /// not marked `reloadable` (a coarse-grained-boundary violation, §3). Either
+    /// way the service survives a bad edit.
     pub fn try_reload(&mut self, source: &str) -> Result<(), Vec<Diagnostic>> {
         let program = crate::lower_source(source)?;
+        let changed = self.runtime.non_reloadable_changes(&program);
+        if !changed.is_empty() {
+            return Err(vec![runtime_error(
+                "HOT_RELOAD_NON_RELOADABLE",
+                format!(
+                    "cannot hot-swap: non-`reloadable` function(s) changed: {} \
+                     — mark them `reloadable fn` (accepting the boundary) or restart",
+                    changed.join(", ")
+                ),
+            )]);
+        }
         self.runtime.hot_swap(&program);
         Ok(())
     }
@@ -588,6 +624,20 @@ fn collect_stmt_names(stmt: &MirStmt, out: &mut LiveSet) {
         MirStmt::Return(Some(expr)) | MirStmt::Drop(expr) => collect_expr_names(expr, out),
         MirStmt::Return(None) | MirStmt::Break | MirStmt::Continue => {}
     }
+}
+
+/// Whether two MIR functions differ in a way that matters for hot-swap safety:
+/// signature (param names+types, return type) or body. Param SPANS are ignored
+/// on purpose — a function's byte offsets shift whenever earlier code is edited,
+/// so comparing spans would flag unchanged functions as changed.
+fn function_semantics_differ(a: &MirFunction, b: &MirFunction) -> bool {
+    a.return_type != b.return_type
+        || a.body != b.body
+        || a.params.len() != b.params.len()
+        || a.params
+            .iter()
+            .zip(&b.params)
+            .any(|(x, y)| x.name != y.name || x.ty != y.ty)
 }
 
 struct MirRuntime {

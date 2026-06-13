@@ -50,6 +50,10 @@ impl Parser {
         }
 
         let exported = self.consume_keyword(Keyword::Export).is_some();
+        // `reloadable` is a contextual modifier (only meaningful right before
+        // `fn`), so it is NOT a reserved keyword — this keeps the lexer/token-kind
+        // numbering identical and avoids any self-hosting parity churn.
+        let reloadable = self.consume_reloadable();
 
         if self.consume_keyword(Keyword::Import).is_some() {
             let (path, path_span) = self.parse_path_span()?;
@@ -76,7 +80,7 @@ impl Parser {
             return self.parse_enum(exported).map(Item::Enum);
         }
         if self.consume_keyword(Keyword::Fn).is_some() {
-            return self.parse_function(exported).map(Item::Function);
+            return self.parse_function(exported, reloadable).map(Item::Function);
         }
 
         Err(self.error_here(
@@ -146,7 +150,7 @@ impl Parser {
         })
     }
 
-    fn parse_function(&mut self, exported: bool) -> Result<Function, Diagnostic> {
+    fn parse_function(&mut self, exported: bool, reloadable: bool) -> Result<Function, Diagnostic> {
         let (name, name_span) = self.expect_ident_span("expected function name")?;
         self.expect_symbol(Symbol::LParen, "expected `(` after function name")?;
         let params = self.parse_params()?;
@@ -161,6 +165,7 @@ impl Parser {
         let body = self.parse_block_body()?;
         Ok(Function {
             exported,
+            reloadable,
             name,
             name_span,
             params,
@@ -866,6 +871,24 @@ impl Parser {
             Ok(())
         } else {
             Err(self.error_here("PARSE_EXPECTED_SYMBOL", message))
+        }
+    }
+
+    /// Consume a contextual `reloadable` modifier, but ONLY when it directly
+    /// precedes `fn` — so `reloadable` stays usable as an ordinary identifier
+    /// everywhere else and the lexer needs no new keyword.
+    fn consume_reloadable(&mut self) -> bool {
+        let is_reloadable_ident =
+            matches!(self.peek_kind(), TokenKind::Ident(name) if name == "reloadable");
+        let followed_by_fn = matches!(
+            self.tokens.get(self.pos + 1).map(|token| &token.kind),
+            Some(TokenKind::Keyword(Keyword::Fn))
+        );
+        if is_reloadable_ident && followed_by_fn {
+            self.pos += 1;
+            true
+        } else {
+            false
         }
     }
 

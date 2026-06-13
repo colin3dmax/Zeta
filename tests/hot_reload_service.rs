@@ -15,7 +15,7 @@ const COUNTER_V1: &str = "\
 import std.core;
 struct Counter { count: Int }
 fn init() -> Counter { return Counter { count: 0 }; }
-fn step(c: Counter, n: Int) -> Counter { return Counter { count: c.count + n }; }
+reloadable fn step(c: Counter, n: Int) -> Counter { return Counter { count: c.count + n }; }
 fn render(c: Counter) -> String { return string_concat(\"count=\", int_to_string(c.count)); }
 ";
 
@@ -24,7 +24,7 @@ const COUNTER_V2: &str = "\
 import std.core;
 struct Counter { count: Int }
 fn init() -> Counter { return Counter { count: 0 }; }
-fn step(c: Counter, n: Int) -> Counter { return Counter { count: c.count + n * 10 }; }
+reloadable fn step(c: Counter, n: Int) -> Counter { return Counter { count: c.count + n * 10 }; }
 fn render(c: Counter) -> String { return string_concat(\"count=\", int_to_string(c.count)); }
 ";
 
@@ -33,7 +33,7 @@ const COUNTER_BROKEN: &str = "\
 import std.core;
 struct Counter { count: Int }
 fn init() -> Counter { return Counter { count: 0 }; }
-fn step(c: Counter, n: Int) -> Counter { return Counter { count: c.count + nope }; }
+reloadable fn step(c: Counter, n: Int) -> Counter { return Counter { count: c.count + nope }; }
 fn render(c: Counter) -> String { return string_concat(\"count=\", int_to_string(c.count)); }
 ";
 
@@ -92,7 +92,7 @@ fn render_falls_back_to_display_without_render_fn() {
     // No `render` fn → ServiceDriver falls back to the value's Display.
     const NO_RENDER: &str = "\
 fn init() -> Int { return 0; }
-fn step(s: Int, n: Int) -> Int { return s + n; }
+reloadable fn step(s: Int, n: Int) -> Int { return s + n; }
 ";
     let mut svc = ServiceDriver::start(NO_RENDER).unwrap();
     svc.tick(Value::Int(7)).unwrap();

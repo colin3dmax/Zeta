@@ -26,6 +26,9 @@ pub struct MirFunction {
     pub params: Vec<Param>,
     pub return_type: Option<String>,
     pub body: Vec<MirStmt>,
+    /// Carried from `reloadable fn` (see ast::Function::reloadable): marks this
+    /// function as an opt-in hot-swap boundary for the runtime / native backend.
+    pub reloadable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -277,6 +280,7 @@ fn lower_function(
             .iter()
             .map(|stmt| lower_stmt(stmt, enum_variants))
             .collect(),
+        reloadable: function.reloadable,
     }
 }
 

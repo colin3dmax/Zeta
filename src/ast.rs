@@ -58,6 +58,12 @@ pub struct EnumVariant {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Function {
     pub exported: bool,
+    /// Marked `reloadable fn` — an opt-in coarse-grained hot-swap boundary. The
+    /// runtime only allows such functions to change across a hot reload, and a
+    /// future native backend compiles them behind a swappable indirection while
+    /// everything else stays statically dispatched/inlined. See
+    /// docs/compiler/hot-reload-design.md §3.
+    pub reloadable: bool,
     pub name: String,
     pub name_span: Span,
     pub params: Vec<Param>,
