@@ -3,24 +3,37 @@ use crate::diagnostic::{Diagnostic, Span};
 use crate::mir::{self, MirExpr, MirFunction, MirPattern, MirPlace, MirStmt, Program};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
+use std::rc::Rc;
 
-const LOOP_LIMIT: usize = 10_000;
+// Runaway-loop backstop. Large enough that real workloads (e.g. the M7
+// fixpoint: the Zeta-written frontend lexing/parsing its own 7.5k-line source
+// inside this interpreter) never trip it, while a genuinely infinite loop
+// still aborts instead of hanging forever.
+const LOOP_LIMIT: usize = 1_000_000_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     Int(i64),
     String(String),
     Bool(bool),
+    // `fields`/array contents live behind `Rc` so cloning a Value (which the
+    // tree-walking evaluator does on every `Load`, field read, and argument
+    // pass) is O(1) instead of deep-copying every parallel arena array. Writes
+    // go through `Rc::make_mut`, giving copy-on-write: shared values stay
+    // immutable (preserving Zeta's value semantics) while the common
+    // unique-owner path mutates in place. This is what makes the M7 fixpoint —
+    // the Zeta frontend processing its own 7.5k-line source inside this
+    // interpreter — finish in seconds instead of tens of CPU-minutes.
     Struct {
         ty: String,
-        fields: BTreeMap<String, Value>,
+        fields: Rc<BTreeMap<String, Value>>,
     },
     Enum {
         ty: String,
         variant: String,
         payload: Option<Box<Value>>,
     },
-    Array(Vec<Value>),
+    Array(Rc<Vec<Value>>),
     Unit,
 }
 
@@ -126,7 +139,7 @@ fn find_mir_main(program: &Program) -> Option<&MirFunction> {
 }
 
 struct MirRuntime {
-    functions: HashMap<String, MirFunction>,
+    functions: HashMap<String, Rc<MirFunction>>,
     enum_variants: HashMap<String, HashMap<String, Option<String>>>,
     loop_steps: usize,
 }
@@ -137,7 +150,7 @@ impl MirRuntime {
             functions: program
                 .functions
                 .iter()
-                .map(|function| (function.name.clone(), function.clone()))
+                .map(|function| (function.name.clone(), Rc::new(function.clone())))
                 .collect(),
             enum_variants: program
                 .enums
@@ -265,7 +278,7 @@ impl MirRuntime {
                 };
                 let saved = locals.remove(binding);
                 let mut control = Control::Continue;
-                for element in elements {
+                for element in elements.iter() {
                     self.loop_steps += 1;
                     if self.loop_steps > LOOP_LIMIT {
                         if let Some(saved) = saved {
@@ -278,7 +291,7 @@ impl MirRuntime {
                             "loop exceeded the Stage 0 execution step limit",
                         ));
                     }
-                    locals.insert(binding.clone(), element);
+                    locals.insert(binding.clone(), element.clone());
                     match self.eval_stmts(body, locals)? {
                         Control::Continue => {}
                         Control::BreakLoop => break,
@@ -544,7 +557,7 @@ impl MirRuntime {
                 }
                 Ok(Value::Struct {
                     ty: ty.clone(),
-                    fields: values,
+                    fields: Rc::new(values),
                 })
             }
             MirExpr::FieldAccess { base, field } => {
@@ -590,7 +603,7 @@ impl MirRuntime {
                 .iter()
                 .map(|element| self.eval_expr(element, locals))
                 .collect::<Result<Vec<_>, _>>()
-                .map(Value::Array),
+                .map(|elements| Value::Array(Rc::new(elements))),
             MirExpr::Index { base, index } => {
                 let base = self.eval_expr(base, locals)?;
                 let index = self.eval_expr(index, locals)?;
@@ -742,8 +755,7 @@ impl Runtime {
                 if let Expr::Range { start, end, .. } = iterable {
                     let start_value = self.eval_expr(start, locals)?;
                     let end_value = self.eval_expr(end, locals)?;
-                    let (Value::Int(start_value), Value::Int(end_value)) =
-                        (start_value, end_value)
+                    let (Value::Int(start_value), Value::Int(end_value)) = (start_value, end_value)
                     else {
                         return Err(runtime_error(
                             "RUNTIME_FOR_RANGE_BOUND",
@@ -797,7 +809,7 @@ impl Runtime {
                 };
                 let saved = locals.remove(binding);
                 let mut control = Control::Continue;
-                for element in elements {
+                for element in elements.iter() {
                     self.loop_steps += 1;
                     if self.loop_steps > LOOP_LIMIT {
                         if let Some(saved) = saved {
@@ -810,7 +822,7 @@ impl Runtime {
                             "loop exceeded the Stage 0 execution step limit",
                         ));
                     }
-                    locals.insert(binding.clone(), element);
+                    locals.insert(binding.clone(), element.clone());
                     match self.eval_stmts(body, locals)? {
                         Control::Continue => {}
                         Control::BreakLoop => break,
@@ -1021,7 +1033,7 @@ impl Runtime {
                 }
                 Ok(Value::Struct {
                     ty: ty.clone(),
-                    fields: values,
+                    fields: Rc::new(values),
                 })
             }
             Expr::FieldAccess { base, field, .. } => {
@@ -1070,7 +1082,7 @@ impl Runtime {
                 .iter()
                 .map(|element| self.eval_expr(element, locals))
                 .collect::<Result<Vec<_>, _>>()
-                .map(Value::Array),
+                .map(|elements| Value::Array(Rc::new(elements))),
             Expr::Index { base, index, .. } => {
                 let base = self.eval_expr(base, locals)?;
                 let index = self.eval_expr(index, locals)?;
@@ -1209,9 +1221,11 @@ fn write_through_path(
     for step in path {
         slot = match step {
             PlaceStep::Field(field) => match slot {
-                Value::Struct { fields, .. } => fields.get_mut(field).ok_or_else(|| {
-                    runtime_error("RUNTIME_ASSIGN_FIELD", format!("unknown field `{field}`"))
-                })?,
+                Value::Struct { fields, .. } => {
+                    Rc::make_mut(fields).get_mut(field).ok_or_else(|| {
+                        runtime_error("RUNTIME_ASSIGN_FIELD", format!("unknown field `{field}`"))
+                    })?
+                }
                 _ => {
                     return Err(runtime_error(
                         "RUNTIME_ASSIGN_FIELD_BASE",
@@ -1221,6 +1235,7 @@ fn write_through_path(
             },
             PlaceStep::Index(i) => match slot {
                 Value::Array(values) => {
+                    let values = Rc::make_mut(values);
                     if *i >= values.len() {
                         return Err(runtime_error(
                             "RUNTIME_ASSIGN_INDEX_BOUNDS",
@@ -1437,7 +1452,7 @@ fn eval_std_builtin(callee: &str, args: Vec<Value>) -> Result<Value, Diagnostic>
         }
         "int_array_empty" | "string_array_empty" | "bool_array_empty" => {
             let []: [Value; 0] = expect_arity(callee, args)?.try_into().ok().unwrap();
-            Ok(Value::Array(Vec::new()))
+            Ok(Value::Array(Rc::new(Vec::new())))
         }
         "int_array_push" => eval_array_push(callee, args, "Int"),
         "string_array_push" => eval_array_push(callee, args, "String"),
@@ -1575,6 +1590,10 @@ fn eval_array_push(
             format!("{callee} expects array as first argument"),
         ));
     };
+    // `make_mut` mutates in place when this is the sole owner (the common
+    // `a.field = int_array_push(a.field, x)` arena idiom), copying only when
+    // the backing array is still shared elsewhere.
+    let target = Rc::make_mut(&mut values);
     match (element_type, &value) {
         ("Int", Value::Int(_)) | ("String", Value::String(_)) | ("Bool", Value::Bool(_)) => {}
         _ => {
@@ -1584,7 +1603,7 @@ fn eval_array_push(
             ));
         }
     }
-    values.push(value);
+    target.push(value);
     Ok(Value::Array(values))
 }
 
