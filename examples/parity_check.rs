@@ -87,7 +87,10 @@ fn main() -> ExitCode {
         let oracle = match zeta::dump_ast(&source) {
             Ok(s) => s,
             Err(diags) => {
-                println!("ORACLE_PARSE_FAIL {path}: Rust parser 拒绝了该源码 ({} 个诊断)", diags.len());
+                println!(
+                    "ORACLE_PARSE_FAIL {path}: Rust parser 拒绝了该源码 ({} 个诊断)",
+                    diags.len()
+                );
                 failures += 1;
                 continue;
             }

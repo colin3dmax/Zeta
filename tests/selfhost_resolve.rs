@@ -143,36 +143,30 @@ fn resolve_let_cannot_see_itself() {
 #[test]
 fn resolve_if_block_scope_does_not_leak() {
     // `inner` declared inside the then-block is unknown after the block.
-    assert_matches_oracle(
-        "fn f(c: Bool) -> Int { if c { let inner: Int = 1; } return inner; }",
-    );
+    assert_matches_oracle("fn f(c: Bool) -> Int { if c { let inner: Int = 1; } return inner; }");
 }
 
 #[test]
 fn resolve_while_block_scope_does_not_leak() {
-    assert_matches_oracle(
-        "fn f(c: Bool) -> Int { while c { let w: Int = 1; } return w; }",
-    );
+    assert_matches_oracle("fn f(c: Bool) -> Int { while c { let w: Int = 1; } return w; }");
 }
 
 #[test]
 fn resolve_for_binding_visible_in_body_not_outside() {
     // `i` is visible in the body (no report there) but unknown after the loop.
-    assert_matches_oracle(
-        "fn f() -> Int { for i in 0..n { let s: Int = i; } return i; }",
-    );
+    assert_matches_oracle("fn f() -> Int { for i in 0..n { let s: Int = i; } return i; }");
 }
 
 #[test]
 fn resolve_for_binding_used_in_body_ok() {
-    assert_matches_oracle("fn f(xs: IntArray) -> Int { for x in xs { let y: Int = x; } return 0; }");
+    assert_matches_oracle(
+        "fn f(xs: IntArray) -> Int { for x in xs { let y: Int = x; } return 0; }",
+    );
 }
 
 #[test]
 fn resolve_match_arm_binding_visible_in_arm() {
-    assert_matches_oracle(
-        "fn f(x: Int) -> Int { match x { n -> { return n; } } }",
-    );
+    assert_matches_oracle("fn f(x: Int) -> Int { match x { n -> { return n; } } }");
 }
 
 #[test]
@@ -184,9 +178,7 @@ fn resolve_match_variant_payload_binding_visible_in_arm() {
 
 #[test]
 fn resolve_match_arm_binding_does_not_leak() {
-    assert_matches_oracle(
-        "fn f(x: Int) -> Int { match x { n -> { return 0; } } return n; }",
-    );
+    assert_matches_oracle("fn f(x: Int) -> Int { match x { n -> { return 0; } } return n; }");
 }
 
 #[test]
@@ -209,9 +201,7 @@ fn resolve_complex_assign_target_root() {
 fn resolve_struct_literal_type_and_fields_not_unknown() {
     // `Point` (type) and `x`/`y` (field names) must NOT be reported; only the
     // value expression `bad` is unknown.
-    assert_matches_oracle(
-        "fn f() -> Int { let p: Point = Point { x: 1, y: bad }; return 0; }",
-    );
+    assert_matches_oracle("fn f() -> Int { let p: Point = Point { x: 1, y: bad }; return 0; }");
 }
 
 #[test]
@@ -333,32 +323,24 @@ fn resolve_sibling_blocks_same_let_name_not_duplicate() {
 #[test]
 fn resolve_for_binding_then_let_same_name_is_duplicate() {
     // The for body's `let i` collides with the loop binding `i` → duplicate.
-    assert_matches_oracle(
-        "fn f() -> Int { for i in 0..3 { let i: Int = 1; } return 0; }",
-    );
+    assert_matches_oracle("fn f() -> Int { for i in 0..3 { let i: Int = 1; } return 0; }");
 }
 
 #[test]
 fn resolve_for_binding_shadowing_outer_local_not_duplicate() {
     // A for binding shadowing an outer local is inserted unconditionally → no
     // duplicate (only a body `let` of the same name would collide).
-    assert_matches_oracle(
-        "fn f(i: Int) -> Int { for i in 0..3 { return i; } return 0; }",
-    );
+    assert_matches_oracle("fn f(i: Int) -> Int { for i in 0..3 { return i; } return 0; }");
 }
 
 #[test]
 fn resolve_match_binding_then_let_same_name_is_duplicate() {
-    assert_matches_oracle(
-        "fn f(v: Int) -> Int { match v { n -> { let n: Int = 1; } } return 0; }",
-    );
+    assert_matches_oracle("fn f(v: Int) -> Int { match v { n -> { let n: Int = 1; } } return 0; }");
 }
 
 #[test]
 fn resolve_match_binding_shadowing_outer_local_not_duplicate() {
-    assert_matches_oracle(
-        "fn f(n: Int) -> Int { match n { n -> { return n; } } return 0; }",
-    );
+    assert_matches_oracle("fn f(n: Int) -> Int { match n { n -> { return n; } } return 0; }");
 }
 
 #[test]
@@ -398,9 +380,7 @@ fn resolve_triple_duplicate_reports_twice() {
 
 #[test]
 fn resolve_distinct_top_level_names_no_duplicate() {
-    assert_matches_oracle(
-        "struct A { x: Int } enum B { C } fn d() -> Int { return 0; }",
-    );
+    assert_matches_oracle("struct A { x: Int } enum B { C } fn d() -> Int { return 0; }");
 }
 
 #[test]
@@ -408,18 +388,14 @@ fn resolve_duplicate_item_reported_before_function_diagnostics() {
     // check_top_level runs before function bodies: the duplicate-item report for
     // `f` precedes the unknown-name report from the FIRST function's body even
     // though the body appears earlier in the source.
-    assert_matches_oracle(
-        "fn f() -> Int { return miss; } fn f() -> Int { return 0; }",
-    );
+    assert_matches_oracle("fn f() -> Int { return miss; } fn f() -> Int { return 0; }");
 }
 
 #[test]
 fn resolve_duplicate_fn_still_resolves_both_bodies() {
     // Both duplicate definitions' bodies are resolved (each reports its own
     // unknown name, after the duplicate-item line).
-    assert_matches_oracle(
-        "fn f() -> Int { return one; } fn f() -> Int { return two; }",
-    );
+    assert_matches_oracle("fn f() -> Int { return one; } fn f() -> Int { return two; }");
 }
 
 // --- slice #4: import boundary (RESOLVE_UNKNOWN_IMPORT + std name sets) -----
@@ -442,9 +418,7 @@ fn resolve_std_prefix_but_unknown_import() {
 
 #[test]
 fn resolve_std_core_import_ok_and_fn_known() {
-    assert_matches_oracle(
-        "import std.core; fn f() -> Int { return string_len(\"a\"); }",
-    );
+    assert_matches_oracle("import std.core; fn f() -> Int { return string_len(\"a\"); }");
 }
 
 #[test]
@@ -454,16 +428,12 @@ fn resolve_std_core_fn_unknown_without_import() {
 
 #[test]
 fn resolve_std_io_import_ok_and_fn_known() {
-    assert_matches_oracle(
-        "import std.io; fn f() -> String { return path_join(\"a\", \"b\"); }",
-    );
+    assert_matches_oracle("import std.io; fn f() -> String { return path_join(\"a\", \"b\"); }");
 }
 
 #[test]
 fn resolve_std_core_does_not_grant_io_fns() {
-    assert_matches_oracle(
-        "import std.core; fn f() -> String { return path_join(\"a\", \"b\"); }",
-    );
+    assert_matches_oracle("import std.core; fn f() -> String { return path_join(\"a\", \"b\"); }");
 }
 
 #[test]
@@ -493,9 +463,7 @@ fn resolve_std_fn_bare_reference_is_unknown_name() {
 
 #[test]
 fn resolve_item_conflicts_with_std_core_name() {
-    assert_matches_oracle(
-        "import std.core; enum OptionInt { A } fn f() -> Int { return 0; }",
-    );
+    assert_matches_oracle("import std.core; enum OptionInt { A } fn f() -> Int { return 0; }");
 }
 
 #[test]
@@ -509,9 +477,7 @@ fn resolve_item_conflicts_with_std_io_name() {
 fn resolve_item_before_import_still_conflicts() {
     // standard_top_level_names is computed from the whole module before the
     // item loop — an item preceding the import still conflicts.
-    assert_matches_oracle(
-        "enum ResultInt { A } import std.core; fn f() -> Int { return 0; }",
-    );
+    assert_matches_oracle("enum ResultInt { A } import std.core; fn f() -> Int { return 0; }");
 }
 
 #[test]
@@ -538,16 +504,12 @@ fn resolve_unknown_imports_interleaved_with_duplicates_in_item_order() {
 #[test]
 fn resolve_repeated_std_import_not_duplicate() {
     // Imports have no item name → never duplicate items.
-    assert_matches_oracle(
-        "import std.core; import std.core; fn f() -> Int { return 0; }",
-    );
+    assert_matches_oracle("import std.core; import std.core; fn f() -> Int { return 0; }");
 }
 
 #[test]
 fn resolve_std_import_with_alias_is_known() {
-    assert_matches_oracle(
-        "import std.core as core; fn f() -> Int { return string_len(\"a\"); }",
-    );
+    assert_matches_oracle("import std.core as core; fn f() -> Int { return string_len(\"a\"); }");
 }
 
 // --- slice #2: all three codes mixed, order preserved ----------------------
@@ -559,9 +521,7 @@ fn resolve_three_codes_mixed_in_order() {
     //   UNKNOWN_FUNCTION g     (second let: callee checked before args)
     //   UNKNOWN_NAME arg       (call argument)
     //   DUPLICATE_LOCAL x      (second `let x` after its initializer resolves)
-    assert_matches_oracle(
-        "fn f() -> Int { let x: Int = miss; let x: Int = g(arg); return x; }",
-    );
+    assert_matches_oracle("fn f() -> Int { let x: Int = miss; let x: Int = g(arg); return x; }");
 }
 
 #[test]

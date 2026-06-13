@@ -167,8 +167,18 @@ fn validate_stmt_types(
             Stmt::ForC {
                 init, step, body, ..
             } => {
-                validate_stmt_types(std::slice::from_ref(init.as_ref()), structs, enums, diagnostics);
-                validate_stmt_types(std::slice::from_ref(step.as_ref()), structs, enums, diagnostics);
+                validate_stmt_types(
+                    std::slice::from_ref(init.as_ref()),
+                    structs,
+                    enums,
+                    diagnostics,
+                );
+                validate_stmt_types(
+                    std::slice::from_ref(step.as_ref()),
+                    structs,
+                    enums,
+                    diagnostics,
+                );
                 validate_stmt_types(body, structs, enums, diagnostics);
             }
             Stmt::Match { arms, .. } => {
@@ -592,8 +602,14 @@ fn check_stmts(
                     loop_depth,
                     diagnostics,
                 );
-                let condition_type =
-                    infer_expr(condition, &loop_locals, functions, structs, enums, diagnostics);
+                let condition_type = infer_expr(
+                    condition,
+                    &loop_locals,
+                    functions,
+                    structs,
+                    enums,
+                    diagnostics,
+                );
                 expect_type(
                     &condition_type,
                     &Type::Bool,

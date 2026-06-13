@@ -1,8 +1,8 @@
 use zeta::ast::Param;
 use zeta::diagnostic::Span;
 use zeta::mir::{
-    self, MirEnum, MirEnumVariant, MirExpr, MirFunction, MirMatchArm, MirPattern, MirPlace, MirStmt,
-    Program,
+    self, MirEnum, MirEnumVariant, MirExpr, MirFunction, MirMatchArm, MirPattern, MirPlace,
+    MirStmt, Program,
 };
 
 #[test]

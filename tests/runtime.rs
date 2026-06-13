@@ -68,8 +68,8 @@ fn run_executes_for_in_loop() {
 
 #[test]
 fn run_executes_for_range_loop() {
-    let value =
-        zeta::run_source(include_str!("../testdata/run_forrange.zeta")).expect("program should run");
+    let value = zeta::run_source(include_str!("../testdata/run_forrange.zeta"))
+        .expect("program should run");
     // 0+1+2+3+4 = 10 over the half-open range [0, 5).
     assert_eq!(value.to_string(), "10");
 }

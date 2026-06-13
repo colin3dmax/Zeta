@@ -271,9 +271,7 @@ impl Parser {
             let (binding, binding_span) =
                 self.expect_ident_span("expected binding name after `for`")?;
             if self.consume_keyword(Keyword::In).is_none() {
-                return Err(
-                    self.error_here("PARSE_EXPECTED_IN", "expected `in` after for binding")
-                );
+                return Err(self.error_here("PARSE_EXPECTED_IN", "expected `in` after for binding"));
             }
             let mut iterable = self.parse_expr_without_struct_literals()?;
             if self.consume_symbol(Symbol::DotDot).is_some() {
@@ -345,7 +343,10 @@ impl Parser {
                 right: Box::new(rhs),
                 span,
             };
-            return Ok(Stmt::Assign { target: expr, value });
+            return Ok(Stmt::Assign {
+                target: expr,
+                value,
+            });
         }
         self.expect_symbol(Symbol::Semicolon, "expected `;` after expression statement")?;
         Ok(Stmt::Expr(expr))
@@ -387,10 +388,7 @@ impl Parser {
             };
             return Ok(Stmt::Assign { target, value });
         }
-        Err(self.error_here(
-            "PARSE_EXPECTED_ASSIGN",
-            "expected assignment in for step",
-        ))
+        Err(self.error_here("PARSE_EXPECTED_ASSIGN", "expected assignment in for step"))
     }
 
     fn consume_compound_assign_op(&mut self) -> Option<BinaryOp> {

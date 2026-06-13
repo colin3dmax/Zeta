@@ -82,9 +82,15 @@ fn oracle_report(program_source: &str) -> String {
     if let Err(diagnostics) = zeta::typecheck::check(&module) {
         for diagnostic in diagnostics {
             match diagnostic.code {
-                "TYPE_UNKNOWN_TYPE" | "TYPE_UNKNOWN_STRUCT" | "TYPE_DUPLICATE_FIELD"
-                | "TYPE_UNKNOWN_FIELD" | "TYPE_MISSING_FIELD" | "TYPE_ARRAY_FIELD"
-                | "TYPE_ASSIGN_IMMUTABLE" | "TYPE_UNKNOWN_NAME" | "TYPE_UNKNOWN_VARIANT"
+                "TYPE_UNKNOWN_TYPE"
+                | "TYPE_UNKNOWN_STRUCT"
+                | "TYPE_DUPLICATE_FIELD"
+                | "TYPE_UNKNOWN_FIELD"
+                | "TYPE_MISSING_FIELD"
+                | "TYPE_ARRAY_FIELD"
+                | "TYPE_ASSIGN_IMMUTABLE"
+                | "TYPE_UNKNOWN_NAME"
+                | "TYPE_UNKNOWN_VARIANT"
                 | "TYPE_UNKNOWN_ENUM" => {
                     let name = extract_backtick_name(&diagnostic.message)
                         .expect("typecheck message should contain a backtick-quoted name");
@@ -93,12 +99,23 @@ fn oracle_report(program_source: &str) -> String {
                         diagnostic.code, diagnostic.span.start, diagnostic.span.end
                     ));
                 }
-                "TYPE_LET_MISMATCH" | "TYPE_IF_CONDITION" | "TYPE_WHILE_CONDITION"
-                | "TYPE_FORC_CONDITION" | "TYPE_RETURN_MISMATCH" | "TYPE_BINARY_OPERAND"
-                | "TYPE_LOGICAL_OPERAND" | "TYPE_EQUALITY_OPERAND" | "TYPE_ORDERING_OPERAND"
-                | "TYPE_UNARY_OPERAND" | "TYPE_RANGE_BOUND" | "TYPE_CALL_ARGUMENT"
-                | "TYPE_STRUCT_FIELD" | "TYPE_ARRAY_ELEMENT" | "TYPE_INDEX"
-                | "TYPE_ASSIGN_MISMATCH" | "TYPE_ENUM_VARIANT_PAYLOAD"
+                "TYPE_LET_MISMATCH"
+                | "TYPE_IF_CONDITION"
+                | "TYPE_WHILE_CONDITION"
+                | "TYPE_FORC_CONDITION"
+                | "TYPE_RETURN_MISMATCH"
+                | "TYPE_BINARY_OPERAND"
+                | "TYPE_LOGICAL_OPERAND"
+                | "TYPE_EQUALITY_OPERAND"
+                | "TYPE_ORDERING_OPERAND"
+                | "TYPE_UNARY_OPERAND"
+                | "TYPE_RANGE_BOUND"
+                | "TYPE_CALL_ARGUMENT"
+                | "TYPE_STRUCT_FIELD"
+                | "TYPE_ARRAY_ELEMENT"
+                | "TYPE_INDEX"
+                | "TYPE_ASSIGN_MISMATCH"
+                | "TYPE_ENUM_VARIANT_PAYLOAD"
                 | "TYPE_MATCH_PATTERN" => {
                     let rest = diagnostic
                         .message
@@ -112,8 +129,12 @@ fn oracle_report(program_source: &str) -> String {
                         diagnostic.code, diagnostic.span.start, diagnostic.span.end
                     ));
                 }
-                "TYPE_FOR_ITERABLE" | "TYPE_BREAK_OUTSIDE_LOOP" | "TYPE_CONTINUE_OUTSIDE_LOOP"
-                | "TYPE_ARRAY_EMPTY" | "TYPE_INDEX_BASE" | "TYPE_FIELD_BASE"
+                "TYPE_FOR_ITERABLE"
+                | "TYPE_BREAK_OUTSIDE_LOOP"
+                | "TYPE_CONTINUE_OUTSIDE_LOOP"
+                | "TYPE_ARRAY_EMPTY"
+                | "TYPE_INDEX_BASE"
+                | "TYPE_FIELD_BASE"
                 | "TYPE_ASSIGN_TARGET" => {
                     out.push_str(&format!(
                         "{} span={}..{}\n",
@@ -183,8 +204,9 @@ fn oracle_report(program_source: &str) -> String {
                             diagnostic.span.start, diagnostic.span.end
                         ));
                     } else {
-                        let name = extract_backtick_name(&diagnostic.message)
-                            .expect("enum non-exhaustive message should contain a backtick-quoted name");
+                        let name = extract_backtick_name(&diagnostic.message).expect(
+                            "enum non-exhaustive message should contain a backtick-quoted name",
+                        );
                         out.push_str(&format!(
                             "TYPE_MATCH_NON_EXHAUSTIVE name={name} span={}..{}\n",
                             diagnostic.span.start, diagnostic.span.end
@@ -462,9 +484,7 @@ fn typecheck_unknown_type_then_infer_order() {
     // validate_declared_types runs first (TYPE_UNKNOWN_TYPE for Ghost), then
     // inference reports the b mismatch and the return mismatch in body order.
     // `a` binds "<error>" so its own let suppresses.
-    assert_matches_oracle(
-        "fn f() -> Int { let a: Ghost = 1; let b: Bool = 2; return b; }",
-    );
+    assert_matches_oracle("fn f() -> Int { let a: Ghost = 1; let b: Bool = 2; return b; }");
 }
 
 // ---------------------------------------------------------------------------
@@ -711,17 +731,13 @@ fn typecheck_for_in_struct_array() {
 #[test]
 fn typecheck_variant_call_ok() {
     // A correct payload call types as Named(E): zero lines.
-    assert_matches_oracle(
-        "enum E { A(Int), B } fn f() -> Int { let x: E = E.A(1); return 0; }",
-    );
+    assert_matches_oracle("enum E { A(Int), B } fn f() -> Int { let x: E = E.A(1); return 0; }");
 }
 
 #[test]
 fn typecheck_variant_call_payload_mismatch() {
     // TYPE_ENUM_VARIANT_PAYLOAD expected=Int found=Bool, span = the argument.
-    assert_matches_oracle(
-        "enum E { A(Int), B } fn f() -> Int { let x: E = E.A(true); return 0; }",
-    );
+    assert_matches_oracle("enum E { A(Int), B } fn f() -> Int { let x: E = E.A(true); return 0; }");
 }
 
 #[test]
@@ -817,9 +833,7 @@ fn typecheck_match_unknown_enum_pattern() {
     // A variant pattern naming an unknown enum on an Int value: the pattern
     // expect runs FIRST (TYPE_MATCH_PATTERN expected=Ghost found=Int), then
     // TYPE_UNKNOWN_ENUM — two lines, both at the value span.
-    assert_matches_oracle(
-        "fn f(n: Int) -> Int { match n { Ghost.A -> { }, _ -> { } } return 0; }",
-    );
+    assert_matches_oracle("fn f(n: Int) -> Int { match n { Ghost.A -> { }, _ -> { } } return 0; }");
 }
 
 #[test]

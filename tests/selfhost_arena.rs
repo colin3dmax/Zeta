@@ -114,16 +114,12 @@ fn arena_matches_oracle_on_deep_mixed_precedence() {
 
 #[test]
 fn arena_matches_oracle_on_full_precedence_ladder() {
-    assert_matches_oracle(
-        "fn f() -> Bool { let r: Bool = a || b && c == d + e * f; return r; }",
-    );
+    assert_matches_oracle("fn f() -> Bool { let r: Bool = a || b && c == d + e * f; return r; }");
 }
 
 #[test]
 fn arena_matches_oracle_on_bool_literals() {
-    assert_matches_oracle(
-        "fn f() -> Bool { let t: Bool = true; let g: Bool = false; return t; }",
-    );
+    assert_matches_oracle("fn f() -> Bool { let t: Bool = true; let g: Bool = false; return t; }");
 }
 
 #[test]
@@ -184,9 +180,7 @@ fn arena_matches_oracle_on_while() {
 
 #[test]
 fn arena_matches_oracle_on_while_with_nested_if() {
-    assert_matches_oracle(
-        "fn f() -> Int { while c { x = x + 1; if d { x = x - 1; } } return x; }",
-    );
+    assert_matches_oracle("fn f() -> Int { while c { x = x + 1; if d { x = x - 1; } } return x; }");
 }
 
 #[test]
@@ -246,7 +240,9 @@ fn arena_matches_oracle_on_mixed_items() {
 #[test]
 fn arena_matches_oracle_on_string_literals() {
     assert_matches_oracle("fn f() -> String { let s: String = \"hello\"; return s; }");
-    assert_matches_oracle("fn f() -> String { let s: String = \"a\\nb\\tc\\\\d\\\"e\"; return s; }");
+    assert_matches_oracle(
+        "fn f() -> String { let s: String = \"a\\nb\\tc\\\\d\\\"e\"; return s; }",
+    );
 }
 
 #[test]
@@ -297,7 +293,9 @@ fn arena_matches_oracle_on_interleaved_postfix() {
 fn arena_matches_oracle_on_struct_literal_not_in_condition() {
     // `if`/`while` conditions must NOT treat `Name {` as a struct literal.
     assert_matches_oracle("fn f() -> Int { if x { return 1; } return 0; }");
-    assert_matches_oracle("fn f() -> Int { let a: Int = P { v: 1 }; if a { return 1; } return 0; }");
+    assert_matches_oracle(
+        "fn f() -> Int { let a: Int = P { v: 1 }; if a { return 1; } return 0; }",
+    );
 }
 
 #[test]
@@ -319,8 +317,22 @@ fn arena_matches_oracle_on_operator_probes() {
     // op_13 (call/index/field) and op_chain_boundaries (call/string) are now
     // covered by this batch's postfix/string support.
     for name in [
-        "op_01", "op_02", "op_03", "op_04", "op_05", "op_06", "op_07", "op_08", "op_09",
-        "op_10", "op_11", "op_12", "op_13", "op_14", "op_15", "op_chain_boundaries",
+        "op_01",
+        "op_02",
+        "op_03",
+        "op_04",
+        "op_05",
+        "op_06",
+        "op_07",
+        "op_08",
+        "op_09",
+        "op_10",
+        "op_11",
+        "op_12",
+        "op_13",
+        "op_14",
+        "op_15",
+        "op_chain_boundaries",
     ] {
         assert_probe(&format!("testdata/stage1_parity/{name}.zeta"));
     }
@@ -359,7 +371,13 @@ fn arena_matches_oracle_on_control_flow_probes() {
     for n in 1..=15 {
         assert_probe(&format!("testdata/stage1_parity/cf_{n:02}.zeta"));
     }
-    for name in ["elif_01", "for_01", "forc_01", "forrange_01", "control_flow_core"] {
+    for name in [
+        "elif_01",
+        "for_01",
+        "forc_01",
+        "forrange_01",
+        "control_flow_core",
+    ] {
         assert_probe(&format!("testdata/stage1_parity/{name}.zeta"));
     }
 }
@@ -423,9 +441,7 @@ fn arena_matches_oracle_on_match_patterns() {
     assert_matches_oracle(
         "fn f(x: Bool) -> Int { match x { true -> { return 1; }, false -> { return 0; } } }",
     );
-    assert_matches_oracle(
-        "fn f(x: Int) -> Int { match x { n -> { return n; } } }",
-    );
+    assert_matches_oracle("fn f(x: Int) -> Int { match x { n -> { return n; } } }");
     assert_matches_oracle(
         "fn f(c: Color) -> Int { match c { Color.Red -> { return 1; }, Color.Green -> { return 2; }, _ -> { return 0; } } }",
     );

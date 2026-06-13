@@ -95,9 +95,7 @@ fn assert_probe(path: &str) {
 
 #[test]
 fn mir_matches_oracle_on_basic_function() {
-    assert_lowering_matches_oracle(
-        "fn main() -> Int { let x: Int = 1 + 2 * 3; return x; }",
-    );
+    assert_lowering_matches_oracle("fn main() -> Int { let x: Int = 1 + 2 * 3; return x; }");
 }
 
 #[test]

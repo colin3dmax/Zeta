@@ -510,7 +510,9 @@ fn lower_expr(
         // Range 只作为 for-in 的 iterable 出现,在 lower_stmt 里被拆成 ForRange 的 start/end,
         // 不会作为独立表达式 lower。
         Expr::Range { .. } => {
-            unreachable!("Expr::Range only appears as a for-in iterable and is lowered in lower_stmt")
+            unreachable!(
+                "Expr::Range only appears as a for-in iterable and is lowered in lower_stmt"
+            )
         }
     }
 }
@@ -622,9 +624,7 @@ impl DumpCtx {
             } => {
                 let start_temp = self.dump_expr(start, indent, out);
                 let end_temp = self.dump_expr(end, indent, out);
-                out.push_str(&format!(
-                    "{pad}for {binding} in {start_temp}..{end_temp}\n"
-                ));
+                out.push_str(&format!("{pad}for {binding} in {start_temp}..{end_temp}\n"));
                 for stmt in body {
                     self.dump_stmt(stmt, indent + 1, out);
                 }
@@ -1114,7 +1114,12 @@ impl<'a> MirVerifier<'a> {
                 let mut loop_locals = locals.clone();
                 // init declares its binding in loop_locals (scoped to the for).
                 self.verify_stmt(init, &mut loop_locals, expected_return, loop_depth);
-                self.expect_bool(condition, &loop_locals, "MIR_FORC_CONDITION", "for condition");
+                self.expect_bool(
+                    condition,
+                    &loop_locals,
+                    "MIR_FORC_CONDITION",
+                    "for condition",
+                );
                 self.verify_stmt(step, &mut loop_locals, expected_return, loop_depth + 1);
                 self.verify_stmts(body, &mut loop_locals, expected_return, loop_depth + 1);
                 false
