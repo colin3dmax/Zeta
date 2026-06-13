@@ -1,7 +1,7 @@
 use crate::ast::{BinaryOp, Expr, Function, Item, Module, Pattern, Stmt, UnaryOp};
 use crate::diagnostic::{Diagnostic, Span};
 use crate::mir::{self, MirExpr, MirFunction, MirPattern, MirPlace, MirStmt, Program};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
 
@@ -65,7 +65,15 @@ pub fn run_mir(program: &Program) -> Result<Value, Vec<Diagnostic>> {
     mir::verify(program)?;
 
     let mut runtime = MirRuntime::new(program);
-    runtime.call_function(main).map_err(|err| vec![err])
+    // Run `main` from the runtime's own `Rc<MirFunction>` copy (not the
+    // borrowed `program` one) so the `MirExpr` node addresses the interpreter
+    // walks match the ones `movable_loads` was computed over.
+    let main = runtime
+        .functions
+        .get("main")
+        .cloned()
+        .expect("main present after find_mir_main");
+    runtime.call_function(&main).map_err(|err| vec![err])
 }
 
 #[derive(Debug, Default)]
@@ -138,20 +146,380 @@ fn find_mir_main(program: &Program) -> Option<&MirFunction> {
         .find(|function| function.name == "main")
 }
 
+// ---------------------------------------------------------------------------
+// Last-use (liveness) analysis for move-on-load.
+//
+// A backward liveness pass over each function's structured MIR. It marks every
+// `Load(name)` site that is the LAST use of `name` (i.e. `name` is dead right
+// after the load): on every forward path the next event touching `name` is
+// either a full rebind or function exit, never another read. The interpreter
+// then MOVES such loads out of `locals` (refcount drops to 1) instead of
+// cloning, so copy-on-write writes mutate in place — O(n) instead of O(n^2).
+//
+// Soundness: an over-approximation of liveness is always safe (it only
+// SUPPRESSES moves). `while` is solved to a fixpoint so loop-carried liveness
+// is captured; `for-*` loops (which the self-hosting frontend never uses, but
+// the run corpus does) are handled conservatively — every name they mention is
+// kept live and nothing inside is marked movable. Any residual unsoundness would
+// surface immediately as a divergence in the run-corpus / fixpoint oracle gates.
+type LiveSet = HashSet<String>;
+
+struct LoopCtx {
+    brk: LiveSet,
+    cont: LiveSet,
+}
+
+fn compute_movable_loads(functions: &HashMap<String, Rc<MirFunction>>) -> HashSet<*const MirExpr> {
+    let mut movable = HashSet::new();
+    for function in functions.values() {
+        // live-out of a function body is empty: nothing is live after return.
+        live_stmts(&function.body, LiveSet::new(), None, true, &mut movable);
+    }
+    movable
+}
+
+fn live_stmts(
+    stmts: &[MirStmt],
+    mut live: LiveSet,
+    ctx: Option<&LoopCtx>,
+    mark: bool,
+    movable: &mut HashSet<*const MirExpr>,
+) -> LiveSet {
+    for stmt in stmts.iter().rev() {
+        live = live_stmt(stmt, live, ctx, mark, movable);
+    }
+    live
+}
+
+fn live_stmt(
+    stmt: &MirStmt,
+    mut live: LiveSet,
+    ctx: Option<&LoopCtx>,
+    mark: bool,
+    movable: &mut HashSet<*const MirExpr>,
+) -> LiveSet {
+    match stmt {
+        MirStmt::Local { name, value, .. } => {
+            // Binding `name` kills its old value before the RHS is evaluated, so
+            // the RHS's final read of `name` (if any) is a last use.
+            live.remove(name);
+            live_expr(value, live, mark, movable)
+        }
+        MirStmt::Store { place, value } => match place {
+            MirPlace::Local(name) => {
+                // Full reassignment: kills the old binding, like `Local`.
+                live.remove(name);
+                live_expr(value, live, mark, movable)
+            }
+            _ => {
+                // Field/index store is a read-modify-write of the root: keep all
+                // names the place mentions live, and never move them.
+                live = live_place_uses(place, live);
+                live_expr(value, live, mark, movable)
+            }
+        },
+        MirStmt::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
+            let lt = live_stmts(then_body, live.clone(), ctx, mark, movable);
+            let le = live_stmts(else_body, live, ctx, mark, movable);
+            let mut merged = lt;
+            merged.extend(le);
+            live_expr(condition, merged, mark, movable)
+        }
+        MirStmt::While { condition, body } => live_while(condition, body, live, mark, movable),
+        MirStmt::Match { value, arms } => {
+            let mut merged = LiveSet::new();
+            for arm in arms {
+                let mut al = live_stmts(&arm.body, live.clone(), ctx, mark, movable);
+                for binding in liveness_pattern_bindings(&arm.pattern) {
+                    al.remove(&binding);
+                }
+                merged.extend(al);
+            }
+            live_expr(value, merged, mark, movable)
+        }
+        MirStmt::Return(Some(expr)) => live_expr(expr, LiveSet::new(), mark, movable),
+        MirStmt::Return(None) => LiveSet::new(),
+        MirStmt::Break => ctx.map(|c| c.brk.clone()).unwrap_or_default(),
+        MirStmt::Continue => ctx.map(|c| c.cont.clone()).unwrap_or_default(),
+        MirStmt::Drop(expr) => live_expr(expr, live, mark, movable),
+        // Conservative for-loops: keep every mentioned name live, mark nothing.
+        MirStmt::ForIn { .. } | MirStmt::ForRange { .. } | MirStmt::ForC { .. } => {
+            collect_stmt_names(stmt, &mut live);
+            live
+        }
+    }
+}
+
+/// Solve `while` to a fixpoint so loop-carried liveness (a name read on the next
+/// iteration) is captured, then do one marking pass with the converged sets.
+fn live_while(
+    condition: &MirExpr,
+    body: &[MirStmt],
+    live_out: LiveSet,
+    mark: bool,
+    movable: &mut HashSet<*const MirExpr>,
+) -> LiveSet {
+    let brk = live_out.clone();
+    // `cont` = live-in of the condition = the loop's live-in. Grows monotonically.
+    let mut cont = live_out;
+    loop {
+        let ctx = LoopCtx {
+            brk: brk.clone(),
+            cont: cont.clone(),
+        };
+        // body live-out flows to the condition (= cont); plus the exit edge (brk).
+        let lib = live_stmts(body, cont.clone(), Some(&ctx), false, movable);
+        let mut cond_out = lib;
+        cond_out.extend(brk.iter().cloned());
+        let next = live_expr(condition, cond_out, false, movable);
+        if next == cont {
+            break;
+        }
+        cont = next;
+    }
+    if mark {
+        let ctx = LoopCtx {
+            brk: brk.clone(),
+            cont: cont.clone(),
+        };
+        let lib = live_stmts(body, cont.clone(), Some(&ctx), true, movable);
+        let mut cond_out = lib;
+        cond_out.extend(brk.iter().cloned());
+        live_expr(condition, cond_out, true, movable);
+    }
+    cont
+}
+
+/// Process an expression backward (reverse evaluation order), marking last-use
+/// loads. Returns the live set BEFORE the expression.
+fn live_expr(
+    expr: &MirExpr,
+    mut live: LiveSet,
+    mark: bool,
+    movable: &mut HashSet<*const MirExpr>,
+) -> LiveSet {
+    match expr {
+        MirExpr::Load(name) => {
+            if mark && !live.contains(name) {
+                movable.insert(expr as *const MirExpr);
+            }
+            live.insert(name.clone());
+            live
+        }
+        MirExpr::Int(_) | MirExpr::String(_) | MirExpr::Bool(_) => live,
+        MirExpr::Binary { left, right, .. } => {
+            // Eval order is left then right; process right first so left sees
+            // right's uses. (`&&`/`||` may skip the right at runtime — treating
+            // it as always-used only over-approximates liveness, which is safe.)
+            let live = live_expr(right, live, mark, movable);
+            live_expr(left, live, mark, movable)
+        }
+        MirExpr::Unary { expr, .. } => live_expr(expr, live, mark, movable),
+        MirExpr::Call { args, .. } => {
+            for arg in args.iter().rev() {
+                live = live_expr(arg, live, mark, movable);
+            }
+            live
+        }
+        MirExpr::EnumVariant { payload, .. } => match payload {
+            Some(payload) => live_expr(payload, live, mark, movable),
+            None => live,
+        },
+        MirExpr::StructLiteral { fields, .. } => {
+            for field in fields.iter().rev() {
+                live = live_expr(&field.value, live, mark, movable);
+            }
+            live
+        }
+        MirExpr::FieldAccess { base, .. } => live_expr(base, live, mark, movable),
+        MirExpr::ArrayLiteral { elements } => {
+            for element in elements.iter().rev() {
+                live = live_expr(element, live, mark, movable);
+            }
+            live
+        }
+        MirExpr::Index { base, index } => {
+            // Eval order base then index; process index first.
+            let live = live_expr(index, live, mark, movable);
+            live_expr(base, live, mark, movable)
+        }
+    }
+}
+
+fn liveness_pattern_bindings(pattern: &MirPattern) -> Vec<String> {
+    match pattern {
+        MirPattern::Name(name) => vec![name.clone()],
+        MirPattern::Variant {
+            binding: Some(binding),
+            ..
+        } => vec![binding.clone()],
+        _ => Vec::new(),
+    }
+}
+
+/// Names a place reads (its root, plus any index expressions). Used to keep them
+/// live across a read-modify-write store without marking them movable.
+fn live_place_uses(place: &MirPlace, mut live: LiveSet) -> LiveSet {
+    match place {
+        MirPlace::Local(name) => {
+            live.insert(name.clone());
+            live
+        }
+        MirPlace::Field { base, .. } => live_place_uses(base, live),
+        MirPlace::Index { base, index } => {
+            collect_expr_names(index, &mut live);
+            live_place_uses(base, live)
+        }
+    }
+}
+
+fn collect_expr_names(expr: &MirExpr, out: &mut LiveSet) {
+    match expr {
+        MirExpr::Load(name) => {
+            out.insert(name.clone());
+        }
+        MirExpr::Int(_) | MirExpr::String(_) | MirExpr::Bool(_) => {}
+        MirExpr::Binary { left, right, .. } => {
+            collect_expr_names(left, out);
+            collect_expr_names(right, out);
+        }
+        MirExpr::Unary { expr, .. } => collect_expr_names(expr, out),
+        MirExpr::Call { args, .. } => {
+            for arg in args {
+                collect_expr_names(arg, out);
+            }
+        }
+        MirExpr::EnumVariant { payload, .. } => {
+            if let Some(payload) = payload {
+                collect_expr_names(payload, out);
+            }
+        }
+        MirExpr::StructLiteral { fields, .. } => {
+            for field in fields {
+                collect_expr_names(&field.value, out);
+            }
+        }
+        MirExpr::FieldAccess { base, .. } => collect_expr_names(base, out),
+        MirExpr::ArrayLiteral { elements } => {
+            for element in elements {
+                collect_expr_names(element, out);
+            }
+        }
+        MirExpr::Index { base, index } => {
+            collect_expr_names(base, out);
+            collect_expr_names(index, out);
+        }
+    }
+}
+
+fn collect_place_names(place: &MirPlace, out: &mut LiveSet) {
+    match place {
+        MirPlace::Local(name) => {
+            out.insert(name.clone());
+        }
+        MirPlace::Field { base, .. } => collect_place_names(base, out),
+        MirPlace::Index { base, index } => {
+            collect_expr_names(index, out);
+            collect_place_names(base, out);
+        }
+    }
+}
+
+fn collect_stmt_names(stmt: &MirStmt, out: &mut LiveSet) {
+    match stmt {
+        MirStmt::Local { value, .. } => collect_expr_names(value, out),
+        MirStmt::Store { place, value } => {
+            collect_place_names(place, out);
+            collect_expr_names(value, out);
+        }
+        MirStmt::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
+            collect_expr_names(condition, out);
+            for stmt in then_body.iter().chain(else_body) {
+                collect_stmt_names(stmt, out);
+            }
+        }
+        MirStmt::While { condition, body } => {
+            collect_expr_names(condition, out);
+            for stmt in body {
+                collect_stmt_names(stmt, out);
+            }
+        }
+        MirStmt::ForIn {
+            iterable, body, ..
+        } => {
+            collect_expr_names(iterable, out);
+            for stmt in body {
+                collect_stmt_names(stmt, out);
+            }
+        }
+        MirStmt::ForRange {
+            start, end, body, ..
+        } => {
+            collect_expr_names(start, out);
+            collect_expr_names(end, out);
+            for stmt in body {
+                collect_stmt_names(stmt, out);
+            }
+        }
+        MirStmt::ForC {
+            init,
+            condition,
+            step,
+            body,
+        } => {
+            collect_stmt_names(init, out);
+            collect_expr_names(condition, out);
+            collect_stmt_names(step, out);
+            for stmt in body {
+                collect_stmt_names(stmt, out);
+            }
+        }
+        MirStmt::Match { value, arms } => {
+            collect_expr_names(value, out);
+            for arm in arms {
+                for stmt in &arm.body {
+                    collect_stmt_names(stmt, out);
+                }
+            }
+        }
+        MirStmt::Return(Some(expr)) | MirStmt::Drop(expr) => collect_expr_names(expr, out),
+        MirStmt::Return(None) | MirStmt::Break | MirStmt::Continue => {}
+    }
+}
+
 struct MirRuntime {
     functions: HashMap<String, Rc<MirFunction>>,
     enum_variants: HashMap<String, HashMap<String, Option<String>>>,
     loop_steps: usize,
+    // `Load` sites (keyed by `MirExpr` node address) whose value is dead
+    // immediately afterwards — the interpreter MOVES (removes) these out of
+    // `locals` instead of cloning, so the copy-on-write `Value`'s `Rc` reaches
+    // refcount 1 and writes mutate in place. This is what turns the residual
+    // O(n^2) arena-threading (`let r = parse_x(a, ..); a = r.arena`) into O(n).
+    // Computed once over the `Rc<MirFunction>` bodies, whose node addresses stay
+    // stable for the runtime's lifetime (see `compute_movable_loads`).
+    movable_loads: HashSet<*const MirExpr>,
 }
 
 impl MirRuntime {
     fn new(program: &Program) -> Self {
+        let functions: HashMap<String, Rc<MirFunction>> = program
+            .functions
+            .iter()
+            .map(|function| (function.name.clone(), Rc::new(function.clone())))
+            .collect();
+        let movable_loads = compute_movable_loads(&functions);
         Self {
-            functions: program
-                .functions
-                .iter()
-                .map(|function| (function.name.clone(), Rc::new(function.clone())))
-                .collect(),
+            functions,
+            movable_loads,
             enum_variants: program
                 .enums
                 .iter()
@@ -445,7 +813,7 @@ impl MirRuntime {
     fn flatten_place(
         &mut self,
         place: &MirPlace,
-        locals: &HashMap<String, Value>,
+        locals: &mut HashMap<String, Value>,
     ) -> Result<(String, Vec<PlaceStep>), Diagnostic> {
         match place {
             MirPlace::Local(name) => Ok((name.clone(), Vec::new())),
@@ -478,12 +846,21 @@ impl MirRuntime {
     fn eval_expr(
         &mut self,
         expr: &MirExpr,
-        locals: &HashMap<String, Value>,
+        locals: &mut HashMap<String, Value>,
     ) -> Result<Value, Diagnostic> {
         match expr {
-            MirExpr::Load(name) => locals.get(name).cloned().ok_or_else(|| {
-                runtime_error("RUNTIME_UNKNOWN_NAME", format!("unknown name `{name}`"))
-            }),
+            MirExpr::Load(name) => {
+                // If this load is `name`'s last use, MOVE it out (refcount 1 →
+                // in-place writes); otherwise clone, leaving the binding intact.
+                let value = if self.movable_loads.contains(&(expr as *const MirExpr)) {
+                    locals.remove(name)
+                } else {
+                    locals.get(name).cloned()
+                };
+                value.ok_or_else(|| {
+                    runtime_error("RUNTIME_UNKNOWN_NAME", format!("unknown name `{name}`"))
+                })
+            }
             MirExpr::Int(value) => value.parse::<i64>().map(Value::Int).map_err(|_| {
                 runtime_error(
                     "RUNTIME_INT_PARSE",
@@ -499,11 +876,11 @@ impl MirRuntime {
             }
             MirExpr::Call { callee, args } => {
                 if is_std_builtin(callee) {
-                    let args = args
-                        .iter()
-                        .map(|arg| self.eval_expr(arg, locals))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    return eval_std_builtin(callee, args);
+                    let mut arg_values = Vec::with_capacity(args.len());
+                    for arg in args {
+                        arg_values.push(self.eval_expr(arg, locals)?);
+                    }
+                    return eval_std_builtin(callee, arg_values);
                 }
                 let Some(function) = self.functions.get(callee).cloned() else {
                     return Err(runtime_error(
@@ -542,14 +919,17 @@ impl MirRuntime {
                 enum_name,
                 variant,
                 payload,
-            } => Ok(Value::Enum {
-                ty: enum_name.clone(),
-                variant: variant.clone(),
-                payload: payload
-                    .as_ref()
-                    .map(|payload| self.eval_expr(payload, locals).map(Box::new))
-                    .transpose()?,
-            }),
+            } => {
+                let payload = match payload {
+                    Some(payload) => Some(Box::new(self.eval_expr(payload, locals)?)),
+                    None => None,
+                };
+                Ok(Value::Enum {
+                    ty: enum_name.clone(),
+                    variant: variant.clone(),
+                    payload,
+                })
+            }
             MirExpr::StructLiteral { ty, fields } => {
                 let mut values = BTreeMap::new();
                 for field in fields {
@@ -599,11 +979,13 @@ impl MirRuntime {
                     )
                 })
             }
-            MirExpr::ArrayLiteral { elements } => elements
-                .iter()
-                .map(|element| self.eval_expr(element, locals))
-                .collect::<Result<Vec<_>, _>>()
-                .map(|elements| Value::Array(Rc::new(elements))),
+            MirExpr::ArrayLiteral { elements } => {
+                let mut values = Vec::with_capacity(elements.len());
+                for element in elements {
+                    values.push(self.eval_expr(element, locals)?);
+                }
+                Ok(Value::Array(Rc::new(values)))
+            }
             MirExpr::Index { base, index } => {
                 let base = self.eval_expr(base, locals)?;
                 let index = self.eval_expr(index, locals)?;
@@ -617,7 +999,7 @@ impl MirRuntime {
         op: BinaryOp,
         left: &MirExpr,
         right: &MirExpr,
-        locals: &HashMap<String, Value>,
+        locals: &mut HashMap<String, Value>,
     ) -> Result<Value, Diagnostic> {
         match op {
             BinaryOp::And => {
@@ -1215,6 +1597,13 @@ fn write_through_path(
     path: &[PlaceStep],
     value: Value,
 ) -> Result<(), Diagnostic> {
+    if path.is_empty() {
+        // Plain `name = value`: bind the slot directly. The RHS may have moved
+        // `name` out (a last-use move, e.g. the common `name = f(name)`), so we
+        // must not require the old slot to still exist — we're overwriting it.
+        locals.insert(root.to_string(), value);
+        return Ok(());
+    }
     let mut slot = locals
         .get_mut(root)
         .ok_or_else(|| runtime_error("RUNTIME_UNKNOWN_NAME", format!("unknown name `{root}`")))?;
