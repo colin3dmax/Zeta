@@ -7551,3 +7551,33 @@ export fn run_main_via_arena(source: String) -> String {
   }
   return value_to_string(ex.vals, result);
 }
+
+// M7 slice 2: the unified compiler driver. Turns the seven per-stage exports
+// above into a single `zetac`-style front door that dispatches on `mode`.
+// Mode strings mirror the Stage0 CLI subcommands (`zeta ast-dump`, `zeta run`,
+// ...): "ast-dump" / "resolve" / "typecheck" / "mir-dump" / "run". An unknown
+// mode returns a `ZETAC_UNKNOWN_MODE <mode>` marker rather than crashing, so a
+// caller can probe the driver without knowing the mode set up front.
+//
+// This is the integration step that makes the Zeta side "one compiler" instead
+// of a handful of loose functions; the whole-program self-application proof
+// lives in tests/selfhost_fixpoint.rs, and driver dispatch is gated by
+// tests/selfhost_driver.rs.
+export fn compile(source: String, mode: String) -> String {
+  if mode == "ast-dump" {
+    return dump_module_via_arena(source);
+  }
+  if mode == "resolve" {
+    return resolve_report(source);
+  }
+  if mode == "typecheck" {
+    return typecheck_report(source);
+  }
+  if mode == "mir-dump" {
+    return mir_dump_pipeline_via_arena(source);
+  }
+  if mode == "run" {
+    return run_main_via_arena(source);
+  }
+  return string_concat("ZETAC_UNKNOWN_MODE ", mode);
+}
