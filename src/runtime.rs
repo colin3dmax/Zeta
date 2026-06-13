@@ -104,6 +104,71 @@ impl HotRuntime {
     pub fn hot_swap(&mut self, program: &Program) {
         self.inner.reload(program);
     }
+
+    /// Whether a function of this name is in the (possibly hot-swapped) table.
+    pub fn has(&self, name: &str) -> bool {
+        self.inner.functions.contains_key(name)
+    }
+}
+
+/// A long-running hot-reloadable service over the `init` / `step` / `render`
+/// convention (hot-reload slice 2; see docs/compiler/hot-reload-design.md):
+///
+///   fn init() -> State                    // produce the initial state
+///   fn step(state: State, input) -> State // advance one tick (hot-swappable)
+///   fn render(state: State) -> String     // optional; how to display the state
+///
+/// `ServiceDriver` holds the live STATE and the swappable runtime. `tick`
+/// advances the state; `try_reload` swaps in new code WITHOUT disturbing the
+/// accumulated state; and a *failed* reload (e.g. a compile error in the new
+/// source) leaves the old code and state running, so the service survives a bad
+/// edit. This is the testable core the `zeta serve` CLI shell drives.
+pub struct ServiceDriver {
+    runtime: HotRuntime,
+    state: Value,
+}
+
+impl ServiceDriver {
+    /// Start a service from source: lower it, then `state = init()`.
+    pub fn start(source: &str) -> Result<ServiceDriver, Vec<Diagnostic>> {
+        let program = crate::lower_source(source)?;
+        let mut runtime = HotRuntime::new(&program);
+        let state = runtime.call("init", Vec::new())?;
+        Ok(ServiceDriver { runtime, state })
+    }
+
+    /// Advance the state by one `step(state, input)`; returns the new state.
+    pub fn tick(&mut self, input: Value) -> Result<Value, Vec<Diagnostic>> {
+        let current = self.state.clone();
+        let next = self.runtime.call("step", vec![current, input])?;
+        self.state = next;
+        Ok(self.state.clone())
+    }
+
+    /// Render the current state: calls `render(state)` if the program defines it,
+    /// else falls back to the value's `Display`.
+    pub fn render(&mut self) -> Result<String, Vec<Diagnostic>> {
+        if self.runtime.has("render") {
+            let current = self.state.clone();
+            return match self.runtime.call("render", vec![current])? {
+                Value::String(text) => Ok(text),
+                other => Ok(other.to_string()),
+            };
+        }
+        Ok(self.state.to_string())
+    }
+
+    /// Hot-swap to new source. On a compile error the running code AND state are
+    /// left untouched and the diagnostics returned — the service survives.
+    pub fn try_reload(&mut self, source: &str) -> Result<(), Vec<Diagnostic>> {
+        let program = crate::lower_source(source)?;
+        self.runtime.hot_swap(&program);
+        Ok(())
+    }
+
+    pub fn state(&self) -> &Value {
+        &self.state
+    }
 }
 
 #[derive(Debug, Default)]

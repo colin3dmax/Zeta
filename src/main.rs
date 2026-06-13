@@ -14,6 +14,7 @@ fn main() {
         Some("symbols-dump") if args.len() == 3 => symbols_dump(&args[2]),
         Some("check") if args.len() == 3 => check(&args[2]),
         Some("run") if args.len() == 3 => run(&args[2]),
+        Some("serve") if args.len() == 3 => serve(&args[2]),
         Some("repl") if args.len() == 2 => repl(),
         _ => {
             eprintln!("usage: zeta ast-dump <path>");
@@ -22,6 +23,7 @@ fn main() {
             eprintln!("       zeta symbols-dump <directory>");
             eprintln!("       zeta check <path>");
             eprintln!("       zeta run <path>");
+            eprintln!("       zeta serve <path>");
             eprintln!("       zeta repl");
             process::exit(2);
         }
@@ -210,6 +212,85 @@ fn run(path: &str) {
             process::exit(1);
         }
     }
+}
+
+/// `zeta serve <file>` — run a hot-reloadable service (the `init`/`step`/`render`
+/// convention; see docs/compiler/hot-reload-design.md). Prints the rendered
+/// state, reads integer inputs (one per line) and ticks the service. While it
+/// waits for input you can edit & save the file; the next input hot-reloads the
+/// new code WITHOUT losing the accumulated state. A bad edit is rejected and the
+/// previous version keeps running.
+fn serve(path: &str) {
+    let source = match fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(err) => {
+            eprintln!("failed to read {path}: {err}");
+            process::exit(1);
+        }
+    };
+    let mut driver = match zeta::runtime::ServiceDriver::start(&source) {
+        Ok(driver) => driver,
+        Err(diagnostics) => {
+            print_diagnostics(&diagnostics, &source, path);
+            process::exit(1);
+        }
+    };
+
+    let mut last_mtime = file_mtime(path);
+    eprintln!(
+        "[zeta serve] {path} — integer inputs, one per line; \
+         edit & save the file to hot-reload; Ctrl-D to quit."
+    );
+
+    loop {
+        match driver.render() {
+            Ok(text) => println!("{text}"),
+            Err(diagnostics) => print_diagnostics(&diagnostics, &source, path),
+        }
+
+        let mut line = String::new();
+        match std::io::stdin().read_line(&mut line) {
+            Ok(0) => break, // EOF (Ctrl-D)
+            Ok(_) => {}
+            Err(err) => {
+                eprintln!("input error: {err}");
+                break;
+            }
+        }
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        // Hot-reload if the file changed since the last tick.
+        let now_mtime = file_mtime(path);
+        if now_mtime != last_mtime {
+            last_mtime = now_mtime;
+            match fs::read_to_string(path) {
+                Ok(new_source) => match driver.try_reload(&new_source) {
+                    Ok(()) => eprintln!("[reloaded {path}]"),
+                    Err(diagnostics) => {
+                        eprintln!("[reload rejected — keeping the previous version]");
+                        print_diagnostics(&diagnostics, &new_source, path);
+                    }
+                },
+                Err(err) => eprintln!("[reload read failed: {err}]"),
+            }
+        }
+
+        match line.parse::<i64>() {
+            Ok(input) => {
+                if let Err(diagnostics) = driver.tick(zeta::runtime::Value::Int(input)) {
+                    print_diagnostics(&diagnostics, &source, path);
+                }
+            }
+            Err(_) => eprintln!("[expected an integer input, got `{line}`]"),
+        }
+    }
+}
+
+fn file_mtime(path: &str) -> Option<std::time::SystemTime> {
+    fs::metadata(path).and_then(|meta| meta.modified()).ok()
 }
 
 fn run_module_directory(root: &Path) {
