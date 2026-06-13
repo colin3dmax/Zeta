@@ -76,6 +76,36 @@ pub fn run_mir(program: &Program) -> Result<Value, Vec<Diagnostic>> {
     runtime.call_function(&main).map_err(|err| vec![err])
 }
 
+/// A persistent MIR runtime supporting state-preserving hot code reload (M-hot
+/// slice 1). Unlike `run_mir`, a `HotRuntime` lives across many `call`s: it
+/// holds the swappable function table, while the caller threads the program
+/// STATE value through `call(..)` and back. `hot_swap` atomically replaces the
+/// function table with a newly lowered program — the same accumulated state is
+/// then fed to the new code. See docs/compiler/hot-reload-design.md.
+pub struct HotRuntime {
+    inner: MirRuntime,
+}
+
+impl HotRuntime {
+    pub fn new(program: &Program) -> Self {
+        HotRuntime {
+            inner: MirRuntime::new(program),
+        }
+    }
+
+    /// Call a named function (e.g. `step`) with argument values; returns its
+    /// result. The threaded state lives in `args`/return, NOT inside the runtime.
+    pub fn call(&mut self, name: &str, args: Vec<Value>) -> Result<Value, Vec<Diagnostic>> {
+        self.inner.invoke(name, args).map_err(|err| vec![err])
+    }
+
+    /// Hot-swap the running function table to a newly lowered program. Any state
+    /// the caller is threading survives untouched.
+    pub fn hot_swap(&mut self, program: &Program) {
+        self.inner.reload(program);
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct ReplSession {
     locals: HashMap<String, Value>,
@@ -552,6 +582,76 @@ impl MirRuntime {
                 "`continue` reached function boundary",
             )),
         }
+    }
+
+    /// Invoke a named function with pre-evaluated argument values. Used by the
+    /// hot-reload service loop to call `step(state, input)` across iterations:
+    /// the STATE lives in the caller (threaded value), the swappable code lives
+    /// in `self.functions`. Each invocation gets a fresh loop-step budget so a
+    /// long-running service is not capped by a single accumulating counter.
+    fn invoke(&mut self, name: &str, args: Vec<Value>) -> Result<Value, Diagnostic> {
+        let Some(function) = self.functions.get(name).cloned() else {
+            return Err(runtime_error(
+                "RUNTIME_UNKNOWN_FUNCTION",
+                format!("unknown function `{name}`"),
+            ));
+        };
+        if function.params.len() != args.len() {
+            return Err(runtime_error(
+                "RUNTIME_CALL_ARITY",
+                format!(
+                    "function `{name}` expects {} arguments, found {}",
+                    function.params.len(),
+                    args.len()
+                ),
+            ));
+        }
+        self.loop_steps = 0;
+        let mut locals = HashMap::new();
+        for (param, arg) in function.params.iter().zip(args) {
+            locals.insert(param.name.clone(), arg);
+        }
+        match self.eval_stmts(&function.body, &mut locals)? {
+            Control::Return(value) => Ok(value),
+            Control::Continue => Ok(Value::Unit),
+            Control::BreakLoop => Err(runtime_error(
+                "RUNTIME_BREAK_OUTSIDE_LOOP",
+                "`break` reached function boundary",
+            )),
+            Control::ContinueLoop => Err(runtime_error(
+                "RUNTIME_CONTINUE_OUTSIDE_LOOP",
+                "`continue` reached function boundary",
+            )),
+        }
+    }
+
+    /// Atomically swap the function table (and its derived liveness) to a newly
+    /// lowered program — the hot-code-reload core. The function table is already
+    /// `HashMap<String, Rc<MirFunction>>`, so replacing an entry is cheap; the
+    /// caller's threaded STATE value is untouched, so it survives the swap.
+    fn reload(&mut self, program: &Program) {
+        self.functions = program
+            .functions
+            .iter()
+            .map(|function| (function.name.clone(), Rc::new(function.clone())))
+            .collect();
+        // `movable_loads` keys on `MirExpr` node addresses, which the swap
+        // invalidated — recompute over the new bodies.
+        self.movable_loads = compute_movable_loads(&self.functions);
+        self.enum_variants = program
+            .enums
+            .iter()
+            .map(|enum_decl| {
+                (
+                    enum_decl.name.clone(),
+                    enum_decl
+                        .variants
+                        .iter()
+                        .map(|variant| (variant.name.clone(), variant.payload_type.clone()))
+                        .collect(),
+                )
+            })
+            .collect();
     }
 
     fn eval_stmts(

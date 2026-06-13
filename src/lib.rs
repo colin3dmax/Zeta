@@ -49,6 +49,22 @@ pub fn check_source(source: &str) -> Result<(), Vec<Diagnostic>> {
     typecheck::check(&module)
 }
 
+/// Parse → resolve → typecheck → lower → verify a source into a MIR `Program`.
+/// The shared front half of `run_source`/`dump_mir`, exposed so the hot-reload
+/// runtime (`runtime::HotRuntime`) can lower both the initial program and each
+/// hot-swapped revision. Does NOT require a `main` (a service program may export
+/// only `init`/`step`).
+pub fn lower_source(source: &str) -> Result<mir::Program, Vec<Diagnostic>> {
+    let module = parse_source(source)?;
+    resolver::resolve(&module)?;
+    typecheck::check(&module)?;
+    let external_enum_payloads =
+        module_graph::external_enum_payloads(&typecheck::standard_external_enums(&module));
+    let program = mir::lower_with_external_enum_variants(&module, &external_enum_payloads);
+    mir::verify(&program)?;
+    Ok(program)
+}
+
 pub fn run_source(source: &str) -> Result<runtime::Value, Vec<Diagnostic>> {
     let module = parse_source(source)?;
     resolver::resolve(&module)?;
