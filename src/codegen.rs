@@ -19,7 +19,8 @@
 //! locals/params/returns, nesting. Strings (immutable `{len, ptr<i8>}`): literals,
 //! `string_len`/`string_byte_at`/`string_byte_slice`/`string_concat`,
 //! `int_to_string` (via libc snprintf), and the `ascii_is_*` predicates.
-//! Enums (`{i64 tag, i64 p0, ptr p1}`, Int/Bool/String/no-payload variants) +
+//! Enums (`{i64 tag, i64 p0, ptr p1}`, Int/Bool/String/array/struct/no-payload
+//! variants; struct payloads are heap-boxed via p1) +
 //! `match` (lowered to an LLVM `switch` over the tag, or over an Int/Bool value),
 //! including string equality (`==`/`!=` via memcmp). `for` loops:
 //! `for i in a..b`, `for x in intArray`, and C-style `for (init; cond; step)`.
@@ -86,10 +87,11 @@ enum ZType {
     Str,
     /// An enum (tagged union), represented at runtime as `{ i64 tag, i64 p0, ptr p1 }`
     /// where `tag` is the variant's declaration index and `(p0, p1)` is a generic
-    /// payload slot: Int/Bool use `p0`; String uses `p0=len, p1=data` (the `{len,
-    /// ptr}` split). Payload-less variants leave it zero. struct/array payloads are
-    /// not yet in the subset (they would need a wider slot). The interpreter's
-    /// by-name enum value is never observed directly, so this layout need not match.
+    /// payload slot: Int/Bool use `p0`; String/array use `p0=len, p1=data` (the
+    /// `{len, ptr}` split); a struct payload (too wide for the inline slot) is boxed
+    /// on the heap with the pointer in `p1`. Payload-less variants leave it zero. The
+    /// interpreter's by-name enum value is never observed directly, so this layout
+    /// need not match.
     Enum(String),
 }
 
@@ -276,7 +278,8 @@ fn array_struct_type(context: &Context) -> StructType {
 }
 
 /// The `{ i64 tag, i64 p0, ptr p1 }` value type used for all enums. `(p0, p1)` is
-/// a generic payload slot (Int in p0; String's `{len, ptr}` split across p0/p1).
+/// a generic payload slot (Int in p0; String/array's `{len, ptr}` split across
+/// p0/p1; a struct payload is heap-boxed with the pointer in p1).
 fn enum_struct_type(context: &Context) -> StructType {
     let i64_ty = context.i64_type();
     let ptr_ty = context.ptr_type(inkwell::AddressSpace::default());
@@ -1332,7 +1335,22 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                             let p1 = self.builder.build_extract_value(sv, 2, "pdata").unwrap().into_pointer_value();
                             (self.make_len_ptr(p0, p1).into(), ZType::Str)
                         }
-                        _ => return Err("enum payload type not in the native subset (only Int/Bool/String)".into()),
+                        Some(ZType::Array(elem)) => {
+                            // Rebuild {len, ptr} from (p0, p1), then deep-copy so the
+                            // bound local is an independent owner (safe to push/mutate).
+                            let p0 = self.builder.build_extract_value(sv, 1, "plen").unwrap().into_int_value();
+                            let p1 = self.builder.build_extract_value(sv, 2, "pdata").unwrap().into_pointer_value();
+                            let owned = self.deep_copy_array(self.make_len_ptr(p0, p1), &elem);
+                            (owned.into(), ZType::Array(elem))
+                        }
+                        Some(ZType::Struct(name)) => {
+                            // p1 points at the boxed struct; load it back by value.
+                            let p1 = self.builder.build_extract_value(sv, 2, "pbox").unwrap().into_pointer_value();
+                            let struct_ty = self.types.structs[&name].ty;
+                            let loaded = self.builder.build_load(struct_ty, p1, "boxload").unwrap();
+                            (loaded, ZType::Struct(name))
+                        }
+                        _ => return Err("enum payload type not in the native subset".into()),
                     };
                     let slot = self.entry_alloca(binding, self.types.llvm(&bty));
                     self.builder.build_store(slot, bound).unwrap();
@@ -1596,8 +1614,9 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 payload,
             } => {
                 // {tag, p0, p1}: tag = variant index. Payload goes into the generic
-                // slot — Int/Bool in p0; String's {len, ptr} as (p0, p1). No-payload
-                // leaves it zero/null.
+                // slot — Int/Bool in p0; String/array's {len, ptr} as (p0, p1); a
+                // struct (too wide for the inline slot) is boxed on the heap with the
+                // pointer in p1. No-payload leaves it zero/null.
                 let (tag, payload_ty) = self.types.variant_tag(enum_name, variant)?;
                 let null = self.context.ptr_type(inkwell::AddressSpace::default()).const_null();
                 let (p0, p1) = match (payload, &payload_ty) {
@@ -1608,7 +1627,25 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                         let (len, data) = self.len_ptr_parts(s.into_struct_value());
                         (len, data)
                     }
-                    _ => return Err("enum payload type not in the native subset (only Int/Bool/String)".into()),
+                    (Some(expr), Some(ZType::Array(elem))) => {
+                        // Array payload reuses the String {len, ptr} split across
+                        // (p0, p1). Deep-copy so the enum owns an independent buffer
+                        // (value semantics, like every other array binding point).
+                        let (a, _) = self.lower_expr(expr)?;
+                        let owned = self.deep_copy_array(a.into_struct_value(), elem);
+                        let (len, data) = self.len_ptr_parts(owned);
+                        (len, data)
+                    }
+                    (Some(expr), Some(ZType::Struct(name))) => {
+                        // Struct payload is wider than the inline slot: box a by-value
+                        // copy on the heap and put the pointer in p1 (p0 unused).
+                        let (sv, _) = self.lower_expr(expr)?;
+                        let size = self.types.structs[name].ty.size_of().unwrap();
+                        let boxed = self.malloc_bytes(size);
+                        self.builder.build_store(boxed, sv).unwrap();
+                        (self.i64t().const_zero(), boxed)
+                    }
+                    _ => return Err("enum payload type not in the native subset".into()),
                 };
                 let et = enum_struct_type(self.context);
                 let v = self.builder.build_insert_value(et.get_undef(), self.i64t().const_int(tag, false), 0, "e0").unwrap();

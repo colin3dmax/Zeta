@@ -77,7 +77,9 @@ native 后端覆盖 Int/Bool/struct/array/**string**(值语义)。要 AOT 编译
 
 11. ~~**动态数组摊还 O(1) push**~~ ✅ **完成**:数组 buffer 加 8 字节容量头(值仍 `{len,ptr}`,ptr 指元素、cap 在 ptr[-8]);`xs=push(xs,v)` 自赋值经 `match_inplace_push`/`lower_inplace_push` 原地变异 + 容量翻倍,O(n²)→摊还 O(1)。值语义唯一所有保证原地安全。`tests/codegen_dynarray.rs`(14 用例,含 500 元素压力 + 值语义独立)。
 
-**native 后端线全部目标 + 收尾广度 + 性能项全部达成。** 唯一明确未做(前端不需要,nice-to-have):**>16B payload 的 enum**(struct/array payload,需更宽 payload 槽)。其余皆完成。
+12. ~~**>16B payload 的 enum(宽 payload)**~~ ✅ **完成(E3)**:enum 仍是 `{i64 tag, i64 p0, ptr p1}` 值类型,**array payload 复用 String 的 `{len,ptr}` split**(p0=len,p1=data,构造/提取各 deep-copy 一次保证值独立);**struct payload(可任意宽,如 24B 的 V3 > 16B inline 槽)堆 box**:构造 `malloc(sizeof) + store`、p1 存指针,match 提取 `load` 回值(by-value 拷贝,与现有 struct 传值语义一致)。codegen 改 `EnumVariant` 构造 + `lower_match` 提取两处。**附带修两个前端 typecheck bug**:enum payload 类型比较(`MIR_ENUM_PAYLOAD_TYPE`)与 match 绑定类型曾用 `MirType::named(payload)`,对 `IntArray` 等数组别名会误判(display 同为 "IntArray" 却 named≠Array),改用 `parse_mir_type` 解析。门禁 `tests/codegen_enum.rs`(20 用例:`struct_payload_*`/`array_payload_*`/`mixed_wide_and_scalar_payloads`,含值独立性)。
+
+**native 后端线全部目标 + 收尾广度 + 性能项 + 宽 payload enum 全部达成。** 已无明确遗留项。
 
 **每步都用解释器 `run_mir` 作差分 oracle**(见 tests/codegen_*.rs 的 `check()` 范式),feature-gated,不影响默认构建。
 

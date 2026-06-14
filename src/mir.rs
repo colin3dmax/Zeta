@@ -1280,7 +1280,7 @@ impl<'a> MirVerifier<'a> {
                         let payload_ty = self.verify_expr(payload, locals);
                         self.expect_type(
                             &payload_ty,
-                            &MirType::named(&expected),
+                            &parse_mir_type(&expected),
                             "MIR_ENUM_PAYLOAD_TYPE",
                             format!(
                                 "variant `{enum_name}.{variant}` expects payload `{expected}`, found `{}`",
@@ -1552,7 +1552,7 @@ impl<'a> MirVerifier<'a> {
                 );
                 match (payload_type, binding) {
                     (Some(payload_type), Some(binding)) => {
-                        return vec![(binding.clone(), MirType::named(payload_type))];
+                        return vec![(binding.clone(), parse_mir_type(&payload_type))];
                     }
                     (Some(_), None) => self.error(
                         "MIR_ENUM_PATTERN_ARITY",
