@@ -64,11 +64,12 @@ native 后端覆盖 Int/Bool/struct/array/**string**(值语义)。要 AOT 编译
 
 6. ~~**动态数组其余族**~~ ✅ **已完成**:数组操作泛化到任意元素类型(`size_of` 算 stride),`bool_array_*`(=i64)、`string_array_*`(`{len,ptr}` 元素)全通。门禁 `tests/codegen_dynarray.rs`(12 用例)。
 
-**native subset:标量/struct/array(定长+动态,Int/Bool/String 元素)/string/enum/match/while/for —— 语言核心+控制流+集合全齐。** 通往"AOT 整个 `arena_frontend.zeta` 走真闭环"的剩余项:
-   - **文件 IO builtin**(`file_read_to_string`/`path_join`/`path_basename`/`diagnostic_format`):需运行时支持且有副作用,差分测试不易(可能要 Rust 侧 extern shim)。
-   - **String-payload enum**(E2):加宽 payload 槽以放 `{len,ptr}`。
-   - NativeService struct 状态(ABI 杂,低优先)。
-   - 实测:可拿 `arena_frontend.zeta` 跑 codegen 看还卡哪,驱动后续优先级。
+7. ~~**试推全前端**~~ ✅ **里程碑达成**:补 String `==`/`!=`(memcmp)+ **块级作用域**(按需分配 local 槽 + 嵌套块 locals 快照/恢复,修同名变量在不相交分支不同类型重声明的槽冲突)后,**整个 `arena_frontend.zeta`(306 函数/20 struct)lower 成 native .o**。门禁 `tests/codegen_frontend_probe.rs`(ignored)。前端不用 enum/match、也没真调文件 IO(path_join 等自实现),故已全覆盖。
+
+**native subset 已能 lower 整个自举前端到 native object。** 剩余:
+   - **下一步:差分验证 native 跑前端**——native 编译的前端在某输入上的输出须对齐解释器 dump(真正的闭环正确性证明)。建议写个小 `main()` 调前端管线返回 Int 摘要(或经 FFI 比对 dump String),解释器 vs native 差分。
+   - **文件 IO builtin**(`file_read_to_string` 等):若要 native 前端从真实文件读源,需 Rust 侧 extern shim;但前端核心管线是纯函数(吃 String source),可绕过。
+   - **String-payload enum**(E2)、NativeService struct 状态:低优先,前端不需要。
 
 **每步都用解释器 `run_mir` 作差分 oracle**(见 tests/codegen_*.rs 的 `check()` 范式),feature-gated,不影响默认构建。
 
