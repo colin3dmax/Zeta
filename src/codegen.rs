@@ -447,6 +447,162 @@ impl NativeArrayService {
     }
 }
 
+/// Like [`NativeService`] but the threaded state is a **struct** of arbitrary
+/// shape. To sidestep the per-struct C ABI (registers vs. sret), the module gets
+/// two pointer-based wrappers — `__svc_init(out)` and `__svc_step(state, input,
+/// out)` — that load/store the struct through pointers. The state lives in a
+/// Rust-owned, 8-byte-aligned buffer (so it survives an engine swap), and ticks
+/// ping-pong between two buffers. Convention: `fn init() -> S` and
+/// `reloadable fn step(state: S, input: Int) -> S` for some struct `S`.
+pub struct NativeStructService {
+    engine: inkwell::execution_engine::ExecutionEngine<'static>,
+    step_addr: usize,
+    state: Vec<i64>,
+    scratch: Vec<i64>,
+    /// Byte offset of each struct field (for reading Int fields out of the blob).
+    field_offsets: Vec<u64>,
+}
+
+impl NativeStructService {
+    pub fn start(program: &Program, structs: &[StructDecl]) -> Result<NativeStructService, String> {
+        let context: &'static Context = Box::leak(Box::new(Context::create()));
+        let (engine, words, field_offsets) = compile_struct_service(context, program, structs)?;
+        let mut state = vec![0i64; words];
+        let init: extern "C" fn(*mut i64) = unsafe {
+            std::mem::transmute(
+                engine
+                    .get_function_address("__svc_init")
+                    .map_err(|e| format!("`__svc_init` not found: {e}"))?,
+            )
+        };
+        init(state.as_mut_ptr());
+        let step_addr = engine
+            .get_function_address("__svc_step")
+            .map_err(|e| format!("`__svc_step` not found: {e}"))?;
+        Ok(NativeStructService {
+            engine,
+            step_addr,
+            scratch: vec![0i64; words],
+            state,
+            field_offsets,
+        })
+    }
+
+    /// Advance one tick: `state' = step(state, input)`, via the pointer wrapper.
+    pub fn tick(&mut self, input: i64) {
+        let step: extern "C" fn(*const i64, i64, *mut i64) =
+            unsafe { std::mem::transmute(self.step_addr) };
+        step(self.state.as_ptr(), input, self.scratch.as_mut_ptr());
+        std::mem::swap(&mut self.state, &mut self.scratch);
+    }
+
+    /// Read struct field `index` (an Int field) out of the current state blob.
+    pub fn field_i64(&self, index: usize) -> i64 {
+        let offset = self.field_offsets[index] as usize;
+        unsafe { *((self.state.as_ptr() as *const u8).add(offset) as *const i64) }
+    }
+
+    pub fn reload(&mut self, program: &Program, structs: &[StructDecl]) -> Result<(), String> {
+        let context: &'static Context = Box::leak(Box::new(Context::create()));
+        let (engine, _words, _offsets) = compile_struct_service(context, program, structs)?;
+        let step_addr = engine
+            .get_function_address("__svc_step")
+            .map_err(|e| format!("`__svc_step` not found: {e}"))?;
+        // State blob is Rust-owned, so it carries over untouched.
+        self.step_addr = step_addr;
+        self.engine = engine;
+        Ok(())
+    }
+}
+
+/// Build the module, append the pointer-based service wrappers, optimize, and
+/// wrap in a JIT engine; also return the state struct's word count and field byte
+/// offsets (queried from the JIT target data).
+fn compile_struct_service(
+    context: &'static Context,
+    program: &Program,
+    structs: &[StructDecl],
+) -> Result<
+    (
+        inkwell::execution_engine::ExecutionEngine<'static>,
+        usize,
+        Vec<u64>,
+    ),
+    String,
+> {
+    let types = Types::build(context, structs, program)?;
+    let module = build_module(context, &types, program)?;
+    let ZType::Struct(state_name) = &types.returns["init"] else {
+        return Err("NativeStructService requires `init` to return a struct".into());
+    };
+    let struct_ty = types.structs[state_name].ty;
+    add_struct_service_wrappers(context, &module, struct_ty)?;
+    optimize_module(&module)?;
+    let engine = module
+        .create_jit_execution_engine(OptimizationLevel::Aggressive)
+        .map_err(|e| format!("JIT engine init failed: {e}"))?;
+    let td = engine.get_target_data();
+    let size = td.get_store_size(&struct_ty);
+    let words = ((size + 7) / 8) as usize;
+    let field_offsets = (0..struct_ty.count_fields())
+        .map(|i| td.offset_of_element(&struct_ty, i).unwrap_or(0))
+        .collect();
+    Ok((engine, words.max(1), field_offsets))
+}
+
+/// Add `__svc_init(out*)` and `__svc_step(state*, input, out*)` to `module`,
+/// loading/storing the state struct through pointers so the Rust side can use a
+/// single pointer ABI regardless of the struct's size.
+fn add_struct_service_wrappers<'ctx>(
+    context: &'ctx Context,
+    module: &inkwell::module::Module<'ctx>,
+    struct_ty: StructType<'ctx>,
+) -> Result<(), String> {
+    let builder = context.create_builder();
+    let ptr = context.ptr_type(inkwell::AddressSpace::default());
+    let i64_ty = context.i64_type();
+    let void = context.void_type();
+    let init = module.get_function("init").ok_or("`init` not found")?;
+    let step = module.get_function("step").ok_or("`step` not found")?;
+
+    let init_w = module.add_function("__svc_init", void.fn_type(&[ptr.into()], false), None);
+    let bb = context.append_basic_block(init_w, "entry");
+    builder.position_at_end(bb);
+    let out = init_w.get_nth_param(0).unwrap().into_pointer_value();
+    let s = builder
+        .build_call(init, &[], "s")
+        .unwrap()
+        .try_as_basic_value()
+        .basic()
+        .ok_or("`init` returned no value")?;
+    builder.build_store(out, s).unwrap();
+    builder.build_return(None).unwrap();
+
+    let step_w = module.add_function(
+        "__svc_step",
+        void.fn_type(&[ptr.into(), i64_ty.into(), ptr.into()], false),
+        None,
+    );
+    let bb = context.append_basic_block(step_w, "entry");
+    builder.position_at_end(bb);
+    let statep = step_w.get_nth_param(0).unwrap().into_pointer_value();
+    let input = step_w.get_nth_param(1).unwrap();
+    let out = step_w.get_nth_param(2).unwrap().into_pointer_value();
+    let state = builder.build_load(struct_ty, statep, "st").unwrap();
+    let r = builder
+        .build_call(step, &[state.into(), input.into()], "r")
+        .unwrap()
+        .try_as_basic_value()
+        .basic()
+        .ok_or("`step` returned no value")?;
+    builder.build_store(out, r).unwrap();
+    builder.build_return(None).unwrap();
+
+    module
+        .verify()
+        .map_err(|e| format!("service wrapper verification failed: {e}"))
+}
+
 /// Build + optimize a module and wrap it in an aggressive JIT engine.
 fn compile_engine(
     context: &'static Context,

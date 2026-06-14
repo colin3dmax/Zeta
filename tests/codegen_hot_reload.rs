@@ -10,7 +10,8 @@
 // must produce the same state sequence across the same ticks + reload.
 #![cfg(feature = "llvm")]
 
-use zeta::codegen::{NativeArrayService, NativeService};
+use zeta::ast::Item;
+use zeta::codegen::{NativeArrayService, NativeService, NativeStructService};
 use zeta::runtime::{ServiceDriver, Value};
 
 const V1: &str = "\
@@ -108,6 +109,52 @@ fn native_array_state_survives_hot_swap() {
     assert_eq!(svc.get(0), 28, "array element carried across swap + new native rule");
     assert_eq!(svc.len(), 3);
     assert_eq!(svc.get(1), 0);
+}
+
+// Struct-typed state across a native hot-swap. The state blob is Rust-owned
+// (8-byte-aligned), so it survives the engine swap; pointer wrappers bridge the
+// per-struct ABI.
+const STRUCT_V1: &str = "\
+struct Counter { value: Int, ticks: Int }
+fn init() -> Counter { return Counter { value: 0, ticks: 0 }; }
+reloadable fn step(s: Counter, n: Int) -> Counter {
+  return Counter { value: s.value + n, ticks: s.ticks + 1 };
+}";
+const STRUCT_V2: &str = "\
+struct Counter { value: Int, ticks: Int }
+fn init() -> Counter { return Counter { value: 0, ticks: 0 }; }
+reloadable fn step(s: Counter, n: Int) -> Counter {
+  return Counter { value: s.value + n * 10, ticks: s.ticks + 1 };
+}";
+
+fn structs_of(src: &str) -> Vec<zeta::ast::StructDecl> {
+    zeta::parse_source(src)
+        .unwrap()
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Struct(decl) => Some(decl.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn native_struct_state_survives_hot_swap() {
+    let mut svc =
+        NativeStructService::start(&program(STRUCT_V1), &structs_of(STRUCT_V1)).expect("struct service");
+
+    svc.tick(3); // value 3, ticks 1
+    svc.tick(5); // value 8, ticks 2
+    assert_eq!(svc.field_i64(0), 8, "value field");
+    assert_eq!(svc.field_i64(1), 2, "ticks field");
+
+    // Hot-swap to the ×10 rule; the struct state (value 8, ticks 2) survives.
+    svc.reload(&program(STRUCT_V2), &structs_of(STRUCT_V2)).expect("struct reload");
+    svc.tick(2); // value 8 + 2*10 = 28, ticks 3
+
+    assert_eq!(svc.field_i64(0), 28, "value carried across swap + new native rule");
+    assert_eq!(svc.field_i64(1), 3, "ticks carried + incremented");
 }
 
 #[test]
