@@ -683,3 +683,90 @@ fn main() -> Int {
 }";
     assert_eq!(check(src), 10);
 }
+
+// --- slice 6: for-loop codegen (ForRange / ForIn / ForC) ---
+
+#[test]
+fn for_range_sum() {
+    let src = "\
+fn main() -> Int {
+  let mut s: Int = 0;
+  for i in 0..10 { s = s + i; }
+  return s;
+}";
+    assert_eq!(check(src), 45);
+}
+
+#[test]
+fn for_range_break_continue() {
+    let src = "\
+fn main() -> Int {
+  let mut s: Int = 0;
+  for i in 0..20 {
+    if i >= 10 { break; }
+    if i % 2 == 0 { continue; }
+    s = s + i;
+  }
+  return s;
+}";
+    // odds below 10: 1+3+5+7+9
+    assert_eq!(check(src), 25);
+}
+
+#[test]
+fn for_c_sum() {
+    let src = "\
+fn main() -> Int {
+  let mut s: Int = 0;
+  for (let mut i: Int = 0; i < 10; i = i + 1) { s = s + i; }
+  return s;
+}";
+    assert_eq!(check(src), 45);
+}
+
+#[test]
+fn for_range_nested() {
+    let src = "\
+fn main() -> Int {
+  let mut acc: Int = 0;
+  for i in 0..3 {
+    for j in 0..3 { acc = acc + 1; }
+  }
+  return acc;
+}";
+    assert_eq!(check(src), 9);
+}
+
+#[test]
+fn for_in_array_sum() {
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let mut xs: IntArray = int_array_empty();
+  xs = int_array_push(xs, 3);
+  xs = int_array_push(xs, 4);
+  xs = int_array_push(xs, 5);
+  let mut s: Int = 0;
+  for x in xs { s = s + x; }
+  return s;
+}";
+    assert_eq!(check(src), 12);
+}
+
+#[test]
+fn for_in_with_continue() {
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let mut xs: IntArray = int_array_empty();
+  for k in 0..6 { xs = int_array_push(xs, k); }
+  let mut s: Int = 0;
+  for x in xs {
+    if x % 2 == 0 { continue; }
+    s = s + x;
+  }
+  return s;
+}";
+    // odds 1+3+5
+    assert_eq!(check(src), 9);
+}

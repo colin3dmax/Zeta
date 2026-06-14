@@ -10,7 +10,7 @@
 | **自举(self-hosting)** | M0–M7 slice 1-3 ✅ | Zeta 前端处理自身 7500 行源,ast/resolve/typecheck/mir-dump 四阶段与 Rust oracle 逐字相等(fixpoint 4/4,`#[ignore]` ~50s);M7 slice 3 把解释器 O(n²)→O(n) |
 | **hot-reload** | slice 1-3 ✅ | 状态保持热代码交换内核(HotRuntime)+ `zeta serve` 长跑服务+文件 watch + `reloadable fn` 语言构造(粗粒度边界纪律强制) |
 | **native 后端(LLVM)** | slice 0-5 + 优化 #1/#2/⑤ + 宽 payload enum ✅ | MIR→LLVM:标量/struct/array/string/enum(含 struct/array payload);**native = C 的 1.04x(同回绕语义)**;NativeService(native step 热替换+状态保持,Int+Array+Struct 状态);**AOT 产独立可执行** |
-| **Stage2(Zeta 自带 codegen)** | slice 1 标量 + 2 struct + 3 IntArray + 4 string + 5 enum/match ✅ | `arena_frontend.zeta` 的 `compile(src,"llvm")` 走 MIR arena 发**LLVM IR 文本**(Rust 端不参与 codegen);clang 编 + C driver 链 + 跑,逐一对齐 `run_mir`。`Tcx` 类型子系统;`%S` struct 聚合;IntArray=`%zarr` 堆 buffer + 绑定深拷贝;String=`%zstr` 不可变 + global 字面量 + builtin/memcmp;enum=`%zenum{tag,p0,p1}`,`match`→LLVM `switch`(tag 或值)+ arm payload 绑定。门禁 `tests/selfhost_llvm.rs`(40 用例:标量 + struct + array + string + enum/match 全谱) |
+| **Stage2(Zeta 自带 codegen)** | slice 1-6 ✅(标量/struct/IntArray/string/enum-match/for) | `arena_frontend.zeta` 的 `compile(src,"llvm")` 走 MIR arena 发**LLVM IR 文本**(Rust 端不参与 codegen);clang 编 + C driver 链 + 跑,逐一对齐 `run_mir`。`Tcx` 类型子系统;`%S` struct 聚合;IntArray=`%zarr` + 绑定深拷贝;String=`%zstr` 不可变 + global 字面量 + builtin/memcmp;enum=`%zenum{tag,p0,p1}` + `match`→LLVM `switch`;for-range/in/c→控制流。门禁 `tests/selfhost_llvm.rs`(46 用例,全谱)。**剩余**:StringArray/BoolArray(slice 7)→ AOT 整个前端经 Zeta 自发 IR(capstone) |
 
 **所有 headline 诉求已兑现并实测**:① 媲美 C/C++(1.04x 同语义)② 状态保持热重载(解释器+native)③ release 满速热重载 ④ Zeta→独立二进制(AOT)。**Stage2 起步**:Zeta 编译器自身开始产 native 码(slice 1 标量子集,经 clang 落地、差分对齐解释器)。
 
