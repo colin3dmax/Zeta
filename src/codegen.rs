@@ -19,8 +19,9 @@
 //! locals/params/returns, nesting. Strings (immutable `{len, ptr<i8>}`): literals,
 //! `string_len`/`string_byte_at`/`string_byte_slice`/`string_concat`,
 //! `int_to_string` (via libc snprintf), and the `ascii_is_*` predicates.
-//! Enums (`{i64 tag, i64 payload}`, Int/no-payload variants) + `match` (lowered to
-//! an LLVM `switch` over the tag, or over an Int/Bool value). `for` loops:
+//! Enums (`{i64 tag, i64 p0, ptr p1}`, Int/Bool/String/no-payload variants) +
+//! `match` (lowered to an LLVM `switch` over the tag, or over an Int/Bool value),
+//! including string equality (`==`/`!=` via memcmp). `for` loops:
 //! `for i in a..b`, `for x in intArray`, and C-style `for (init; cond; step)`.
 //! Growable arrays via `{int,bool,string}_array_empty` / `_push` (functional
 //! append: each push returns a fresh buffer, O(n) per push). Array ops are generic
@@ -83,12 +84,12 @@ enum ZType {
     /// points is needed. Literals lower to a private global constant; `concat` /
     /// `byte_slice` allocate fresh malloc'd buffers.
     Str,
-    /// An enum (tagged union), represented at runtime as `{ i64 tag, i64 payload }`
-    /// where `tag` is the variant's declaration index and `payload` holds an Int
-    /// payload (or 0 for payload-less variants). Only Int / no-payload variants are
-    /// in the native subset for now (String/struct payloads would need a wider
-    /// slot). The interpreter's by-name enum value is never observed directly (main
-    /// returns Int), so this internal tag layout need not match it.
+    /// An enum (tagged union), represented at runtime as `{ i64 tag, i64 p0, ptr p1 }`
+    /// where `tag` is the variant's declaration index and `(p0, p1)` is a generic
+    /// payload slot: Int/Bool use `p0`; String uses `p0=len, p1=data` (the `{len,
+    /// ptr}` split). Payload-less variants leave it zero. struct/array payloads are
+    /// not yet in the subset (they would need a wider slot). The interpreter's
+    /// by-name enum value is never observed directly, so this layout need not match.
     Enum(String),
 }
 
@@ -230,10 +231,12 @@ fn array_struct_type(context: &Context) -> StructType {
     )
 }
 
-/// The `{ i64 tag, i64 payload }` value type used for all enums (E1 subset).
+/// The `{ i64 tag, i64 p0, ptr p1 }` value type used for all enums. `(p0, p1)` is
+/// a generic payload slot (Int in p0; String's `{len, ptr}` split across p0/p1).
 fn enum_struct_type(context: &Context) -> StructType {
     let i64_ty = context.i64_type();
-    context.struct_type(&[i64_ty.into(), i64_ty.into()], false)
+    let ptr_ty = context.ptr_type(inkwell::AddressSpace::default());
+    context.struct_type(&[i64_ty.into(), i64_ty.into(), ptr_ty.into()], false)
 }
 
 fn llvm_type_of<'ctx>(
@@ -1071,16 +1074,24 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                     binding: Some(binding),
                 } => {
                     let (_, payload_ty) = self.types.variant_tag(enum_name, variant)?;
-                    if !matches!(payload_ty, Some(ZType::Int)) {
-                        return Err("only Int enum payloads are in the native subset".into());
-                    }
-                    let payload = self
-                        .builder
-                        .build_extract_value(val.into_struct_value(), 1, "payload")
-                        .unwrap();
-                    let slot = self.entry_alloca(binding, self.i64t().into());
-                    self.builder.build_store(slot, payload).unwrap();
-                    self.locals.insert(binding.clone(), (slot, ZType::Int));
+                    let sv = val.into_struct_value();
+                    let (bound, bty) = match payload_ty {
+                        Some(ZType::Int) => {
+                            // p0 holds the Int payload.
+                            let p0 = self.builder.build_extract_value(sv, 1, "payload").unwrap();
+                            (p0, ZType::Int)
+                        }
+                        Some(ZType::Str) => {
+                            // Reconstruct the String {len, ptr} from (p0, p1).
+                            let p0 = self.builder.build_extract_value(sv, 1, "plen").unwrap().into_int_value();
+                            let p1 = self.builder.build_extract_value(sv, 2, "pdata").unwrap().into_pointer_value();
+                            (self.make_len_ptr(p0, p1).into(), ZType::Str)
+                        }
+                        _ => return Err("enum payload type not in the native subset (only Int/Bool/String)".into()),
+                    };
+                    let slot = self.entry_alloca(binding, self.types.llvm(&bty));
+                    self.builder.build_store(slot, bound).unwrap();
+                    self.locals.insert(binding.clone(), (slot, bty));
                 }
                 _ => {}
             }
@@ -1346,28 +1357,25 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 variant,
                 payload,
             } => {
-                // {tag, payload}: tag = variant index; payload = the Int (or 0 for
-                // payload-less variants). Non-Int payloads aren't in the E1 subset
-                // (lower_int rejects them).
-                let (tag, _) = self.types.variant_tag(enum_name, variant)?;
-                let payload_val = match payload {
-                    Some(expr) => self.lower_int(expr)?,
-                    None => self.i64t().const_zero(),
+                // {tag, p0, p1}: tag = variant index. Payload goes into the generic
+                // slot — Int/Bool in p0; String's {len, ptr} as (p0, p1). No-payload
+                // leaves it zero/null.
+                let (tag, payload_ty) = self.types.variant_tag(enum_name, variant)?;
+                let null = self.context.ptr_type(inkwell::AddressSpace::default()).const_null();
+                let (p0, p1) = match (payload, &payload_ty) {
+                    (None, _) => (self.i64t().const_zero(), null),
+                    (Some(expr), Some(ZType::Int)) => (self.lower_int(expr)?, null),
+                    (Some(expr), Some(ZType::Str)) => {
+                        let (s, _) = self.lower_expr(expr)?;
+                        let (len, data) = self.len_ptr_parts(s.into_struct_value());
+                        (len, data)
+                    }
+                    _ => return Err("enum payload type not in the native subset (only Int/Bool/String)".into()),
                 };
-                let v = self
-                    .builder
-                    .build_insert_value(
-                        enum_struct_type(self.context).get_undef(),
-                        self.i64t().const_int(tag, false),
-                        0,
-                        "e0",
-                    )
-                    .unwrap();
-                let v = self
-                    .builder
-                    .build_insert_value(v, payload_val, 1, "e1")
-                    .unwrap()
-                    .into_struct_value();
+                let et = enum_struct_type(self.context);
+                let v = self.builder.build_insert_value(et.get_undef(), self.i64t().const_int(tag, false), 0, "e0").unwrap();
+                let v = self.builder.build_insert_value(v, p0, 1, "e1").unwrap();
+                let v = self.builder.build_insert_value(v, p1, 2, "e2").unwrap().into_struct_value();
                 Ok((v.into(), ZType::Enum(enum_name.clone())))
             }
         }

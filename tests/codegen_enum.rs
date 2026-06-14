@@ -195,6 +195,69 @@ fn main() -> Int {
 }
 
 #[test]
+fn string_payload_construct_and_match() {
+    // Result-like enum with a String payload; observe via string_len / byte_at.
+    let src = "\
+import std.core;
+enum Msg { Text(String), Empty }
+fn describe(m: Msg) -> Int {
+  match m {
+    Msg.Text(s) -> { return string_len(s) * 100 + string_byte_at(s, 0); }
+    Msg.Empty -> { return -1; }
+  }
+  return 0;
+}
+fn main() -> Int {
+  let a: Msg = Msg.Text(\"hello\");
+  let b: Msg = Msg.Empty;
+  return describe(a) * 10 + describe(b) + 1;
+}";
+    // describe(a): len 5 *100 + 'h'(104) = 604; describe(b) = -1
+    // 604*10 + (-1) + 1 = 6040
+    assert_eq!(check(src), 6040);
+}
+
+#[test]
+fn string_payload_roundtrip_through_local() {
+    let src = "\
+import std.core;
+enum Opt { Some(String), None }
+fn main() -> Int {
+  let o: Opt = Opt.Some(string_concat(\"ab\", \"cd\"));
+  match o {
+    Opt.Some(s) -> {
+      if s == \"abcd\" { return 42; }
+      return 7;
+    }
+    Opt.None -> { return 0; }
+  }
+  return 0;
+}";
+    assert_eq!(check(src), 42);
+}
+
+#[test]
+fn mixed_payload_enum() {
+    // Variants with Int, String, and no payload in one enum.
+    let src = "\
+import std.core;
+enum Node { Num(Int), Name(String), Nil }
+fn weight(n: Node) -> Int {
+  match n {
+    Node.Num(v) -> { return v * 2; }
+    Node.Name(s) -> { return string_len(s); }
+    Node.Nil -> { return 0; }
+  }
+  return 0;
+}
+fn main() -> Int {
+  return weight(Node.Num(21)) * 1000 + weight(Node.Name(\"abcd\")) * 10 + weight(Node.Nil);
+}";
+    // 42*1000 + 4*10 + 0 = 42040
+    assert_eq!(check(src), 42040);
+}
+
+#[test]
 fn match_in_loop() {
     let src = "\
 enum Step { Inc, Dec }
