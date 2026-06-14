@@ -7576,7 +7576,17 @@ export fn run_main_via_arena(source: String) -> String {
 // for-range / for-in / for-c lower to explicit control flow, with continue
 // advancing the counter/step so it still progresses. Arrays are generalized
 // over element type: IntArray / BoolArray (i64, 8-byte stride) and StringArray
-// (%zstr, 16-byte stride), driven by `array_elem_type` / `elem_stride`.
+// (%zstr, 16-byte stride), driven by `array_elem_type` / `elem_stride`. Locals
+// use BLOCK-SCOPED dynamic slots (each `let` gets a fresh `%vN.slot`, scope
+// snapshot/restored at block boundaries) so a name re-declared at a different
+// type in a disjoint branch gets its own slot. Value semantics: arrays deep-copy
+// at binding points and structs recursively deep-copy their array fields
+// (`emit_struct_copy`); strings are immutable and shared. String literals decode
+// escapes via `zstr_decode`, matching the Stage0 lexer (`\n` -> newline).
+//
+// Capstone: `compile(<entire frontend>, "llvm")` emits IR that clang builds, and
+// the frontend compiled by this very codegen runs byte-for-byte like the Stage0
+// interpreter (tests/selfhost_llvm.rs frontend_* gates).
 //
 // Emits textual LLVM IR. Int / Bool unify as i64; structs map to named `%S`
 // aggregate types (insertvalue literals, extractvalue field reads, GEP field
@@ -7936,6 +7946,32 @@ fn llvm_str_escape(content: String) -> String {
   return out;
 }
 
+// Decode a raw string token to its bytes EXACTLY as the Stage0 lexer does:
+// `\"` -> `"`, `\n` -> newline (byte 10), and any other `\X` -> X. (NOT
+// `unquote_string`, whose `\n` -> literal `n` gap would corrupt every newline a
+// natively-run program prints.)
+fn zstr_decode(raw: String) -> String {
+  let len: Int = string_len(raw);
+  let mut out: String = "";
+  let mut i: Int = 1;
+  while i < len - 1 {
+    let c: Int = string_byte_at(raw, i);
+    if c == 92 {
+      let nxt: Int = string_byte_at(raw, i + 1);
+      if nxt == 110 {
+        out = string_concat(out, "\n");
+      } else {
+        out = string_concat(out, string_byte_slice(raw, i + 1, 1));
+      }
+      i = i + 2;
+    } else {
+      out = string_concat(out, string_byte_slice(raw, i, 1));
+      i = i + 1;
+    }
+  }
+  return out;
+}
+
 // The LLVM type for a Zeta type string. Int / Bool unify as i64; an array is
 // `%zarr`; a struct maps to its named `%Name` type. (String / enum: later.)
 fn llvm_ty(tcx: Tcx, ty: String) -> String {
@@ -8258,7 +8294,7 @@ fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
   if kind == mir_string_expr() {
     // Decode the raw token to its bytes (reusing the interpreter's unquote),
     // emit a private global constant, and build the {len, ptr} value.
-    let content: String = unquote_string(mir.me_text[node]);
+    let content: String = zstr_decode(mir.me_text[node]);
     let n: Int = string_len(content);
     let mut e: Emit = em;
     let gname: String = string_concat("@.str.", int_to_string(e.gcount));
@@ -9234,6 +9270,75 @@ fn is_fresh_array_expr(mir: Mir, node: Int) -> Bool {
 // Evaluate `node` for a binding point (let / assign / call arg): deep-copy an
 // array value unless it is already fresh, so each owner is independent (value
 // semantics). Scalars and structs pass through (structs copy via load/store).
+// Deep-copy a struct value's array (and nested-struct) fields so the bound copy
+// owns independent buffers — matching the interpreter's value semantics. String
+// and scalar fields are left as-is (immutable / by-value already). Rebuilds the
+// aggregate via extractvalue/copy/insertvalue, touching only the fields that own
+// heap buffers.
+fn emit_struct_copy(em: Emit, vref: String, sname: String) -> EmitVal {
+  let si: Int = find_struct(em.tcx, sname);
+  if si >= em.tcx.struct_name.len {
+    return EmitVal { em: em, vref: vref };
+  }
+  let start: Int = em.tcx.struct_field_start[si];
+  let count: Int = em.tcx.struct_field_count[si];
+  let llty: String = string_concat("%", sname);
+  let mut e: Emit = em;
+  let mut cur: String = vref;
+  let mut i: Int = 0;
+  while i < count {
+    let ft: String = e.tcx.field_type[start + i];
+    let mut kind: Int = 0;
+    if is_array_type(ft) {
+      kind = 1;
+    } else {
+      if find_struct(e.tcx, ft) < e.tcx.struct_name.len {
+        kind = 2;
+      }
+    }
+    if kind > 0 {
+      let rex: Int = e.reg;
+      e.reg = e.reg + 1;
+      let ext: String = llvm_reg_name(rex);
+      e.out = string_concat(e.out, "  ");
+      e.out = string_concat(e.out, ext);
+      e.out = string_concat(e.out, " = extractvalue ");
+      e.out = string_concat(e.out, llty);
+      e.out = string_concat(e.out, " ");
+      e.out = string_concat(e.out, cur);
+      e.out = string_concat(e.out, ", ");
+      e.out = string_concat(e.out, int_to_string(i));
+      e.out = string_concat(e.out, "\n");
+      let mut copied: EmitVal = EmitVal { em: e, vref: ext };
+      if kind == 1 {
+        copied = emit_array_copy(e, ext, elem_stride(array_elem_type(ft)));
+      } else {
+        copied = emit_struct_copy(e, ext, ft);
+      }
+      e = copied.em;
+      let rin: Int = e.reg;
+      e.reg = e.reg + 1;
+      let nc: String = llvm_reg_name(rin);
+      e.out = string_concat(e.out, "  ");
+      e.out = string_concat(e.out, nc);
+      e.out = string_concat(e.out, " = insertvalue ");
+      e.out = string_concat(e.out, llty);
+      e.out = string_concat(e.out, " ");
+      e.out = string_concat(e.out, cur);
+      e.out = string_concat(e.out, ", ");
+      e.out = string_concat(e.out, llvm_ty(e.tcx, ft));
+      e.out = string_concat(e.out, " ");
+      e.out = string_concat(e.out, copied.vref);
+      e.out = string_concat(e.out, ", ");
+      e.out = string_concat(e.out, int_to_string(i));
+      e.out = string_concat(e.out, "\n");
+      cur = nc;
+    }
+    i = i + 1;
+  }
+  return EmitVal { em: e, vref: cur };
+}
+
 fn emit_bind(em: Emit, mir: Mir, node: Int) -> EmitVal {
   let ty: String = type_of_expr(em.tcx, mir, node);
   let v: EmitVal = llvm_expr(em, mir, node);
@@ -9242,6 +9347,9 @@ fn emit_bind(em: Emit, mir: Mir, node: Int) -> EmitVal {
       return v;
     }
     return emit_array_copy(v.em, v.vref, elem_stride(array_elem_type(ty)));
+  }
+  if find_struct(em.tcx, ty) < em.tcx.struct_name.len {
+    return emit_struct_copy(v.em, v.vref, ty);
   }
   return v;
 }

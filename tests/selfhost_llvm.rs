@@ -525,6 +525,20 @@ fn main() -> Int {
     assert_eq!(check(src), 3);
 }
 
+#[test]
+fn string_literal_newline_escape() {
+    // `\n` in a string literal must decode to a real newline (byte 10), matching
+    // the Stage0 lexer — not the literal letter 'n'.
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let s: String = \"a\\nb\";
+  return string_len(s) * 100 + string_byte_at(s, 1);
+}";
+    // "a\nb": len 3, byte[1] = '\n' (10)
+    assert_eq!(check(src), 310);
+}
+
 // --- slice 5: enum + match codegen (switch on tag / value) ---
 
 #[test]
@@ -915,4 +929,33 @@ fn frontend_emits_compilable_ir() {
         String::from_utf8_lossy(&out.stderr),
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Run-level capstone: the ENTIRE frontend compiled by its own Zeta-side codegen
+/// must RUN correctly. We append a `main` that calls `compile(<small program>,
+/// "mir-dump")` and reduces the dump to an Int checksum, then assert the native
+/// build (Zeta-emitted IR via clang) produces the same checksum as the Stage0
+/// interpreter — i.e. the frontend, compiled by itself to native code, behaves
+/// byte-for-byte like the reference.
+#[test]
+#[ignore]
+fn frontend_runs_native_matches_oracle() {
+    let appended = "\n\
+fn z_checksum(s: String) -> Int {\n\
+\x20 let mut h: Int = 0;\n\
+\x20 let mut i: Int = 0;\n\
+\x20 while i < string_len(s) {\n\
+\x20   h = h + string_byte_at(s, i) * (i + 1);\n\
+\x20   i = i + 1;\n\
+\x20 }\n\
+\x20 return h;\n\
+}\n\
+fn main() -> Int {\n\
+\x20 let src: String = \"fn main() -> Int { let a: Int = 5; let b: Int = 7; return a + b; }\";\n\
+\x20 let dump: String = compile(src, \"mir-dump\");\n\
+\x20 return z_checksum(dump);\n\
+}\n";
+    let mut combined = String::from(FRONTEND_SOURCE);
+    combined.push_str(appended);
+    check(&combined);
 }

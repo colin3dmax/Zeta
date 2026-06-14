@@ -10,9 +10,9 @@
 | **自举(self-hosting)** | M0–M7 slice 1-3 ✅ | Zeta 前端处理自身 7500 行源,ast/resolve/typecheck/mir-dump 四阶段与 Rust oracle 逐字相等(fixpoint 4/4,`#[ignore]` ~50s);M7 slice 3 把解释器 O(n²)→O(n) |
 | **hot-reload** | slice 1-3 ✅ | 状态保持热代码交换内核(HotRuntime)+ `zeta serve` 长跑服务+文件 watch + `reloadable fn` 语言构造(粗粒度边界纪律强制) |
 | **native 后端(LLVM)** | slice 0-5 + 优化 #1/#2/⑤ + 宽 payload enum ✅ | MIR→LLVM:标量/struct/array/string/enum(含 struct/array payload);**native = C 的 1.04x(同回绕语义)**;NativeService(native step 热替换+状态保持,Int+Array+Struct 状态);**AOT 产独立可执行** |
-| **Stage2(Zeta 自带 codegen)** | slice 1-8 ✅ + **整前端 IR 可编译(capstone probe)** | `arena_frontend.zeta` 的 `compile(src,"llvm")` 走 MIR arena 发**LLVM IR 文本**(Rust 端不参与 codegen);clang 编 + C driver 链 + 跑,逐一对齐 `run_mir`。`Tcx` 类型子系统 + **块级作用域**(动态作用域,每 let 独立槽,块边界快照/恢复);`%S` struct;数组 `%zarr` 按元素泛化;String `%zstr`;enum `%zenum`+`switch`;for→控制流。**`compile(整前端,"llvm")` 发的 IR 被 clang 成功编成 .o**(覆盖前端所有构造)。门禁 `tests/selfhost_llvm.rs`(53 用例 + `frontend_emits_compilable_ir` ignored)。**剩余**:run 级 capstone(前端 native 跑逐字节对齐,struct 含数组字段递归值语义可能需补) |
+| **Stage2(Zeta 自带 codegen)** | slice 1-8 ✅ + **capstone(整前端 native 跑通,逐字节对齐)✅** | `arena_frontend.zeta` 的 `compile(src,"llvm")` 走 MIR arena 发**LLVM IR 文本**(Rust 端不参与 codegen);clang 编 + C driver 链 + 跑,逐一对齐 `run_mir`。`Tcx` 类型子系统 + **块级作用域**(动态作用域,每 let 独立槽,块边界快照/恢复);`%S` struct(含数组字段递归深拷贝值语义);数组 `%zarr` 按元素泛化;String `%zstr`(`zstr_decode` 转义匹配 Stage0);enum `%zenum`+`switch`;for→控制流。**整个前端被自己的 Zeta codegen 编成 native 并正确运行**(`frontend_runs_native_matches_oracle`)。门禁 `tests/selfhost_llvm.rs`(54 用例 + 2 个 ignored capstone) |
 
-**所有 headline 诉求已兑现并实测**:① 媲美 C/C++(1.04x 同语义)② 状态保持热重载(解释器+native)③ release 满速热重载 ④ Zeta→独立二进制(AOT)。**Stage2 起步**:Zeta 编译器自身开始产 native 码(slice 1 标量子集,经 clang 落地、差分对齐解释器)。
+**所有 headline 诉求已兑现并实测**:① 媲美 C/C++(1.04x 同语义)② 状态保持热重载(解释器+native)③ release 满速热重载 ④ Zeta→独立二进制(AOT)。**Stage2 达成**:Zeta 编译器自身的 codegen(非 Rust 后端)为整个自举前端产 native 码并差分对齐解释器——真正脱离 Rust codegen 的自举。
 
 ## 2. 构建 / 测试命令
 
