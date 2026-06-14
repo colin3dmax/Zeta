@@ -7563,6 +7563,560 @@ export fn run_main_via_arena(source: String) -> String {
 // of a handful of loose functions; the whole-program self-application proof
 // lives in tests/selfhost_fixpoint.rs, and driver dispatch is gated by
 // tests/selfhost_driver.rs.
+// ===========================================================================
+// Stage2 (slice 1): MIR arena -> LLVM IR text (scalar subset).
+//
+// Emits textual LLVM IR for the scalar subset (Int / Bool unified as i64):
+// functions with Int params, let / assign / return, arithmetic / bitwise /
+// comparison / unary (neg / not / bit_not) / logical and-or, if / else /
+// while / break / continue, and user calls including recursion. Locals use
+// alloca / load / store with every alloca hoisted to the entry block. Each
+// user function is emitted as `@z_<name>` so the linked C driver can call
+// `@z_main` without clashing with C's own `main`. The Rust gate
+// (tests/selfhost_llvm.rs) compiles this IR with clang, links a tiny C driver,
+// runs it, and asserts the printed result equals the Stage0 interpreter oracle
+// (run_mir). Short-circuit is not observable in this pure subset, so and / or
+// lower to value-equivalent normalized bitwise ops; true short-circuit and the
+// String / Array / Struct / Enum / match / for families come in later slices.
+// ===========================================================================
+
+// Threaded emitter state: accumulated IR text, next %tN register id, next
+// basic-block label id, and whether the current block already has a terminator.
+struct Emit {
+  out: String,
+  reg: Int,
+  block: Int,
+  term: Int,
+}
+
+// An emitted expression: the threaded state plus the value reference (an "%tN"
+// register or an i64 immediate like "42").
+struct EmitVal {
+  em: Emit,
+  vref: String,
+}
+
+fn llvm_reg_name(n: Int) -> String {
+  return string_concat("%t", int_to_string(n));
+}
+
+fn llvm_label_name(n: Int) -> String {
+  return string_concat("b", int_to_string(n));
+}
+
+// The alloca pointer for a local / param: `%<name>.slot`.
+fn llvm_slot_ref(name: String) -> String {
+  return string_concat(string_concat("%", name), ".slot");
+}
+
+fn llvm_arith_op(op: String) -> String {
+  if op == "add" { return "add"; }
+  if op == "sub" { return "sub"; }
+  if op == "mul" { return "mul"; }
+  if op == "div" { return "sdiv"; }
+  if op == "mod" { return "srem"; }
+  if op == "bit_and" { return "and"; }
+  if op == "bit_or" { return "or"; }
+  if op == "bit_xor" { return "xor"; }
+  return "add";
+}
+
+fn llvm_is_arith(op: String) -> Bool {
+  return op == "add" || op == "sub" || op == "mul" || op == "div" || op == "mod"
+      || op == "bit_and" || op == "bit_or" || op == "bit_xor";
+}
+
+fn llvm_cmp_pred(op: String) -> String {
+  if op == "eq" { return "eq"; }
+  if op == "not_eq" { return "ne"; }
+  if op == "lt" { return "slt"; }
+  if op == "lte" { return "sle"; }
+  if op == "gt" { return "sgt"; }
+  if op == "gte" { return "sge"; }
+  return "eq";
+}
+
+fn llvm_is_cmp(op: String) -> Bool {
+  return op == "eq" || op == "not_eq" || op == "lt" || op == "lte"
+      || op == "gt" || op == "gte";
+}
+
+// Emit `<reg> = icmp ne i64 <vref>, 0` then `<reg2> = zext i1 <reg> to i64`,
+// returning the i64 0/1 normalization of `vref`.
+fn llvm_normalize_bool(em: Emit, vref: String) -> EmitVal {
+  let mut e: Emit = em;
+  let r: Int = e.reg;
+  e.reg = e.reg + 1;
+  let rn: String = llvm_reg_name(r);
+  e.out = string_concat(e.out, "  ");
+  e.out = string_concat(e.out, rn);
+  e.out = string_concat(e.out, " = icmp ne i64 ");
+  e.out = string_concat(e.out, vref);
+  e.out = string_concat(e.out, ", 0\n");
+  let r2: Int = e.reg;
+  e.reg = e.reg + 1;
+  let rn2: String = llvm_reg_name(r2);
+  e.out = string_concat(e.out, "  ");
+  e.out = string_concat(e.out, rn2);
+  e.out = string_concat(e.out, " = zext i1 ");
+  e.out = string_concat(e.out, rn);
+  e.out = string_concat(e.out, " to i64\n");
+  return EmitVal { em: e, vref: rn2 };
+}
+
+fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
+  let kind: Int = mir.me_kind[node];
+  if kind == mir_int_expr() {
+    return EmitVal { em: em, vref: mir.me_text[node] };
+  }
+  if kind == mir_bool_expr() {
+    let mut v: String = "0";
+    if mir.me_text[node] == "true" {
+      v = "1";
+    }
+    return EmitVal { em: em, vref: v };
+  }
+  if kind == mir_load_expr() {
+    let mut e: Emit = em;
+    let r: Int = e.reg;
+    e.reg = e.reg + 1;
+    let rn: String = llvm_reg_name(r);
+    e.out = string_concat(e.out, "  ");
+    e.out = string_concat(e.out, rn);
+    e.out = string_concat(e.out, " = load i64, ptr ");
+    e.out = string_concat(e.out, llvm_slot_ref(mir.me_text[node]));
+    e.out = string_concat(e.out, "\n");
+    return EmitVal { em: e, vref: rn };
+  }
+  if kind == mir_unary_expr() {
+    let operand: EmitVal = llvm_expr(em, mir, mir.me_a[node]);
+    let mut e: Emit = operand.em;
+    let op: String = mir.me_text[node];
+    if op == "neg" {
+      let r: Int = e.reg;
+      e.reg = e.reg + 1;
+      let rn: String = llvm_reg_name(r);
+      e.out = string_concat(e.out, "  ");
+      e.out = string_concat(e.out, rn);
+      e.out = string_concat(e.out, " = sub i64 0, ");
+      e.out = string_concat(e.out, operand.vref);
+      e.out = string_concat(e.out, "\n");
+      return EmitVal { em: e, vref: rn };
+    }
+    if op == "bit_not" {
+      let r: Int = e.reg;
+      e.reg = e.reg + 1;
+      let rn: String = llvm_reg_name(r);
+      e.out = string_concat(e.out, "  ");
+      e.out = string_concat(e.out, rn);
+      e.out = string_concat(e.out, " = xor i64 ");
+      e.out = string_concat(e.out, operand.vref);
+      e.out = string_concat(e.out, ", -1\n");
+      return EmitVal { em: e, vref: rn };
+    }
+    // not: logical not on a Bool → (x == 0) widened to i64.
+    let r: Int = e.reg;
+    e.reg = e.reg + 1;
+    let rn: String = llvm_reg_name(r);
+    e.out = string_concat(e.out, "  ");
+    e.out = string_concat(e.out, rn);
+    e.out = string_concat(e.out, " = icmp eq i64 ");
+    e.out = string_concat(e.out, operand.vref);
+    e.out = string_concat(e.out, ", 0\n");
+    let r2: Int = e.reg;
+    e.reg = e.reg + 1;
+    let rn2: String = llvm_reg_name(r2);
+    e.out = string_concat(e.out, "  ");
+    e.out = string_concat(e.out, rn2);
+    e.out = string_concat(e.out, " = zext i1 ");
+    e.out = string_concat(e.out, rn);
+    e.out = string_concat(e.out, " to i64\n");
+    return EmitVal { em: e, vref: rn2 };
+  }
+  if kind == mir_binary_expr() {
+    let op: String = mir.me_text[node];
+    let left: EmitVal = llvm_expr(em, mir, mir.me_a[node]);
+    let right: EmitVal = llvm_expr(left.em, mir, mir.me_b[node]);
+    let mut e: Emit = right.em;
+    if llvm_is_arith(op) {
+      let r: Int = e.reg;
+      e.reg = e.reg + 1;
+      let rn: String = llvm_reg_name(r);
+      e.out = string_concat(e.out, "  ");
+      e.out = string_concat(e.out, rn);
+      e.out = string_concat(e.out, " = ");
+      e.out = string_concat(e.out, llvm_arith_op(op));
+      e.out = string_concat(e.out, " i64 ");
+      e.out = string_concat(e.out, left.vref);
+      e.out = string_concat(e.out, ", ");
+      e.out = string_concat(e.out, right.vref);
+      e.out = string_concat(e.out, "\n");
+      return EmitVal { em: e, vref: rn };
+    }
+    if llvm_is_cmp(op) {
+      let r: Int = e.reg;
+      e.reg = e.reg + 1;
+      let rn: String = llvm_reg_name(r);
+      e.out = string_concat(e.out, "  ");
+      e.out = string_concat(e.out, rn);
+      e.out = string_concat(e.out, " = icmp ");
+      e.out = string_concat(e.out, llvm_cmp_pred(op));
+      e.out = string_concat(e.out, " i64 ");
+      e.out = string_concat(e.out, left.vref);
+      e.out = string_concat(e.out, ", ");
+      e.out = string_concat(e.out, right.vref);
+      e.out = string_concat(e.out, "\n");
+      let r2: Int = e.reg;
+      e.reg = e.reg + 1;
+      let rn2: String = llvm_reg_name(r2);
+      e.out = string_concat(e.out, "  ");
+      e.out = string_concat(e.out, rn2);
+      e.out = string_concat(e.out, " = zext i1 ");
+      e.out = string_concat(e.out, rn);
+      e.out = string_concat(e.out, " to i64\n");
+      return EmitVal { em: e, vref: rn2 };
+    }
+    // Logical and / or: normalize both operands to 0/1, then bitwise.
+    let ln: EmitVal = llvm_normalize_bool(e, left.vref);
+    let rnv: EmitVal = llvm_normalize_bool(ln.em, right.vref);
+    let mut e2: Emit = rnv.em;
+    let mut opc: String = "and";
+    if op == "or" {
+      opc = "or";
+    }
+    let r: Int = e2.reg;
+    e2.reg = e2.reg + 1;
+    let rn: String = llvm_reg_name(r);
+    e2.out = string_concat(e2.out, "  ");
+    e2.out = string_concat(e2.out, rn);
+    e2.out = string_concat(e2.out, " = ");
+    e2.out = string_concat(e2.out, opc);
+    e2.out = string_concat(e2.out, " i64 ");
+    e2.out = string_concat(e2.out, ln.vref);
+    e2.out = string_concat(e2.out, ", ");
+    e2.out = string_concat(e2.out, rnv.vref);
+    e2.out = string_concat(e2.out, "\n");
+    return EmitVal { em: e2, vref: rn };
+  }
+  if kind == mir_call_expr() {
+    let astart: Int = mir.me_a[node];
+    let acount: Int = mir.me_b[node];
+    let mut e: Emit = em;
+    let mut args: String = "";
+    let mut i: Int = 0;
+    while i < acount {
+      let a: EmitVal = llvm_expr(e, mir, mir.mchild_list[astart + i]);
+      e = a.em;
+      if i > 0 {
+        args = string_concat(args, ", ");
+      }
+      args = string_concat(args, "i64 ");
+      args = string_concat(args, a.vref);
+      i = i + 1;
+    }
+    let r: Int = e.reg;
+    e.reg = e.reg + 1;
+    let rn: String = llvm_reg_name(r);
+    e.out = string_concat(e.out, "  ");
+    e.out = string_concat(e.out, rn);
+    e.out = string_concat(e.out, " = call i64 @z_");
+    e.out = string_concat(e.out, mir.me_text[node]);
+    e.out = string_concat(e.out, "(");
+    e.out = string_concat(e.out, args);
+    e.out = string_concat(e.out, ")\n");
+    return EmitVal { em: e, vref: rn };
+  }
+  // Unsupported in slice 1 (string / enum / struct / array / index / field):
+  // the gate corpus avoids these; emit a sentinel so any accidental use is a 0.
+  return EmitVal { em: em, vref: "0" };
+}
+
+fn llvm_open_block(em: Emit, id: Int) -> Emit {
+  let mut e: Emit = em;
+  e.out = string_concat(e.out, llvm_label_name(id));
+  e.out = string_concat(e.out, ":\n");
+  e.term = 0;
+  return e;
+}
+
+fn llvm_branch(em: Emit, id: Int) -> Emit {
+  let mut e: Emit = em;
+  e.out = string_concat(e.out, "  br label %");
+  e.out = string_concat(e.out, llvm_label_name(id));
+  e.out = string_concat(e.out, "\n");
+  e.term = 1;
+  return e;
+}
+
+// Emit `<reg> = icmp ne i64 <vref>, 0` and return the i1 register name, ready
+// for a conditional branch.
+struct EmitBit {
+  em: Emit,
+  bit: String,
+}
+
+fn llvm_cond_bit(em: Emit, vref: String) -> EmitBit {
+  let mut e: Emit = em;
+  let r: Int = e.reg;
+  e.reg = e.reg + 1;
+  let rn: String = llvm_reg_name(r);
+  e.out = string_concat(e.out, "  ");
+  e.out = string_concat(e.out, rn);
+  e.out = string_concat(e.out, " = icmp ne i64 ");
+  e.out = string_concat(e.out, vref);
+  e.out = string_concat(e.out, ", 0\n");
+  return EmitBit { em: e, bit: rn };
+}
+
+fn llvm_stmt(em: Emit, mir: Mir, sidx: Int, brk: Int, cont: Int) -> Emit {
+  let kind: Int = mir.ms_kind[sidx];
+  if kind == mir_local_stmt() {
+    let v: EmitVal = llvm_expr(em, mir, mir.ms_expr[sidx]);
+    let mut e: Emit = v.em;
+    e.out = string_concat(e.out, "  store i64 ");
+    e.out = string_concat(e.out, v.vref);
+    e.out = string_concat(e.out, ", ptr ");
+    e.out = string_concat(e.out, llvm_slot_ref(mir.ms_name[sidx]));
+    e.out = string_concat(e.out, "\n");
+    return e;
+  }
+  if kind == mir_store_stmt() {
+    let v: EmitVal = llvm_expr(em, mir, mir.ms_expr[sidx]);
+    let mut e: Emit = v.em;
+    let place: Int = mir.ms_place[sidx];
+    // Slice 1: local places only (field / index assignment in a later slice).
+    e.out = string_concat(e.out, "  store i64 ");
+    e.out = string_concat(e.out, v.vref);
+    e.out = string_concat(e.out, ", ptr ");
+    e.out = string_concat(e.out, llvm_slot_ref(mir.mpl_name[place]));
+    e.out = string_concat(e.out, "\n");
+    return e;
+  }
+  if kind == mir_return_stmt() {
+    let mut e: Emit = em;
+    if mir.ms_expr[sidx] >= 0 {
+      let v: EmitVal = llvm_expr(em, mir, mir.ms_expr[sidx]);
+      e = v.em;
+      e.out = string_concat(e.out, "  ret i64 ");
+      e.out = string_concat(e.out, v.vref);
+      e.out = string_concat(e.out, "\n");
+    } else {
+      e.out = string_concat(e.out, "  ret i64 0\n");
+    }
+    e.term = 1;
+    return e;
+  }
+  if kind == mir_drop_stmt() {
+    let v: EmitVal = llvm_expr(em, mir, mir.ms_expr[sidx]);
+    return v.em;
+  }
+  if kind == mir_break_stmt() {
+    return llvm_branch(em, brk);
+  }
+  if kind == mir_continue_stmt() {
+    return llvm_branch(em, cont);
+  }
+  if kind == mir_if_stmt() {
+    let cond: EmitVal = llvm_expr(em, mir, mir.ms_expr[sidx]);
+    let cb: EmitBit = llvm_cond_bit(cond.em, cond.vref);
+    let mut e: Emit = cb.em;
+    let then_id: Int = e.block;
+    e.block = e.block + 1;
+    let else_id: Int = e.block;
+    e.block = e.block + 1;
+    let end_id: Int = e.block;
+    e.block = e.block + 1;
+    e.out = string_concat(e.out, "  br i1 ");
+    e.out = string_concat(e.out, cb.bit);
+    e.out = string_concat(e.out, ", label %");
+    e.out = string_concat(e.out, llvm_label_name(then_id));
+    e.out = string_concat(e.out, ", label %");
+    e.out = string_concat(e.out, llvm_label_name(else_id));
+    e.out = string_concat(e.out, "\n");
+    e.term = 1;
+    e = llvm_open_block(e, then_id);
+    e = llvm_block(e, mir, mir.ms_then_start[sidx], mir.ms_then_count[sidx], brk, cont);
+    let mut then_falls: Int = 0;
+    if e.term == 0 {
+      then_falls = 1;
+      e = llvm_branch(e, end_id);
+    }
+    e = llvm_open_block(e, else_id);
+    e = llvm_block(e, mir, mir.ms_else_start[sidx], mir.ms_else_count[sidx], brk, cont);
+    let mut else_falls: Int = 0;
+    if e.term == 0 {
+      else_falls = 1;
+      e = llvm_branch(e, end_id);
+    }
+    if then_falls == 1 || else_falls == 1 {
+      e = llvm_open_block(e, end_id);
+    } else {
+      e.term = 1;
+    }
+    return e;
+  }
+  if kind == mir_while_stmt() {
+    let mut e: Emit = em;
+    let head_id: Int = e.block;
+    e.block = e.block + 1;
+    let body_id: Int = e.block;
+    e.block = e.block + 1;
+    let end_id: Int = e.block;
+    e.block = e.block + 1;
+    e = llvm_branch(e, head_id);
+    e = llvm_open_block(e, head_id);
+    let cond: EmitVal = llvm_expr(e, mir, mir.ms_expr[sidx]);
+    let cb: EmitBit = llvm_cond_bit(cond.em, cond.vref);
+    e = cb.em;
+    e.out = string_concat(e.out, "  br i1 ");
+    e.out = string_concat(e.out, cb.bit);
+    e.out = string_concat(e.out, ", label %");
+    e.out = string_concat(e.out, llvm_label_name(body_id));
+    e.out = string_concat(e.out, ", label %");
+    e.out = string_concat(e.out, llvm_label_name(end_id));
+    e.out = string_concat(e.out, "\n");
+    e.term = 1;
+    e = llvm_open_block(e, body_id);
+    e = llvm_block(e, mir, mir.ms_then_start[sidx], mir.ms_then_count[sidx], end_id, head_id);
+    if e.term == 0 {
+      e = llvm_branch(e, head_id);
+    }
+    e = llvm_open_block(e, end_id);
+    return e;
+  }
+  // for-in / for-range / for-c / match: not in slice 1.
+  return em;
+}
+
+fn llvm_block(em: Emit, mir: Mir, start: Int, count: Int, brk: Int, cont: Int) -> Emit {
+  let mut e: Emit = em;
+  let mut i: Int = 0;
+  while i < count {
+    if e.term == 0 {
+      e = llvm_stmt(e, mir, mir.mblock_list[start + i], brk, cont);
+    }
+    i = i + 1;
+  }
+  return e;
+}
+
+fn llvm_name_seen(names: StringArray, name: String) -> Bool {
+  let mut i: Int = 0;
+  while i < names.len {
+    if names[i] == name {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// Collect distinct local names declared anywhere in a block (recursing into
+// if / while bodies) so all allocas can be hoisted to the entry block.
+fn llvm_collect_locals(mir: Mir, start: Int, count: Int, names: StringArray) -> StringArray {
+  let mut acc: StringArray = names;
+  let mut i: Int = 0;
+  while i < count {
+    let s: Int = mir.mblock_list[start + i];
+    let k: Int = mir.ms_kind[s];
+    if k == mir_local_stmt() {
+      if !llvm_name_seen(acc, mir.ms_name[s]) {
+        acc = string_array_push(acc, mir.ms_name[s]);
+      }
+    }
+    if k == mir_if_stmt() {
+      acc = llvm_collect_locals(mir, mir.ms_then_start[s], mir.ms_then_count[s], acc);
+      acc = llvm_collect_locals(mir, mir.ms_else_start[s], mir.ms_else_count[s], acc);
+    }
+    if k == mir_while_stmt() {
+      acc = llvm_collect_locals(mir, mir.ms_then_start[s], mir.ms_then_count[s], acc);
+    }
+    i = i + 1;
+  }
+  return acc;
+}
+
+fn llvm_emit_function(out: String, mir: Mir, fi: Int) -> String {
+  let mut o: String = string_concat(out, "define i64 @z_");
+  o = string_concat(o, mir.mf_name[fi]);
+  o = string_concat(o, "(");
+  let pstart: Int = mir.mf_param_start[fi];
+  let pcount: Int = mir.mf_param_count[fi];
+  let mut pi: Int = 0;
+  while pi < pcount {
+    if pi > 0 {
+      o = string_concat(o, ", ");
+    }
+    o = string_concat(o, "i64 %");
+    o = string_concat(o, mir.mp_name[pstart + pi]);
+    o = string_concat(o, ".arg");
+    pi = pi + 1;
+  }
+  o = string_concat(o, ") {\n");
+  // Entry block: alloca every param slot, then every distinct local slot.
+  pi = 0;
+  while pi < pcount {
+    o = string_concat(o, "  ");
+    o = string_concat(o, llvm_slot_ref(mir.mp_name[pstart + pi]));
+    o = string_concat(o, " = alloca i64\n");
+    pi = pi + 1;
+  }
+  let mut locals: StringArray = string_array_empty();
+  locals = llvm_collect_locals(mir, mir.mf_body_start[fi], mir.mf_body_count[fi], locals);
+  let mut li: Int = 0;
+  while li < locals.len {
+    o = string_concat(o, "  ");
+    o = string_concat(o, llvm_slot_ref(locals[li]));
+    o = string_concat(o, " = alloca i64\n");
+    li = li + 1;
+  }
+  // Store each incoming param value into its slot.
+  pi = 0;
+  while pi < pcount {
+    o = string_concat(o, "  store i64 %");
+    o = string_concat(o, mir.mp_name[pstart + pi]);
+    o = string_concat(o, ".arg, ptr ");
+    o = string_concat(o, llvm_slot_ref(mir.mp_name[pstart + pi]));
+    o = string_concat(o, "\n");
+    pi = pi + 1;
+  }
+  // Body. break / continue targets default to 0 (never branched to outside a
+  // loop; the verifier guarantees break / continue appear only inside one).
+  let mut em: Emit = Emit { out: o, reg: 0, block: 0, term: 0 };
+  em = llvm_block(em, mir, mir.mf_body_start[fi], mir.mf_body_count[fi], 0, 0);
+  let mut body: String = em.out;
+  if em.term == 0 {
+    body = string_concat(body, "  ret i64 0\n");
+  }
+  body = string_concat(body, "}\n\n");
+  return body;
+}
+
+fn llvm_emit_module(mir: Mir) -> String {
+  let mut out: String = "";
+  let mut f: Int = 0;
+  while f < mir.mf_name.len {
+    out = llvm_emit_function(out, mir, f);
+    f = f + 1;
+  }
+  return out;
+}
+
+// Lower `source` (parse-only, no std external enums) and emit textual LLVM IR
+// for the scalar subset. Mirrors `mir_dump_via_arena`'s pipeline.
+export fn llvm_ir_via_arena(source: String) -> String {
+  let kinds: IntArray = lex_kinds(source);
+  let texts: StringArray = lex_texts(source);
+  let mut start_arena: Arena = arena_empty();
+  start_arena.token_start = lex_starts(source);
+  let parsed: ParseResult = parse_module(start_arena, kinds, texts, 0);
+  let enums: EnumTable = enum_table_build(parsed.arena, false, false);
+  let mut mir: Mir = mir_empty();
+  mir = mir_enum_dump_table(parsed.arena, mir, false, false);
+  mir = lower_module(parsed.arena, enums, mir);
+  return llvm_emit_module(mir);
+}
+
 export fn compile(source: String, mode: String) -> String {
   if mode == "ast-dump" {
     return dump_module_via_arena(source);
@@ -7578,6 +8132,9 @@ export fn compile(source: String, mode: String) -> String {
   }
   if mode == "run" {
     return run_main_via_arena(source);
+  }
+  if mode == "llvm" {
+    return llvm_ir_via_arena(source);
   }
   return string_concat("ZETAC_UNKNOWN_MODE ", mode);
 }
