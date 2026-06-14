@@ -8477,15 +8477,9 @@ fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
     }
     let elemll: String = llvm_ty(em.tcx, elem);
     let stride: Int = elem_stride(elem);
-    let mut e: Emit = em;
-    let rb: Int = e.reg;
-    e.reg = e.reg + 1;
-    let buf: String = llvm_reg_name(rb);
-    e.out = string_concat(e.out, "  ");
-    e.out = string_concat(e.out, buf);
-    e.out = string_concat(e.out, " = call ptr @malloc(i64 ");
-    e.out = string_concat(e.out, int_to_string(ecount * stride));
-    e.out = string_concat(e.out, ")\n");
+    let alloc: EmitVal = emit_alloc_buf(em, int_to_string(ecount), stride);
+    let mut e: Emit = alloc.em;
+    let buf: String = alloc.vref;
     let mut i: Int = 0;
     while i < ecount {
       let v: EmitVal = llvm_expr(e, mir, mir.mchild_list[estart + i]);
@@ -8982,25 +8976,14 @@ fn llvm_array_builtin(em: Emit, mir: Mir, node: Int) -> EmitVal {
   let elemll: String = llvm_ty(em.tcx, elem);
   let stride: Int = elem_stride(elem);
   if !array_builtin_is_push(callee) {
-    let mut e: Emit = em;
-    let ra: Int = e.reg;
-    e.reg = e.reg + 1;
-    let agg0: String = llvm_reg_name(ra);
-    e.out = string_concat(e.out, "  ");
-    e.out = string_concat(e.out, agg0);
-    e.out = string_concat(e.out, " = insertvalue %zarr undef, i64 0, 0\n");
-    let rb: Int = e.reg;
-    e.reg = e.reg + 1;
-    let agg1: String = llvm_reg_name(rb);
-    e.out = string_concat(e.out, "  ");
-    e.out = string_concat(e.out, agg1);
-    e.out = string_concat(e.out, " = insertvalue %zarr ");
-    e.out = string_concat(e.out, agg0);
-    e.out = string_concat(e.out, ", ptr null, 1\n");
-    return EmitVal { em: e, vref: agg1 };
+    // empty: a cap-0 buffer (real header so in-place push can read its cap).
+    let alloc: EmitVal = emit_alloc_buf(em, "0", stride);
+    return emit_make_arr(alloc.em, "0", alloc.vref);
   }
-  // *_array_push(arr, x): malloc((len+1)*stride), copy old, append x. The source
-  // array is read (not mutated), so no defensive copy of `arr` is needed.
+  // *_array_push(arr, x): fresh cap=(len+1) buffer, copy old, append x. The
+  // source array is read (not mutated), so no defensive copy of `arr` is needed.
+  // (The hot `xs = push(xs, v)` self-assignment is lowered in-place; see
+  // lower_inplace_push.)
   let arr: EmitVal = llvm_expr(em, mir, mir.mchild_list[astart]);
   let xv: EmitVal = llvm_expr(arr.em, mir, mir.mchild_list[astart + 1]);
   let mut e: Emit = xv.em;
@@ -9016,21 +8999,6 @@ fn llvm_array_builtin(em: Emit, mir: Mir, node: Int) -> EmitVal {
   let rob: Int = e.reg;
   e.reg = e.reg + 1;
   let obytes: String = llvm_reg_name(rob);
-  let rnb: Int = e.reg;
-  e.reg = e.reg + 1;
-  let nbytes: String = llvm_reg_name(rnb);
-  let rbuf: Int = e.reg;
-  e.reg = e.reg + 1;
-  let buf: String = llvm_reg_name(rbuf);
-  let rep: Int = e.reg;
-  e.reg = e.reg + 1;
-  let endp: String = llvm_reg_name(rep);
-  let r0: Int = e.reg;
-  e.reg = e.reg + 1;
-  let agg0: String = llvm_reg_name(r0);
-  let r1: Int = e.reg;
-  e.reg = e.reg + 1;
-  let agg1: String = llvm_reg_name(r1);
   e.out = string_concat(e.out, "  ");
   e.out = string_concat(e.out, len);
   e.out = string_concat(e.out, " = extractvalue %zarr ");
@@ -9049,17 +9017,14 @@ fn llvm_array_builtin(em: Emit, mir: Mir, node: Int) -> EmitVal {
   e.out = string_concat(e.out, len);
   e.out = string_concat(e.out, ", ");
   e.out = string_concat(e.out, int_to_string(stride));
-  e.out = string_concat(e.out, "\n  ");
-  e.out = string_concat(e.out, nbytes);
-  e.out = string_concat(e.out, " = mul i64 ");
-  e.out = string_concat(e.out, nlen);
-  e.out = string_concat(e.out, ", ");
-  e.out = string_concat(e.out, int_to_string(stride));
-  e.out = string_concat(e.out, "\n  ");
-  e.out = string_concat(e.out, buf);
-  e.out = string_concat(e.out, " = call ptr @malloc(i64 ");
-  e.out = string_concat(e.out, nbytes);
-  e.out = string_concat(e.out, ")\n  call ptr @memcpy(ptr ");
+  e.out = string_concat(e.out, "\n");
+  let alloc: EmitVal = emit_alloc_buf(e, nlen, stride);
+  e = alloc.em;
+  let buf: String = alloc.vref;
+  let rep: Int = e.reg;
+  e.reg = e.reg + 1;
+  let endp: String = llvm_reg_name(rep);
+  e.out = string_concat(e.out, "  call ptr @memcpy(ptr ");
   e.out = string_concat(e.out, buf);
   e.out = string_concat(e.out, ", ptr ");
   e.out = string_concat(e.out, src);
@@ -9079,23 +9044,101 @@ fn llvm_array_builtin(em: Emit, mir: Mir, node: Int) -> EmitVal {
   e.out = string_concat(e.out, xv.vref);
   e.out = string_concat(e.out, ", ptr ");
   e.out = string_concat(e.out, endp);
-  e.out = string_concat(e.out, "\n  ");
-  e.out = string_concat(e.out, agg0);
-  e.out = string_concat(e.out, " = insertvalue %zarr undef, i64 ");
-  e.out = string_concat(e.out, nlen);
-  e.out = string_concat(e.out, ", 0\n  ");
-  e.out = string_concat(e.out, agg1);
-  e.out = string_concat(e.out, " = insertvalue %zarr ");
-  e.out = string_concat(e.out, agg0);
-  e.out = string_concat(e.out, ", ptr ");
-  e.out = string_concat(e.out, buf);
-  e.out = string_concat(e.out, ", 1\n");
-  return EmitVal { em: e, vref: agg1 };
+  e.out = string_concat(e.out, "\n");
+  return emit_make_arr(e, nlen, buf);
 }
 
 // Deep-copy an array value: malloc(len*stride) + memcpy, returning a fresh
 // {len, buf}. (String elements copy their {len,ptr} only — the byte buffers are
 // immutable and safely shared.)
+// Allocate an array buffer with an 8-byte capacity header:
+// `[ i64 cap | cap*stride bytes ]`. Returns the ELEMENTS pointer (one i64 past
+// the base), so the rest of codegen still sees a plain {len, ptr}. `capref` is
+// a value reference (immediate or register).
+fn emit_alloc_buf(em: Emit, capref: String, stride: Int) -> EmitVal {
+  let mut e: Emit = em;
+  let r1: Int = e.reg;
+  e.reg = e.reg + 1;
+  let cb: String = llvm_reg_name(r1);
+  let r2: Int = e.reg;
+  e.reg = e.reg + 1;
+  let tot: String = llvm_reg_name(r2);
+  let r3: Int = e.reg;
+  e.reg = e.reg + 1;
+  let base: String = llvm_reg_name(r3);
+  let r4: Int = e.reg;
+  e.reg = e.reg + 1;
+  let ep: String = llvm_reg_name(r4);
+  e.out = string_concat(e.out, "  ");
+  e.out = string_concat(e.out, cb);
+  e.out = string_concat(e.out, " = mul i64 ");
+  e.out = string_concat(e.out, capref);
+  e.out = string_concat(e.out, ", ");
+  e.out = string_concat(e.out, int_to_string(stride));
+  e.out = string_concat(e.out, "\n  ");
+  e.out = string_concat(e.out, tot);
+  e.out = string_concat(e.out, " = add i64 ");
+  e.out = string_concat(e.out, cb);
+  e.out = string_concat(e.out, ", 8\n  ");
+  e.out = string_concat(e.out, base);
+  e.out = string_concat(e.out, " = call ptr @malloc(i64 ");
+  e.out = string_concat(e.out, tot);
+  e.out = string_concat(e.out, ")\n  store i64 ");
+  e.out = string_concat(e.out, capref);
+  e.out = string_concat(e.out, ", ptr ");
+  e.out = string_concat(e.out, base);
+  e.out = string_concat(e.out, "\n  ");
+  e.out = string_concat(e.out, ep);
+  e.out = string_concat(e.out, " = getelementptr i64, ptr ");
+  e.out = string_concat(e.out, base);
+  e.out = string_concat(e.out, ", i64 1\n");
+  return EmitVal { em: e, vref: ep };
+}
+
+// Build a {len, ptr} %zarr value from a length and an elements pointer.
+fn emit_make_arr(em: Emit, lenref: String, ptrref: String) -> EmitVal {
+  let mut e: Emit = em;
+  let r0: Int = e.reg;
+  e.reg = e.reg + 1;
+  let a0: String = llvm_reg_name(r0);
+  let r1: Int = e.reg;
+  e.reg = e.reg + 1;
+  let a1: String = llvm_reg_name(r1);
+  e.out = string_concat(e.out, "  ");
+  e.out = string_concat(e.out, a0);
+  e.out = string_concat(e.out, " = insertvalue %zarr undef, i64 ");
+  e.out = string_concat(e.out, lenref);
+  e.out = string_concat(e.out, ", 0\n  ");
+  e.out = string_concat(e.out, a1);
+  e.out = string_concat(e.out, " = insertvalue %zarr ");
+  e.out = string_concat(e.out, a0);
+  e.out = string_concat(e.out, ", ptr ");
+  e.out = string_concat(e.out, ptrref);
+  e.out = string_concat(e.out, ", 1\n");
+  return EmitVal { em: e, vref: a1 };
+}
+
+// Read the capacity stored one i64 before the elements pointer.
+fn emit_array_cap(em: Emit, ptrref: String) -> EmitVal {
+  let mut e: Emit = em;
+  let r1: Int = e.reg;
+  e.reg = e.reg + 1;
+  let cp: String = llvm_reg_name(r1);
+  let r2: Int = e.reg;
+  e.reg = e.reg + 1;
+  let cap: String = llvm_reg_name(r2);
+  e.out = string_concat(e.out, "  ");
+  e.out = string_concat(e.out, cp);
+  e.out = string_concat(e.out, " = getelementptr i64, ptr ");
+  e.out = string_concat(e.out, ptrref);
+  e.out = string_concat(e.out, ", i64 -1\n  ");
+  e.out = string_concat(e.out, cap);
+  e.out = string_concat(e.out, " = load i64, ptr ");
+  e.out = string_concat(e.out, cp);
+  e.out = string_concat(e.out, "\n");
+  return EmitVal { em: e, vref: cap };
+}
+
 fn emit_array_copy(em: Emit, vref: String, stride: Int) -> EmitVal {
   let mut e: Emit = em;
   let rl: Int = e.reg;
@@ -9107,15 +9150,6 @@ fn emit_array_copy(em: Emit, vref: String, stride: Int) -> EmitVal {
   let rb: Int = e.reg;
   e.reg = e.reg + 1;
   let bytes: String = llvm_reg_name(rb);
-  let rbuf: Int = e.reg;
-  e.reg = e.reg + 1;
-  let buf: String = llvm_reg_name(rbuf);
-  let r0: Int = e.reg;
-  e.reg = e.reg + 1;
-  let agg0: String = llvm_reg_name(r0);
-  let r1: Int = e.reg;
-  e.reg = e.reg + 1;
-  let agg1: String = llvm_reg_name(r1);
   e.out = string_concat(e.out, "  ");
   e.out = string_concat(e.out, len);
   e.out = string_concat(e.out, " = extractvalue %zarr ");
@@ -9130,28 +9164,18 @@ fn emit_array_copy(em: Emit, vref: String, stride: Int) -> EmitVal {
   e.out = string_concat(e.out, len);
   e.out = string_concat(e.out, ", ");
   e.out = string_concat(e.out, int_to_string(stride));
-  e.out = string_concat(e.out, "\n  ");
-  e.out = string_concat(e.out, buf);
-  e.out = string_concat(e.out, " = call ptr @malloc(i64 ");
-  e.out = string_concat(e.out, bytes);
-  e.out = string_concat(e.out, ")\n  call ptr @memcpy(ptr ");
+  e.out = string_concat(e.out, "\n");
+  let alloc: EmitVal = emit_alloc_buf(e, len, stride);
+  e = alloc.em;
+  let buf: String = alloc.vref;
+  e.out = string_concat(e.out, "  call ptr @memcpy(ptr ");
   e.out = string_concat(e.out, buf);
   e.out = string_concat(e.out, ", ptr ");
   e.out = string_concat(e.out, src);
   e.out = string_concat(e.out, ", i64 ");
   e.out = string_concat(e.out, bytes);
-  e.out = string_concat(e.out, ")\n  ");
-  e.out = string_concat(e.out, agg0);
-  e.out = string_concat(e.out, " = insertvalue %zarr undef, i64 ");
-  e.out = string_concat(e.out, len);
-  e.out = string_concat(e.out, ", 0\n  ");
-  e.out = string_concat(e.out, agg1);
-  e.out = string_concat(e.out, " = insertvalue %zarr ");
-  e.out = string_concat(e.out, agg0);
-  e.out = string_concat(e.out, ", ptr ");
-  e.out = string_concat(e.out, buf);
-  e.out = string_concat(e.out, ", 1\n");
-  return EmitVal { em: e, vref: agg1 };
+  e.out = string_concat(e.out, ")\n");
+  return emit_make_arr(e, len, buf);
 }
 
 // A fresh array (literal or array builtin result) already owns a private
@@ -9367,6 +9391,194 @@ fn emit_match_binding(em: Emit, mir: Mir, scrut: String, scrut_ty: String, pat: 
   return em;
 }
 
+// Whether a Store is the hot `name = <T>_array_push(name, v)` self-assignment,
+// which can mutate `name`'s buffer in place (amortized O(1)) instead of the
+// functional copy. Safe because value semantics gives each array variable a
+// uniquely-owned buffer (every binding deep-copies), so no other live owner
+// observes the mutation.
+fn match_inplace_push(mir: Mir, sidx: Int) -> Bool {
+  let place: Int = mir.ms_place[sidx];
+  if mir.mpl_kind[place] != mir_place_local() {
+    return false;
+  }
+  let vexpr: Int = mir.ms_expr[sidx];
+  if mir.me_kind[vexpr] != mir_call_expr() {
+    return false;
+  }
+  let callee: String = mir.me_text[vexpr];
+  if !is_array_builtin(callee) {
+    return false;
+  }
+  if !array_builtin_is_push(callee) {
+    return false;
+  }
+  let arr_arg: Int = mir.mchild_list[mir.me_a[vexpr]];
+  if mir.me_kind[arr_arg] != mir_load_expr() {
+    return false;
+  }
+  return mir.me_text[arr_arg] == mir.mpl_name[place];
+}
+
+// Lower `name = push(name, v)` in place: if len < cap write at ptr[len] and
+// bump len; else realloc to max(1, cap*2), memcpy, then write. Reassigns the
+// {len, ptr} value in `name`'s slot.
+fn lower_inplace_push(em: Emit, mir: Mir, sidx: Int) -> Emit {
+  let name: String = mir.mpl_name[mir.ms_place[sidx]];
+  let vexpr: Int = mir.ms_expr[sidx];
+  let elem: String = array_builtin_elem(mir.me_text[vexpr]);
+  let elemll: String = llvm_ty(em.tcx, elem);
+  let stride: Int = elem_stride(elem);
+  let valnode: Int = mir.mchild_list[mir.me_a[vexpr] + 1];
+  let slot: String = scope_slot(em.tcx, name);
+  let mut e: Emit = em;
+  let ra: Int = e.reg;
+  e.reg = e.reg + 1;
+  let arr: String = llvm_reg_name(ra);
+  let rlen: Int = e.reg;
+  e.reg = e.reg + 1;
+  let len: String = llvm_reg_name(rlen);
+  let rptr: Int = e.reg;
+  e.reg = e.reg + 1;
+  let ptr: String = llvm_reg_name(rptr);
+  e.out = string_concat(e.out, "  ");
+  e.out = string_concat(e.out, arr);
+  e.out = string_concat(e.out, " = load %zarr, ptr ");
+  e.out = string_concat(e.out, slot);
+  e.out = string_concat(e.out, "\n  ");
+  e.out = string_concat(e.out, len);
+  e.out = string_concat(e.out, " = extractvalue %zarr ");
+  e.out = string_concat(e.out, arr);
+  e.out = string_concat(e.out, ", 0\n  ");
+  e.out = string_concat(e.out, ptr);
+  e.out = string_concat(e.out, " = extractvalue %zarr ");
+  e.out = string_concat(e.out, arr);
+  e.out = string_concat(e.out, ", 1\n");
+  let capv: EmitVal = emit_array_cap(e, ptr);
+  e = capv.em;
+  let valv: EmitVal = llvm_expr(e, mir, valnode);
+  e = valv.em;
+  let rf: Int = e.reg;
+  e.reg = e.reg + 1;
+  let full: String = llvm_reg_name(rf);
+  let grow_id: Int = e.block;
+  e.block = e.block + 1;
+  let fast_id: Int = e.block;
+  e.block = e.block + 1;
+  let join_id: Int = e.block;
+  e.block = e.block + 1;
+  e.out = string_concat(e.out, "  ");
+  e.out = string_concat(e.out, full);
+  e.out = string_concat(e.out, " = icmp sge i64 ");
+  e.out = string_concat(e.out, len);
+  e.out = string_concat(e.out, ", ");
+  e.out = string_concat(e.out, capv.vref);
+  e.out = string_concat(e.out, "\n  br i1 ");
+  e.out = string_concat(e.out, full);
+  e.out = string_concat(e.out, ", label %");
+  e.out = string_concat(e.out, llvm_label_name(grow_id));
+  e.out = string_concat(e.out, ", label %");
+  e.out = string_concat(e.out, llvm_label_name(fast_id));
+  e.out = string_concat(e.out, "\n");
+  e.term = 1;
+  // grow: newcap = max(1, cap*2); realloc + memcpy.
+  e = llvm_open_block(e, grow_id);
+  let rc2: Int = e.reg;
+  e.reg = e.reg + 1;
+  let c2: String = llvm_reg_name(rc2);
+  let risz: Int = e.reg;
+  e.reg = e.reg + 1;
+  let isz: String = llvm_reg_name(risz);
+  let rnc: Int = e.reg;
+  e.reg = e.reg + 1;
+  let newcap: String = llvm_reg_name(rnc);
+  e.out = string_concat(e.out, "  ");
+  e.out = string_concat(e.out, c2);
+  e.out = string_concat(e.out, " = mul i64 ");
+  e.out = string_concat(e.out, capv.vref);
+  e.out = string_concat(e.out, ", 2\n  ");
+  e.out = string_concat(e.out, isz);
+  e.out = string_concat(e.out, " = icmp slt i64 ");
+  e.out = string_concat(e.out, c2);
+  e.out = string_concat(e.out, ", 1\n  ");
+  e.out = string_concat(e.out, newcap);
+  e.out = string_concat(e.out, " = select i1 ");
+  e.out = string_concat(e.out, isz);
+  e.out = string_concat(e.out, ", i64 1, i64 ");
+  e.out = string_concat(e.out, c2);
+  e.out = string_concat(e.out, "\n");
+  let nb: EmitVal = emit_alloc_buf(e, newcap, stride);
+  e = nb.em;
+  let rob: Int = e.reg;
+  e.reg = e.reg + 1;
+  let obytes: String = llvm_reg_name(rob);
+  e.out = string_concat(e.out, "  ");
+  e.out = string_concat(e.out, obytes);
+  e.out = string_concat(e.out, " = mul i64 ");
+  e.out = string_concat(e.out, len);
+  e.out = string_concat(e.out, ", ");
+  e.out = string_concat(e.out, int_to_string(stride));
+  e.out = string_concat(e.out, "\n  call ptr @memcpy(ptr ");
+  e.out = string_concat(e.out, nb.vref);
+  e.out = string_concat(e.out, ", ptr ");
+  e.out = string_concat(e.out, ptr);
+  e.out = string_concat(e.out, ", i64 ");
+  e.out = string_concat(e.out, obytes);
+  e.out = string_concat(e.out, ")\n");
+  e = llvm_branch(e, join_id);
+  e = llvm_open_block(e, fast_id);
+  e = llvm_branch(e, join_id);
+  // join: pick the buffer, write the element, bump len, reassign the slot.
+  e = llvm_open_block(e, join_id);
+  let rdst: Int = e.reg;
+  e.reg = e.reg + 1;
+  let dst: String = llvm_reg_name(rdst);
+  e.out = string_concat(e.out, "  ");
+  e.out = string_concat(e.out, dst);
+  e.out = string_concat(e.out, " = phi ptr [ ");
+  e.out = string_concat(e.out, ptr);
+  e.out = string_concat(e.out, ", %");
+  e.out = string_concat(e.out, llvm_label_name(fast_id));
+  e.out = string_concat(e.out, " ], [ ");
+  e.out = string_concat(e.out, nb.vref);
+  e.out = string_concat(e.out, ", %");
+  e.out = string_concat(e.out, llvm_label_name(grow_id));
+  e.out = string_concat(e.out, " ]\n");
+  let rep: Int = e.reg;
+  e.reg = e.reg + 1;
+  let ep: String = llvm_reg_name(rep);
+  e.out = string_concat(e.out, "  ");
+  e.out = string_concat(e.out, ep);
+  e.out = string_concat(e.out, " = getelementptr ");
+  e.out = string_concat(e.out, elemll);
+  e.out = string_concat(e.out, ", ptr ");
+  e.out = string_concat(e.out, dst);
+  e.out = string_concat(e.out, ", i64 ");
+  e.out = string_concat(e.out, len);
+  e.out = string_concat(e.out, "\n  store ");
+  e.out = string_concat(e.out, elemll);
+  e.out = string_concat(e.out, " ");
+  e.out = string_concat(e.out, valv.vref);
+  e.out = string_concat(e.out, ", ptr ");
+  e.out = string_concat(e.out, ep);
+  e.out = string_concat(e.out, "\n");
+  let rnl: Int = e.reg;
+  e.reg = e.reg + 1;
+  let nlen: String = llvm_reg_name(rnl);
+  e.out = string_concat(e.out, "  ");
+  e.out = string_concat(e.out, nlen);
+  e.out = string_concat(e.out, " = add i64 ");
+  e.out = string_concat(e.out, len);
+  e.out = string_concat(e.out, ", 1\n");
+  let res: EmitVal = emit_make_arr(e, nlen, dst);
+  e = res.em;
+  e.out = string_concat(e.out, "  store %zarr ");
+  e.out = string_concat(e.out, res.vref);
+  e.out = string_concat(e.out, ", ptr ");
+  e.out = string_concat(e.out, slot);
+  e.out = string_concat(e.out, "\n");
+  return e;
+}
+
 fn llvm_stmt(em: Emit, mir: Mir, sidx: Int, brk: Int, cont: Int) -> Emit {
   let kind: Int = mir.ms_kind[sidx];
   if kind == mir_local_stmt() {
@@ -9387,6 +9599,9 @@ fn llvm_stmt(em: Emit, mir: Mir, sidx: Int, brk: Int, cont: Int) -> Emit {
     return e;
   }
   if kind == mir_store_stmt() {
+    if match_inplace_push(mir, sidx) {
+      return lower_inplace_push(em, mir, sidx);
+    }
     let v: EmitVal = emit_bind(em, mir, mir.ms_expr[sidx]);
     let pr: PlaceRef = resolve_place(v.em, mir, mir.ms_place[sidx]);
     let mut e: Emit = pr.em;
