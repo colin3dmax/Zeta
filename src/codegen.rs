@@ -544,23 +544,27 @@ fn infer_expr_type(
     })
 }
 
-fn optimize_module(module: &inkwell::module::Module) -> Result<(), String> {
+fn host_target_machine() -> Result<inkwell::targets::TargetMachine, String> {
     use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine};
 
     Target::initialize_native(&InitializationConfig::default())
         .map_err(|e| format!("native target init failed: {e}"))?;
     let triple = TargetMachine::get_default_triple();
     let target = Target::from_triple(&triple).map_err(|e| format!("target lookup failed: {e}"))?;
-    let machine = target
+    target
         .create_target_machine(
             &triple,
             TargetMachine::get_host_cpu_name().to_str().unwrap_or(""),
             TargetMachine::get_host_cpu_features().to_str().unwrap_or(""),
             OptimizationLevel::Aggressive,
-            RelocMode::Default,
+            RelocMode::PIC,
             CodeModel::Default,
         )
-        .ok_or("could not create host target machine")?;
+        .ok_or_else(|| "could not create host target machine".to_string())
+}
+
+fn optimize_module(module: &inkwell::module::Module) -> Result<(), String> {
+    let machine = host_target_machine()?;
     module
         .run_passes(
             "default<O3>",
@@ -568,6 +572,31 @@ fn optimize_module(module: &inkwell::module::Module) -> Result<(), String> {
             inkwell::passes::PassBuilderOptions::create(),
         )
         .map_err(|e| format!("optimization passes failed: {e}"))
+}
+
+/// Ahead-of-time: compile `program` to a native **object file** at `path`. The
+/// `entry` function (e.g. `main`) is renamed to `zeta_entry` so it won't clash
+/// with the C `main` of the driver that links against this object. This is the
+/// JIT-free path — `cc obj.o driver.c -o exe` yields a standalone binary, a step
+/// toward dropping Stage0.
+pub fn aot_compile_object(
+    program: &Program,
+    structs: &[StructDecl],
+    entry: &str,
+    path: &std::path::Path,
+) -> Result<(), String> {
+    let context = Context::create();
+    let types = Types::build(&context, structs, program)?;
+    let module = build_module(&context, &types, program)?;
+    let entry_fn = module
+        .get_function(entry)
+        .ok_or_else(|| format!("entry `{entry}` not found"))?;
+    entry_fn.as_global_value().set_name("zeta_entry");
+    optimize_module(&module)?;
+    let machine = host_target_machine()?;
+    machine
+        .write_to_file(&module, inkwell::targets::FileType::Object, path)
+        .map_err(|e| format!("object emission failed: {e}"))
 }
 
 struct FnLower<'a, 'ctx> {
