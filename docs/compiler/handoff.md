@@ -68,9 +68,11 @@ native 后端覆盖 Int/Bool/struct/array/**string**(值语义)。要 AOT 编译
 
 8. ~~**差分验证 native 跑前端**~~ ✅ **闭环达成**:在前端源后追加 `main()` 调 `compile(src,mode)`,把 dump String 归约成 Int 摘要;解释器 `run_mir` 与 native `jit_run_i64` 跑同一组合程序、摘要相等 → **native 编译的整个前端逐字节复现解释器产物**(ast-dump/mir-dump/typecheck/run 模式,run 经自托管求值器)。门禁 `tests/codegen_selfhost_run.rs`(6 用例)。
 
-**native 后端线核心目标达成:Zeta 自举前端经 Zeta 自己的 native 后端编译并跑出与参考解释器一致的产物。** 可选的进一步收尾:
-   - **AOT 独立可执行的前端**:把组合程序 `aot_compile_object` 成 .o 链接成 exe,吃文件/stdin 输出 dump —— 需 `file_read_to_string` 等的 Rust 侧 extern shim(JIT 差分已证正确,这是打包/部署步骤)。
-   - **String-payload enum**(E2)、NativeService struct 状态:低优先,前端不需要。
+9. ~~**AOT 独立 exe 前端**~~ ✅ **达成**:前端 AOT 成 .o(entry=`compile`→`zeta_entry`)+ 极小 C driver(文件 IO shim:读源文件、调 `zeta_entry(ZStr,ZStr)->ZStr`、写 stdout)→ **独立可执行**。前端纯函数(source 当 String 入参),IO 全在 driver;String 跨 FFI 与 NativeArray 同 {i64,ptr} ABI。门禁 `tests/codegen_aot_frontend.rs`(ignored,~11s):四模式 stdout 逐字节对齐解释器。
+
+**native 后端线全部目标达成:Zeta 自举前端 → Zeta native 后端 → 脱离 Stage0 的独立二进制,产物与参考解释器逐字节一致。** 仅剩低优先可选项:
+   - **String-payload enum**(E2)、NativeService struct 状态:前端不需要,纯广度补全。
+   - 性能:动态数组 push 目前 O(n)/次(无 capacity);若 AOT 前端跑大输入慢,可加容量字段。
 
 **每步都用解释器 `run_mir` 作差分 oracle**(见 tests/codegen_*.rs 的 `check()` 范式),feature-gated,不影响默认构建。
 
