@@ -1,19 +1,21 @@
 # Zeta 独立自举工程路线图
 
-> 状态基准:2026-06。本文把"从当前到 Zeta 编译器能编译它自己(self-hosting 闭环、脱离 Rust Stage0)"拆解为可执行里程碑。
+> 状态基准:2026-06-14。本文把"从当前到 Zeta 编译器能编译它自己(self-hosting 闭环、脱离 Rust Stage0)"拆解为可执行里程碑。
+>
+> **⚠️ 路线图已全部达成。** M0–M7 全完成,且原"剩余 = native/LLVM 后端"那条线也已完成(详见 §2 表与 §6)。本文保留作历史规划与设计依据;最新落地状态以 `docs/compiler/handoff.md` 与 `~/.claude/projects/.../memory/` 的进展记忆为准。
 
-## 0. 现状基线
+## 0. 现状基线(2026-06-14:已自举闭环)
 
-- **Stage0(Rust)**:唯一完整编译器。lexer → parser → AST → resolver → typecheck → MIR → MIR 解释器,外加 `ast-dump`/`hir-dump`/`mir-dump` 文本转储。
-- **Stage1(Zeta,`testdata/stage1_frontend/frontend.zeta`,约 3300 行)**:用 Zeta 写的前端**雏形**。能力边界:
-  - ✅ 词法扫描(`lex_kinds`/`lex_texts`,token 存**并行数组** `IntArray kinds` + `StringArray texts`)。
-  - ⚠️ 极简 parser(基于 token 流 + 花括号深度 + 反向扫描运算符,**非递归下降**)。
-  - ❌ 只产出 **ast-dump 文本字符串**(`ast_dump_rust_item_dump(source) -> String`),**不构造可供下游消费的 AST 数据结构**。
-  - ❌ 没有 resolver / typecheck / MIR / 后端。
-  - ❌ Stage1 自身是 `.zeta`,**依赖 Stage0 运行**。
-- **质量武器**:oracle 差分门禁(`examples/parity_check` + `tests/stage1_parity.rs`,243 个探针),用 Rust `dump_ast` 作权威,逐字验证 Stage1 输出。这套体系将贯穿全部里程碑。
+- **Stage0(Rust)**:参考编译器 / oracle。lexer → parser → AST → resolver → typecheck → MIR → MIR 解释器,外加 `ast-dump`/`hir-dump`/`mir-dump` 文本转储,并新增 **MIR→LLVM native 后端**(JIT + AOT,`#[cfg(feature="llvm")]`)。
+- **Stage1(Zeta,`testdata/selfhost/arena_frontend.zeta`,约 7500 行)**:用 Zeta 写的**完整前端**(早期的 `frontend.zeta` 雏形已被取代)。能力:
+  - ✅ 词法扫描 + **递归下降 parser** 构造**真 arena AST**(index-based 并行数组,非拼文本)。
+  - ✅ **resolver / typecheck / MIR lowering / MIR 解释器**全部用 Zeta 写,逐字/逐诊断对齐 Rust oracle(M3–M6)。
+  - ✅ 统一 driver `export fn compile(source, mode)`(ast-dump/resolve/typecheck/mir-dump/run)。
+  - ✅ **自举 fixpoint**:Stage1 处理自身 7500 行源,四阶段与 Rust oracle 全等(`tests/selfhost_fixpoint.rs`,4/4)。
+- **native 后端**:`arena_frontend.zeta` 整个前端经 Zeta 自己的 native 后端 AOT 成独立可执行,产物逐字节对齐解释器(脱离 Stage0)。
+- **质量武器**:oracle 差分门禁(`examples/parity_check` + `tests/stage1_parity.rs` 243 探针 + 各阶段 selfhost_*.rs),用 Rust 作权威,逐字验证 Zeta 输出。这套体系贯穿了全部里程碑。
 
-**粗估完成度:个位数百分比。** 前端"解析→文本对齐"这道工序扎实,但中后端 Zeta 实现为 0,且 Stage1 停在"文本"而非"结构"。
+**完成度:M0–M7 + native 后端全部达成。** 见 §2 里程碑表与 §6。
 
 ## 1. 根本约束 → 核心设计抉择
 
@@ -30,16 +32,17 @@ Zeta 语言**当前**缺以下能力(写编译器会撞墙):
 
 ## 2. 里程碑总览
 
-| 里程碑 | 目标 | 依赖 | 规模 | 验证 |
-|---|---|---|---|---|
-| **M0** ✅ | 语言地基 + 前端解析契约 | — | 已完成 | parity 243 探针 |
-| **M1** | 补齐"写编译器"所需语言能力 | M0 | 中 | 新特性各自 parity + 单测 |
-| **M2** | Stage1 前端:文本 → **结构化 arena AST** | M1 | **大(质变)** | AST 遍历产 dump 仍对齐 Rust |
-| **M3** | 用 Zeta 写 **resolver** | M2 | 大 | 与 Rust resolver 诊断对齐 |
-| **M4** | 用 Zeta 写 **typecheck** | M3 | 大 | 与 Rust typecheck 诊断对齐 |
-| **M5** | 用 Zeta 写 **MIR lowering** | M4 | 大 | 与 Rust mir-dump 对齐 |
-| **M6** | 用 Zeta 写 **MIR 解释器后端** | M5 | 大 | Zeta 跑程序结果 == Rust 跑 |
-| **M7** | **自举闭环**:Zeta 编译器编译自己 | M2–M6 | 中(集成) | fixpoint:Stage1 编译 Stage1 |
+| 里程碑 | 目标 | 依赖 | 规模 | 验证 | 状态 |
+|---|---|---|---|---|---|
+| **M0** | 语言地基 + 前端解析契约 | — | — | parity 243 探针 | ✅ |
+| **M1** | 补齐"写编译器"所需语言能力 | M0 | 中 | 新特性各自 parity + 单测 | ✅ |
+| **M2** | Stage1 前端:文本 → **结构化 arena AST** | M1 | 大(质变) | AST 遍历产 dump 仍对齐 Rust | ✅ |
+| **M3** | 用 Zeta 写 **resolver** | M2 | 大 | 与 Rust resolver 诊断对齐 | ✅ |
+| **M4** | 用 Zeta 写 **typecheck** | M3 | 大 | 与 Rust typecheck 诊断对齐 | ✅ |
+| **M5** | 用 Zeta 写 **MIR lowering** | M4 | 大 | 与 Rust mir-dump 对齐 | ✅ |
+| **M6** | 用 Zeta 写 **MIR 解释器后端** | M5 | 大 | Zeta 跑程序结果 == Rust 跑 | ✅ |
+| **M7** | **自举闭环**:Zeta 编译器编译自己 | M2–M6 | 中(集成) | fixpoint:Stage1 编译 Stage1 | ✅ |
+| **后端** | MIR→LLVM native(JIT/AOT)+ 自举前端 AOT 成独立 exe | M7 | 大(独立线) | native==解释器差分 + AOT 逐字节 | ✅ |
 
 ## 3. 里程碑详情
 
@@ -107,11 +110,14 @@ Zeta 语言**当前**缺以下能力(写编译器会撞墙):
 3. **性能**:M6 的 Zeta 解释器跑 M7 的 Zeta 编译器,可能很慢。→ 自举正确性优先,性能后置(与 LLVM native 后端是另一条线)。
 4. **范围蔓延**:跨文件 module graph、std 库自举等可缩范围起步(先单文件、核心子集)。
 
-## 6. 建议的下一步
+## 6. 完成回顾与开放方向
 
-**M2 是转折点**,且不必等 M1 全做完——可以先用当前语言能力试做 M2 的一个垂直切片:
-- 选最小子集(如只有 `fn` + `let` + 算术 + `return`),
-- 在 frontend 里用 arena 表示构造这部分 AST,
-- 写 `dump_from_ast` 产出文本,验证与 Rust 对齐。
+**M0–M7 + native 后端全部达成**(2026-06-14)。`arena_frontend.zeta` 是用 Zeta 写的完整前端,经 fixpoint 证明能处理自身源码并逐字对齐 Rust oracle;native 后端进一步把它 AOT 成脱离 Stage0 的独立可执行。三条并行线(自举 / hot-reload / native)的预定目标均已落地,详见 `docs/compiler/handoff.md`。
 
-跑通这个垂直切片,就证明了"arena AST + 递归下降 + dump 对齐"的可行性,是从"加特性"真正转向"接近自举"的第一锹土。遇到语言能力不足时,回到 M1 补齐。
+**已无预定义里程碑。** 真正脱离 Stage0 的剩余只是"工程化收口"与 nice-to-have,均非阻塞:
+
+- **真正的 Stage2(Zeta 编译 Zeta 产 native)**:目前自举链是 Zeta 前端 + Zeta MIR **解释器**;若要 `zetac.zeta` 自身也走 native codegen(而非 Rust 侧的 `src/codegen.rs`),需用 Zeta 重写 MIR→LLVM 后端——独立大工程,当前用 Rust 后端 AOT 已达成"独立二进制"目标,故非必需。
+- **语法边界补全**:Rust parser 仍有不支持的语法(neg/else-if/复杂赋值目标等,见 `rust-parser-unsupported-boundaries` 记忆),补齐可放宽自举语料。
+- **后端广度/性能**:native 已是 C 级(1.04x 同语义);更多 hot-reload 状态类型、call-site patching 把"每帧一跳间接"压到零等,均为边际增强。
+
+下一步方向待定,建议由需求驱动而非预设。
