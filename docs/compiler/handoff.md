@@ -70,9 +70,12 @@ native 后端覆盖 Int/Bool/struct/array/**string**(值语义)。要 AOT 编译
 
 9. ~~**AOT 独立 exe 前端**~~ ✅ **达成**:前端 AOT 成 .o(entry=`compile`→`zeta_entry`)+ 极小 C driver(文件 IO shim:读源文件、调 `zeta_entry(ZStr,ZStr)->ZStr`、写 stdout)→ **独立可执行**。前端纯函数(source 当 String 入参),IO 全在 driver;String 跨 FFI 与 NativeArray 同 {i64,ptr} ABI。门禁 `tests/codegen_aot_frontend.rs`(ignored,~11s):四模式 stdout 逐字节对齐解释器。
 
-**native 后端线全部目标达成:Zeta 自举前端 → Zeta native 后端 → 脱离 Stage0 的独立二进制,产物与参考解释器逐字节一致。** 仅剩低优先可选项:
-   - **String-payload enum**(E2)、NativeService struct 状态:前端不需要,纯广度补全。
-   - 性能:动态数组 push 目前 O(n)/次(无 capacity);若 AOT 前端跑大输入慢,可加容量字段。
+10. ~~**收尾广度项**~~ ✅ **全部完成**:
+   - **String-payload enum**(E2):enum 布局加宽 `{i64 tag, i64 p0, ptr p1}`,Int/Bool/String payload;`tests/codegen_enum.rs`(14 用例)。
+   - **NativeStructService**:struct 状态跨 native 热替换,经指针包装器 `__svc_init`/`__svc_step` 绕 per-struct ABI;`tests/codegen_hot_reload.rs`(5 用例)。
+   - **数组绑定优化**:新鲜独占 buffer(字面量 / `*_array_*`)绑定时跳过冗余 deep-copy(常数因子;`bind_owned`/`is_fresh_array`)。
+
+**native 后端线全部目标 + 收尾广度项全部达成。** 仅剩真·性能深水区(若需要):动态数组 push 仍 O(n)/次 → 真正 amortized O(1) 需 move-on-last-use/容量分析(解释器已有 `compute_movable_loads` 可借鉴),前端当前够用故未做。struct/array-payload enum(>16B payload)同理未做,前端不需要。
 
 **每步都用解释器 `run_mir` 作差分 oracle**(见 tests/codegen_*.rs 的 `check()` 范式),feature-gated,不影响默认构建。
 
