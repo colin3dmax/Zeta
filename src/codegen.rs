@@ -1036,16 +1036,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let global = self.builder.build_global_string_ptr(text, "str").unwrap();
                 let data = global.as_pointer_value();
                 let len = self.i64t().const_int(text.len() as u64, false);
-                let v = self
-                    .builder
-                    .build_insert_value(array_struct_type(self.context).get_undef(), len, 0, "s0")
-                    .unwrap();
-                let v = self
-                    .builder
-                    .build_insert_value(v, data, 1, "s1")
-                    .unwrap()
-                    .into_struct_value();
-                Ok((v.into(), ZType::Str))
+                Ok((self.make_str(len, data).into(), ZType::Str))
             }
             MirExpr::EnumVariant { .. } => Err("enum expression not in the native subset".into()),
         }
@@ -1084,8 +1075,74 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let widened = b.build_int_z_extend(byte, self.i64t(), "byte64").unwrap();
                 Ok(Some((widened.into(), ZType::Int)))
             }
+            "string_concat" => {
+                // malloc(la+lb), memcpy a then b, return {la+lb, buf}.
+                let (a, _) = self.lower_expr(&args[0])?;
+                let (bv, _) = self.lower_expr(&args[1])?;
+                let (la, pa) = self.str_parts(a.into_struct_value());
+                let (lb, pb) = self.str_parts(bv.into_struct_value());
+                let total = b.build_int_add(la, lb, "clen").unwrap();
+                let buf = self.malloc_bytes(total);
+                self.memcpy_bytes(buf, pa, la);
+                let i8t = self.context.i8_type();
+                let tail = unsafe { b.build_in_bounds_gep(i8t, buf, &[la], "tail").unwrap() };
+                self.memcpy_bytes(tail, pb, lb);
+                Ok(Some((self.make_str(total, buf).into(), ZType::Str)))
+            }
+            "string_byte_slice" => {
+                // s[start .. start+len] → malloc(len) + memcpy from data+start. No
+                // bounds/utf-8 check (the array path is likewise unchecked); tests
+                // stay in range.
+                let (s, _) = self.lower_expr(&args[0])?;
+                let (_, data) = self.str_parts(s.into_struct_value());
+                let start = self.lower_int(&args[1])?;
+                let len = self.lower_int(&args[2])?;
+                let i8t = self.context.i8_type();
+                let src = unsafe { b.build_in_bounds_gep(i8t, data, &[start], "slcsrc").unwrap() };
+                let buf = self.malloc_bytes(len);
+                self.memcpy_bytes(buf, src, len);
+                Ok(Some((self.make_str(len, buf).into(), ZType::Str)))
+            }
             _ => Ok(None),
         }
+    }
+
+    /// Extract `(len, data)` from a string `{i64, ptr}` value.
+    fn str_parts(
+        &self,
+        s: inkwell::values::StructValue<'ctx>,
+    ) -> (IntValue<'ctx>, PointerValue<'ctx>) {
+        let b = self.builder;
+        let len = b.build_extract_value(s, 0, "slen").unwrap().into_int_value();
+        let data = b.build_extract_value(s, 1, "sdata").unwrap().into_pointer_value();
+        (len, data)
+    }
+
+    /// `malloc(n)` returning the i8 buffer pointer.
+    fn malloc_bytes(&self, n: IntValue<'ctx>) -> PointerValue<'ctx> {
+        self.builder
+            .build_call(self.malloc, &[n.into()], "buf")
+            .unwrap()
+            .try_as_basic_value()
+            .basic()
+            .unwrap()
+            .into_pointer_value()
+    }
+
+    /// `memcpy(dst, src, n)`.
+    fn memcpy_bytes(&self, dst: PointerValue<'ctx>, src: PointerValue<'ctx>, n: IntValue<'ctx>) {
+        self.builder
+            .build_call(self.memcpy, &[dst.into(), src.into(), n.into()], "cp")
+            .unwrap();
+    }
+
+    /// Build a string `{len, data}` value.
+    fn make_str(&self, len: IntValue<'ctx>, data: PointerValue<'ctx>) -> inkwell::values::StructValue<'ctx> {
+        let b = self.builder;
+        let v = b
+            .build_insert_value(array_struct_type(self.context).get_undef(), len, 0, "s0")
+            .unwrap();
+        b.build_insert_value(v, data, 1, "s1").unwrap().into_struct_value()
     }
 
     /// Lower an expression that must be an `i64` (Int/Bool).

@@ -100,3 +100,63 @@ fn main() -> Int {
     // len 2 + 'h'(104)
     assert_eq!(check(src), 2 + 104);
 }
+
+#[test]
+fn concat_len() {
+    let src = "\
+fn main() -> Int {
+  let s: String = string_concat(\"foo\", \"barbaz\");
+  return string_len(s);
+}";
+    assert_eq!(check(src), 9);
+}
+
+#[test]
+fn concat_bytes_in_order() {
+    // "AB" ++ "CD" → bytes A,B,C,D at 0..3
+    let src = "\
+fn main() -> Int {
+  let s: String = string_concat(\"AB\", \"CD\");
+  return string_byte_at(s, 0) * 1000 + string_byte_at(s, 1) * 100
+       + string_byte_at(s, 2) * 10 + string_byte_at(s, 3);
+}";
+    // 65,66,67,68
+    assert_eq!(check(src), 65 * 1000 + 66 * 100 + 67 * 10 + 68);
+}
+
+#[test]
+fn concat_with_empty() {
+    let src = "\
+fn main() -> Int {
+  let s: String = string_concat(\"\", \"xyz\");
+  return string_len(s) + string_byte_at(s, 0);
+}";
+    // len 3 + 'x'(120)
+    assert_eq!(check(src), 3 + 120);
+}
+
+#[test]
+fn byte_slice_basic() {
+    // "hello"[1..4] = "ell"
+    let src = "\
+fn main() -> Int {
+  let s: String = string_byte_slice(\"hello\", 1, 3);
+  return string_len(s) * 1000 + string_byte_at(s, 0);
+}";
+    // len 3, first byte 'e'(101)
+    assert_eq!(check(src), 3 * 1000 + 101);
+}
+
+#[test]
+fn slice_then_concat_chain() {
+    // Mirrors run_std_builtin_chain.zeta's shape: slice + concat composed.
+    let src = "\
+fn main() -> Int {
+  let text: String = \"zeta-lang\";
+  let head: String = string_byte_slice(text, 0, 4);
+  let s: String = string_concat(head, \"!\");
+  return string_len(s) * 100 + string_byte_at(s, 4);
+}";
+    // head = "zeta"(4) ++ "!"(1) → len 5, byte[4] = '!'(33)
+    assert_eq!(check(src), 5 * 100 + 33);
+}
