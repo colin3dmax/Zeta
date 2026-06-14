@@ -248,6 +248,82 @@ pub fn jit_time_i64_arg(
     }
 }
 
+/// A long-running service whose `step` runs as **optimized native code** and can
+/// be hot-swapped without losing state (native counterpart of
+/// `runtime::ServiceDriver`; see docs/compiler/hot-reload-design.md). Convention:
+/// `fn init() -> Int` and `reloadable fn step(state: Int, input: Int) -> Int`.
+///
+/// The accumulated state lives here (an `i64`); each tick calls the current
+/// native `step`. `reload` JIT-compiles a new program to native and atomically
+/// repoints `step` — the state is untouched, so the new (native-speed) code
+/// resumes from it. This realizes the §3.1 picture: the hot path is native, only
+/// the `step` boundary is an indirect call.
+pub struct NativeService {
+    // Leaked context keeps the JIT'd code's types alive for the engine's life.
+    engine: inkwell::execution_engine::ExecutionEngine<'static>,
+    step_addr: usize,
+    state: i64,
+}
+
+impl NativeService {
+    pub fn start(program: &Program, structs: &[StructDecl]) -> Result<NativeService, String> {
+        let context: &'static Context = Box::leak(Box::new(Context::create()));
+        let engine = compile_engine(context, program, structs)?;
+        let init_addr = engine
+            .get_function_address("init")
+            .map_err(|e| format!("`init` not found: {e}"))?;
+        let init: extern "C" fn() -> i64 = unsafe { std::mem::transmute(init_addr) };
+        let state = init();
+        let step_addr = engine
+            .get_function_address("step")
+            .map_err(|e| format!("`step` not found: {e}"))?;
+        Ok(NativeService {
+            engine,
+            step_addr,
+            state,
+        })
+    }
+
+    /// Advance one tick by calling the current native `step(state, input)`.
+    pub fn tick(&mut self, input: i64) -> i64 {
+        let step: extern "C" fn(i64, i64) -> i64 = unsafe { std::mem::transmute(self.step_addr) };
+        self.state = step(self.state, input);
+        self.state
+    }
+
+    pub fn state(&self) -> i64 {
+        self.state
+    }
+
+    /// Hot-swap to a freshly JIT-compiled native program. State is preserved.
+    pub fn reload(&mut self, program: &Program, structs: &[StructDecl]) -> Result<(), String> {
+        let context: &'static Context = Box::leak(Box::new(Context::create()));
+        let engine = compile_engine(context, program, structs)?;
+        let step_addr = engine
+            .get_function_address("step")
+            .map_err(|e| format!("`step` not found: {e}"))?;
+        // Point at the new code BEFORE dropping the old engine (which unmaps the
+        // old code); the preserved `state` i64 carries straight over.
+        self.step_addr = step_addr;
+        self.engine = engine;
+        Ok(())
+    }
+}
+
+/// Build + optimize a module and wrap it in an aggressive JIT engine.
+fn compile_engine(
+    context: &'static Context,
+    program: &Program,
+    structs: &[StructDecl],
+) -> Result<inkwell::execution_engine::ExecutionEngine<'static>, String> {
+    let types = Types::build(context, structs, program)?;
+    let module = build_module(context, &types, program)?;
+    optimize_module(&module)?;
+    module
+        .create_jit_execution_engine(OptimizationLevel::Aggressive)
+        .map_err(|e| format!("JIT engine init failed: {e}"))
+}
+
 fn build_module<'ctx>(
     context: &'ctx Context,
     types: &Types<'ctx>,
