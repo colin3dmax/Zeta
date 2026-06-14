@@ -770,3 +770,77 @@ fn main() -> Int {
     // odds 1+3+5
     assert_eq!(check(src), 9);
 }
+
+// --- slice 7: StringArray / BoolArray (generalized element type) ---
+
+#[test]
+fn string_array_literal_and_index() {
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let xs: StringArray = [\"ab\", \"cde\"];
+  return string_len(xs[0]) + string_len(xs[1]);
+}";
+    assert_eq!(check(src), 5);
+}
+
+#[test]
+fn string_array_push_and_for_in() {
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let mut xs: StringArray = string_array_empty();
+  xs = string_array_push(xs, \"aa\");
+  xs = string_array_push(xs, \"bbb\");
+  let mut t: Int = 0;
+  for s in xs { t = t + string_len(s); }
+  return t;
+}";
+    assert_eq!(check(src), 5);
+}
+
+#[test]
+fn string_array_index_write() {
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let mut xs: StringArray = [\"x\", \"yy\"];
+  xs[0] = \"zzz\";
+  return string_len(xs[0]) * 10 + string_len(xs[1]);
+}";
+    assert_eq!(check(src), 32);
+}
+
+#[test]
+fn bool_array_push_and_count() {
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let mut xs: BoolArray = bool_array_empty();
+  xs = bool_array_push(xs, true);
+  xs = bool_array_push(xs, false);
+  xs = bool_array_push(xs, true);
+  let mut c: Int = 0;
+  for b in xs {
+    if b { c = c + 1; }
+  }
+  return c;
+}";
+    assert_eq!(check(src), 2);
+}
+
+#[test]
+fn string_array_copy_independent() {
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let mut xs: StringArray = string_array_empty();
+  xs = string_array_push(xs, \"a\");
+  xs = string_array_push(xs, \"b\");
+  let ys: StringArray = xs;
+  xs = string_array_push(xs, \"c\");
+  return ys.len * 10 + xs.len;
+}";
+    // ys keeps 2, xs grows to 3
+    assert_eq!(check(src), 23);
+}

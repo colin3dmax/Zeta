@@ -7573,8 +7573,10 @@ export fn run_main_via_arena(source: String) -> String {
 // Enums are `%zenum = { i64 tag, i64 p0, ptr p1 }` (Int/Bool in p0, String
 // split across p0/p1, no payload zero/null); `match` lowers to an LLVM `switch`
 // on the tag (enum) or the value itself (Int/Bool), arms binding their payload.
-// for-range / for-in (IntArray) / for-c lower to explicit control flow, with
-// continue advancing the counter/step so it still progresses.
+// for-range / for-in / for-c lower to explicit control flow, with continue
+// advancing the counter/step so it still progresses. Arrays are generalized
+// over element type: IntArray / BoolArray (i64, 8-byte stride) and StringArray
+// (%zstr, 16-byte stride), driven by `array_elem_type` / `elem_stride`.
 //
 // Emits textual LLVM IR. Int / Bool unify as i64; structs map to named `%S`
 // aggregate types (insertvalue literals, extractvalue field reads, GEP field
@@ -7786,15 +7788,62 @@ fn scope_type(tcx: Tcx, name: String) -> String {
   return "Int";
 }
 
-// Whether `ty` is a dynamic array (slice 3: IntArray only). Arrays are the
-// `%zarr = { i64 len, ptr data }` value with a heap element buffer.
+// Whether `ty` is a dynamic array. Arrays are the `%zarr = { i64 len, ptr data }`
+// value with a heap element buffer (Int/Bool elements are i64 = 8 bytes, String
+// elements are %zstr = 16 bytes).
 fn is_array_type(ty: String) -> Bool {
-  return ty == "IntArray";
+  return ty == "IntArray" || ty == "BoolArray" || ty == "StringArray";
+}
+
+// The element Zeta type of an array type, and the reverse.
+fn array_elem_type(arr_ty: String) -> String {
+  if arr_ty == "StringArray" {
+    return "String";
+  }
+  if arr_ty == "BoolArray" {
+    return "Bool";
+  }
+  return "Int";
+}
+
+fn elem_to_array_type(elem: String) -> String {
+  if elem == "String" {
+    return "StringArray";
+  }
+  if elem == "Bool" {
+    return "BoolArray";
+  }
+  return "IntArray";
+}
+
+// Byte stride of one array element (String = 16, Int/Bool = 8).
+fn elem_stride(elem: String) -> Int {
+  if elem == "String" {
+    return 16;
+  }
+  return 8;
 }
 
 // Array builtins lowered inline (not user `@z_` calls).
 fn is_array_builtin(name: String) -> Bool {
-  return name == "int_array_empty" || name == "int_array_push";
+  return name == "int_array_empty" || name == "int_array_push"
+      || name == "bool_array_empty" || name == "bool_array_push"
+      || name == "string_array_empty" || name == "string_array_push";
+}
+
+fn array_builtin_elem(name: String) -> String {
+  if string_starts_with(name, "string_array") {
+    return "String";
+  }
+  if string_starts_with(name, "bool_array") {
+    return "Bool";
+  }
+  return "Int";
+}
+
+fn array_builtin_is_push(name: String) -> Bool {
+  let l: Int = string_len(name);
+  return string_byte_slice(name, l - 5, 5) == "_push";
 }
 
 // String builtins lowered inline.
@@ -7906,7 +7955,7 @@ fn type_of_expr(tcx: Tcx, mir: Mir, node: Int) -> String {
   }
   if kind == mir_call_expr() {
     if is_array_builtin(mir.me_text[node]) {
-      return "IntArray";
+      return elem_to_array_type(array_builtin_elem(mir.me_text[node]));
     }
     if is_string_builtin(mir.me_text[node]) {
       return string_builtin_ret(mir.me_text[node]);
@@ -7921,10 +7970,13 @@ fn type_of_expr(tcx: Tcx, mir: Mir, node: Int) -> String {
     return "Int";
   }
   if kind == mir_array_expr() {
+    if mir.me_b[node] > 0 {
+      return elem_to_array_type(type_of_expr(tcx, mir, mir.mchild_list[mir.me_a[node]]));
+    }
     return "IntArray";
   }
   if kind == mir_index_expr() {
-    return "Int";
+    return array_elem_type(type_of_expr(tcx, mir, mir.me_a[node]));
   }
   if kind == mir_enum_expr() {
     return enum_path_enum(mir.me_text[node]);
@@ -8047,7 +8099,8 @@ fn tcx_scan_lets(tcx: Tcx, mir: Mir, start: Int, count: Int) -> Tcx {
     }
     if k == mir_for_in_stmt() {
       acc.loc_name = string_array_push(acc.loc_name, mir.ms_name[s]);
-      acc.loc_type = string_array_push(acc.loc_type, "Int");
+      acc.loc_type = string_array_push(acc.loc_type,
+        array_elem_type(type_of_expr(acc, mir, mir.ms_expr[s])));
       acc = tcx_scan_lets(acc, mir, mir.ms_then_start[s], mir.ms_then_count[s]);
     }
     if k == mir_for_c_stmt() {
@@ -8443,9 +8496,15 @@ fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
     return EmitVal { em: e, vref: rn };
   }
   if kind == mir_array_expr() {
-    // [e0, e1, ...] → malloc(count*8), store each, build {count, buf}.
+    // [e0, e1, ...] → malloc(count*stride), store each, build {count, buf}.
     let estart: Int = mir.me_a[node];
     let ecount: Int = mir.me_b[node];
+    let mut elem: String = "Int";
+    if ecount > 0 {
+      elem = type_of_expr(em.tcx, mir, mir.mchild_list[estart]);
+    }
+    let elemll: String = llvm_ty(em.tcx, elem);
+    let stride: Int = elem_stride(elem);
     let mut e: Emit = em;
     let rb: Int = e.reg;
     e.reg = e.reg + 1;
@@ -8453,7 +8512,7 @@ fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
     e.out = string_concat(e.out, "  ");
     e.out = string_concat(e.out, buf);
     e.out = string_concat(e.out, " = call ptr @malloc(i64 ");
-    e.out = string_concat(e.out, int_to_string(ecount * 8));
+    e.out = string_concat(e.out, int_to_string(ecount * stride));
     e.out = string_concat(e.out, ")\n");
     let mut i: Int = 0;
     while i < ecount {
@@ -8464,11 +8523,15 @@ fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
       let p: String = llvm_reg_name(rp);
       e.out = string_concat(e.out, "  ");
       e.out = string_concat(e.out, p);
-      e.out = string_concat(e.out, " = getelementptr i64, ptr ");
+      e.out = string_concat(e.out, " = getelementptr ");
+      e.out = string_concat(e.out, elemll);
+      e.out = string_concat(e.out, ", ptr ");
       e.out = string_concat(e.out, buf);
       e.out = string_concat(e.out, ", i64 ");
       e.out = string_concat(e.out, int_to_string(i));
-      e.out = string_concat(e.out, "\n  store i64 ");
+      e.out = string_concat(e.out, "\n  store ");
+      e.out = string_concat(e.out, elemll);
+      e.out = string_concat(e.out, " ");
       e.out = string_concat(e.out, v.vref);
       e.out = string_concat(e.out, ", ptr ");
       e.out = string_concat(e.out, p);
@@ -8497,6 +8560,7 @@ fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
   }
   if kind == mir_index_expr() {
     // arr[i] → extract data ptr, GEP element, load.
+    let elemll: String = llvm_ty(em.tcx, array_elem_type(type_of_expr(em.tcx, mir, mir.me_a[node])));
     let base: EmitVal = llvm_expr(em, mir, mir.me_a[node]);
     let mut e: Emit = base.em;
     let rd: Int = e.reg;
@@ -8514,7 +8578,9 @@ fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
     let p: String = llvm_reg_name(rp);
     e.out = string_concat(e.out, "  ");
     e.out = string_concat(e.out, p);
-    e.out = string_concat(e.out, " = getelementptr i64, ptr ");
+    e.out = string_concat(e.out, " = getelementptr ");
+    e.out = string_concat(e.out, elemll);
+    e.out = string_concat(e.out, ", ptr ");
     e.out = string_concat(e.out, data);
     e.out = string_concat(e.out, ", i64 ");
     e.out = string_concat(e.out, idx.vref);
@@ -8524,7 +8590,9 @@ fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
     let rn: String = llvm_reg_name(rv);
     e.out = string_concat(e.out, "  ");
     e.out = string_concat(e.out, rn);
-    e.out = string_concat(e.out, " = load i64, ptr ");
+    e.out = string_concat(e.out, " = load ");
+    e.out = string_concat(e.out, elemll);
+    e.out = string_concat(e.out, ", ptr ");
     e.out = string_concat(e.out, p);
     e.out = string_concat(e.out, "\n");
     return EmitVal { em: e, vref: rn };
@@ -8938,7 +9006,10 @@ fn llvm_string_builtin(em: Emit, mir: Mir, node: Int) -> EmitVal {
 fn llvm_array_builtin(em: Emit, mir: Mir, node: Int) -> EmitVal {
   let callee: String = mir.me_text[node];
   let astart: Int = mir.me_a[node];
-  if callee == "int_array_empty" {
+  let elem: String = array_builtin_elem(callee);
+  let elemll: String = llvm_ty(em.tcx, elem);
+  let stride: Int = elem_stride(elem);
+  if !array_builtin_is_push(callee) {
     let mut e: Emit = em;
     let ra: Int = e.reg;
     e.reg = e.reg + 1;
@@ -8956,7 +9027,7 @@ fn llvm_array_builtin(em: Emit, mir: Mir, node: Int) -> EmitVal {
     e.out = string_concat(e.out, ", ptr null, 1\n");
     return EmitVal { em: e, vref: agg1 };
   }
-  // int_array_push(arr, x): malloc((len+1)*8), copy old, append x. The source
+  // *_array_push(arr, x): malloc((len+1)*stride), copy old, append x. The source
   // array is read (not mutated), so no defensive copy of `arr` is needed.
   let arr: EmitVal = llvm_expr(em, mir, mir.mchild_list[astart]);
   let xv: EmitVal = llvm_expr(arr.em, mir, mir.mchild_list[astart + 1]);
@@ -9004,11 +9075,15 @@ fn llvm_array_builtin(em: Emit, mir: Mir, node: Int) -> EmitVal {
   e.out = string_concat(e.out, obytes);
   e.out = string_concat(e.out, " = mul i64 ");
   e.out = string_concat(e.out, len);
-  e.out = string_concat(e.out, ", 8\n  ");
+  e.out = string_concat(e.out, ", ");
+  e.out = string_concat(e.out, int_to_string(stride));
+  e.out = string_concat(e.out, "\n  ");
   e.out = string_concat(e.out, nbytes);
   e.out = string_concat(e.out, " = mul i64 ");
   e.out = string_concat(e.out, nlen);
-  e.out = string_concat(e.out, ", 8\n  ");
+  e.out = string_concat(e.out, ", ");
+  e.out = string_concat(e.out, int_to_string(stride));
+  e.out = string_concat(e.out, "\n  ");
   e.out = string_concat(e.out, buf);
   e.out = string_concat(e.out, " = call ptr @malloc(i64 ");
   e.out = string_concat(e.out, nbytes);
@@ -9020,11 +9095,15 @@ fn llvm_array_builtin(em: Emit, mir: Mir, node: Int) -> EmitVal {
   e.out = string_concat(e.out, obytes);
   e.out = string_concat(e.out, ")\n  ");
   e.out = string_concat(e.out, endp);
-  e.out = string_concat(e.out, " = getelementptr i64, ptr ");
+  e.out = string_concat(e.out, " = getelementptr ");
+  e.out = string_concat(e.out, elemll);
+  e.out = string_concat(e.out, ", ptr ");
   e.out = string_concat(e.out, buf);
   e.out = string_concat(e.out, ", i64 ");
   e.out = string_concat(e.out, len);
-  e.out = string_concat(e.out, "\n  store i64 ");
+  e.out = string_concat(e.out, "\n  store ");
+  e.out = string_concat(e.out, elemll);
+  e.out = string_concat(e.out, " ");
   e.out = string_concat(e.out, xv.vref);
   e.out = string_concat(e.out, ", ptr ");
   e.out = string_concat(e.out, endp);
@@ -9042,8 +9121,10 @@ fn llvm_array_builtin(em: Emit, mir: Mir, node: Int) -> EmitVal {
   return EmitVal { em: e, vref: agg1 };
 }
 
-// Deep-copy an array value: malloc(len*8) + memcpy, returning a fresh {len,buf}.
-fn emit_array_copy(em: Emit, vref: String) -> EmitVal {
+// Deep-copy an array value: malloc(len*stride) + memcpy, returning a fresh
+// {len, buf}. (String elements copy their {len,ptr} only — the byte buffers are
+// immutable and safely shared.)
+fn emit_array_copy(em: Emit, vref: String, stride: Int) -> EmitVal {
   let mut e: Emit = em;
   let rl: Int = e.reg;
   e.reg = e.reg + 1;
@@ -9075,7 +9156,9 @@ fn emit_array_copy(em: Emit, vref: String) -> EmitVal {
   e.out = string_concat(e.out, bytes);
   e.out = string_concat(e.out, " = mul i64 ");
   e.out = string_concat(e.out, len);
-  e.out = string_concat(e.out, ", 8\n  ");
+  e.out = string_concat(e.out, ", ");
+  e.out = string_concat(e.out, int_to_string(stride));
+  e.out = string_concat(e.out, "\n  ");
   e.out = string_concat(e.out, buf);
   e.out = string_concat(e.out, " = call ptr @malloc(i64 ");
   e.out = string_concat(e.out, bytes);
@@ -9122,7 +9205,7 @@ fn emit_bind(em: Emit, mir: Mir, node: Int) -> EmitVal {
     if is_fresh_array_expr(mir, node) {
       return v;
     }
-    return emit_array_copy(v.em, v.vref);
+    return emit_array_copy(v.em, v.vref, elem_stride(array_elem_type(ty)));
   }
   return v;
 }
@@ -9195,6 +9278,8 @@ fn resolve_place(em: Emit, mir: Mir, place: Int) -> PlaceRef {
   if k == mir_place_index() {
     // arr[i] = v: load the array value, extract its data ptr, GEP the element.
     let base: PlaceRef = resolve_place(em, mir, mir.mpl_base[place]);
+    let elem: String = array_elem_type(base.ty);
+    let elemll: String = llvm_ty(base.em.tcx, elem);
     let mut e: Emit = base.em;
     let ra: Int = e.reg;
     e.reg = e.reg + 1;
@@ -9219,12 +9304,14 @@ fn resolve_place(em: Emit, mir: Mir, place: Int) -> PlaceRef {
     let p: String = llvm_reg_name(rp);
     e.out = string_concat(e.out, "  ");
     e.out = string_concat(e.out, p);
-    e.out = string_concat(e.out, " = getelementptr i64, ptr ");
+    e.out = string_concat(e.out, " = getelementptr ");
+    e.out = string_concat(e.out, elemll);
+    e.out = string_concat(e.out, ", ptr ");
     e.out = string_concat(e.out, data);
     e.out = string_concat(e.out, ", i64 ");
     e.out = string_concat(e.out, idx.vref);
     e.out = string_concat(e.out, "\n");
-    return PlaceRef { em: e, ptr: p, ty: "Int" };
+    return PlaceRef { em: e, ptr: p, ty: elem };
   }
   // unreachable in this slice.
   return PlaceRef { em: em, ptr: llvm_slot_ref(mir.mpl_name[place]), ty: "Int" };
@@ -9593,8 +9680,9 @@ fn llvm_stmt(em: Emit, mir: Mir, sidx: Int, brk: Int, cont: Int) -> Emit {
     return e;
   }
   if kind == mir_for_in_stmt() {
-    // for x in arr (IntArray): index from 0 to len, binding x = data[i].
+    // for x in arr: index from 0 to len, binding x = data[i].
     let nm: String = mir.ms_name[sidx];
+    let elemll: String = llvm_ty(em.tcx, array_elem_type(type_of_expr(em.tcx, mir, mir.ms_expr[sidx])));
     let arrv: EmitVal = llvm_expr(em, mir, mir.ms_expr[sidx]);
     let mut e: Emit = arrv.em;
     let rl: Int = e.reg;
@@ -9664,15 +9752,21 @@ fn llvm_stmt(em: Emit, mir: Mir, sidx: Int, brk: Int, cont: Int) -> Emit {
     let elem: String = llvm_reg_name(rel);
     e.out = string_concat(e.out, "  ");
     e.out = string_concat(e.out, p);
-    e.out = string_concat(e.out, " = getelementptr i64, ptr ");
+    e.out = string_concat(e.out, " = getelementptr ");
+    e.out = string_concat(e.out, elemll);
+    e.out = string_concat(e.out, ", ptr ");
     e.out = string_concat(e.out, data);
     e.out = string_concat(e.out, ", i64 ");
     e.out = string_concat(e.out, iv);
     e.out = string_concat(e.out, "\n  ");
     e.out = string_concat(e.out, elem);
-    e.out = string_concat(e.out, " = load i64, ptr ");
+    e.out = string_concat(e.out, " = load ");
+    e.out = string_concat(e.out, elemll);
+    e.out = string_concat(e.out, ", ptr ");
     e.out = string_concat(e.out, p);
-    e.out = string_concat(e.out, "\n  store i64 ");
+    e.out = string_concat(e.out, "\n  store ");
+    e.out = string_concat(e.out, elemll);
+    e.out = string_concat(e.out, " ");
     e.out = string_concat(e.out, elem);
     e.out = string_concat(e.out, ", ptr ");
     e.out = string_concat(e.out, llvm_slot_ref(nm));
