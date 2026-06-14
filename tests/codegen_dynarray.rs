@@ -140,3 +140,67 @@ fn main() -> Int {
     // 1+2+3+4+5
     assert_eq!(check(src), 15);
 }
+
+#[test]
+fn bool_array_build_and_index() {
+    let src = "\
+fn main() -> Int {
+  let mut flags: BoolArray = bool_array_empty();
+  flags = bool_array_push(flags, true);
+  flags = bool_array_push(flags, false);
+  flags = bool_array_push(flags, true);
+  let mut count: Int = 0;
+  for f in flags {
+    if f { count = count + 1; }
+  }
+  return count * 10 + flags.len;
+}";
+    // 2 trues, len 3
+    assert_eq!(check(src), 23);
+}
+
+#[test]
+fn string_array_build_and_total_len() {
+    // String elements ({len,ptr}, 16-byte stride): build dynamically, then sum the
+    // byte lengths of each stored string via for-in.
+    let src = "\
+fn main() -> Int {
+  let mut parts: StringArray = string_array_empty();
+  parts = string_array_push(parts, \"a\");
+  parts = string_array_push(parts, \"bcd\");
+  parts = string_array_push(parts, \"ef\");
+  let mut total: Int = 0;
+  for p in parts {
+    total = total + string_len(p);
+  }
+  return total * 10 + parts.len;
+}";
+    // lengths 1+3+2 = 6, count 3
+    assert_eq!(check(src), 63);
+}
+
+#[test]
+fn string_array_index_and_first_byte() {
+    let src = "\
+fn main() -> Int {
+  let parts: StringArray = string_array_push(string_array_push(string_array_empty(), \"XY\"), \"Z\");
+  return string_byte_at(parts[0], 0) * 1000 + string_byte_at(parts[0], 1) * 10 + string_byte_at(parts[1], 0);
+}";
+    // parts[0]=\"XY\" → 'X'(88),'Y'(89); parts[1]=\"Z\" → 'Z'(90)
+    assert_eq!(check(src), 88 * 1000 + 89 * 10 + 90);
+}
+
+#[test]
+fn string_array_literal_for_in() {
+    let src = "\
+fn main() -> Int {
+  let names: StringArray = [\"ab\", \"cde\", \"f\"];
+  let mut total: Int = 0;
+  for n in names {
+    total = total + string_len(n);
+  }
+  return total;
+}";
+    // 2+3+1
+    assert_eq!(check(src), 6);
+}

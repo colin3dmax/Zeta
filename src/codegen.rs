@@ -22,8 +22,10 @@
 //! Enums (`{i64 tag, i64 payload}`, Int/no-payload variants) + `match` (lowered to
 //! an LLVM `switch` over the tag, or over an Int/Bool value). `for` loops:
 //! `for i in a..b`, `for x in intArray`, and C-style `for (init; cond; step)`.
-//! Growable IntArrays via `int_array_empty` / `int_array_push` (functional append:
-//! each push returns a fresh buffer, O(n) per push).
+//! Growable arrays via `{int,bool,string}_array_empty` / `_push` (functional
+//! append: each push returns a fresh buffer, O(n) per push). Array ops are generic
+//! over the element type (stride from `size_of`), so Int/Bool (i64) and String
+//! (`{len,ptr}`) elements all work.
 
 use crate::ast::{BinaryOp, StructDecl, UnaryOp};
 use crate::mir::{MirExpr, MirPattern, MirPlace, MirStmt, Program};
@@ -209,7 +211,8 @@ fn parse_ztype(text: &str, struct_names: &[&str], enum_names: &[&str]) -> Result
         "Int" | "Bool" => Ok(ZType::Int),
         "Unit" => Ok(ZType::Int),
         "String" => Ok(ZType::Str),
-        "IntArray" => Ok(ZType::Array(Box::new(ZType::Int))),
+        "IntArray" | "BoolArray" => Ok(ZType::Array(Box::new(ZType::Int))),
+        "StringArray" => Ok(ZType::Array(Box::new(ZType::Str))),
         name if struct_names.contains(&name) => Ok(ZType::Struct(name.to_string())),
         name if enum_names.contains(&name) => Ok(ZType::Enum(name.to_string())),
         other => Err(format!("type `{other}` not in the native subset")),
@@ -224,7 +227,10 @@ fn builtin_return_type(callee: &str) -> Option<ZType> {
         "string_len" | "string_byte_at" | "ascii_is_digit" | "ascii_is_alpha"
         | "ascii_is_alnum" | "ascii_is_whitespace" => Some(ZType::Int),
         "string_concat" | "string_byte_slice" | "int_to_string" => Some(ZType::Str),
-        "int_array_empty" | "int_array_push" => Some(ZType::Array(Box::new(ZType::Int))),
+        "int_array_empty" | "int_array_push" | "bool_array_empty" | "bool_array_push" => {
+            Some(ZType::Array(Box::new(ZType::Int)))
+        }
+        "string_array_empty" | "string_array_push" => Some(ZType::Array(Box::new(ZType::Str))),
         _ => None,
     }
 }
@@ -679,7 +685,15 @@ fn infer_expr_type(
         MirExpr::String(_) => ZType::Str,
         MirExpr::EnumVariant { enum_name, .. } => ZType::Enum(enum_name.clone()),
         MirExpr::StructLiteral { ty, .. } => ZType::Struct(ty.clone()),
-        MirExpr::ArrayLiteral { .. } => ZType::Array(Box::new(ZType::Int)),
+        MirExpr::ArrayLiteral { elements } => {
+            // Element type from the first element (empty literals are rejected
+            // upstream by the verifier).
+            let elem = match elements.first() {
+                Some(first) => infer_expr_type(first, types, env)?,
+                None => ZType::Int,
+            };
+            ZType::Array(Box::new(elem))
+        }
         MirExpr::Index { base, .. } => match infer_expr_type(base, types, env)? {
             ZType::Array(elem) => *elem,
             _ => return Err("index of non-array".into()),
@@ -793,27 +807,33 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
 
     /// Apply value-semantics at a binding point: if `value` is an array, return a
     /// deep copy (fresh malloc'd buffer) so the new owner is independent; other
-    /// types are already value types in LLVM and pass through.
+    /// types are already value types in LLVM and pass through. (String elements
+    /// are themselves immutable, so copying their `{len,ptr}` is safe sharing.)
     fn bind_value(&self, value: BasicValueEnum<'ctx>, zt: &ZType) -> BasicValueEnum<'ctx> {
-        if matches!(zt, ZType::Array(_)) {
-            self.deep_copy_array(value.into_struct_value()).into()
+        if let ZType::Array(elem) = zt {
+            self.deep_copy_array(value.into_struct_value(), elem).into()
         } else {
             value
         }
     }
 
+    /// Byte size of one element of `elem` (8 for Int, 16 for the `{len,ptr}` of
+    /// String/array elements, etc.) as a runtime i64 (LLVM folds it to a constant).
+    fn elem_bytes(&self, elem: &ZType) -> IntValue<'ctx> {
+        self.types.llvm(elem).size_of().unwrap()
+    }
+
     /// Deep-copy an `{len, data}` array value: malloc a new buffer, memcpy the
-    /// elements, return `{len, newdata}`.
+    /// elements (stride = `elem`'s size), return `{len, newdata}`.
     fn deep_copy_array(
         &self,
         arr: inkwell::values::StructValue<'ctx>,
+        elem: &ZType,
     ) -> inkwell::values::StructValue<'ctx> {
         let b = self.builder;
         let len = b.build_extract_value(arr, 0, "len").unwrap().into_int_value();
         let src = b.build_extract_value(arr, 1, "data").unwrap().into_pointer_value();
-        let bytes = b
-            .build_int_mul(len, self.i64t().const_int(8, false), "bytes")
-            .unwrap();
+        let bytes = b.build_int_mul(len, self.elem_bytes(elem), "bytes").unwrap();
         let dst = b
             .build_call(self.malloc, &[bytes.into()], "buf")
             .unwrap()
@@ -1006,8 +1026,8 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         Ok(false)
     }
 
-    /// `for x in array`: walk indices `0..len`, binding each element. Only IntArray
-    /// (Int elements) is in the native subset.
+    /// `for x in array`: walk indices `0..len`, binding each element (any element
+    /// type — Int or String).
     fn lower_for_in(
         &mut self,
         binding: &str,
@@ -1018,9 +1038,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         let ZType::Array(elem) = arr_ty else {
             return Err("for-in iterable must be an array".into());
         };
-        if *elem != ZType::Int {
-            return Err("for-in only supports Int-element arrays in the native subset".into());
-        }
+        let elem_llvm = self.types.llvm(&elem);
         let arr = arr.into_struct_value();
         let len = self.builder.build_extract_value(arr, 0, "len").unwrap().into_int_value();
         let data = self.builder.build_extract_value(arr, 1, "data").unwrap().into_pointer_value();
@@ -1046,8 +1064,8 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         self.loops.push((latch, exit));
         self.builder.position_at_end(body_bb);
         // Bind the current element, then lower the body.
-        let elem_ptr = unsafe { self.builder.build_in_bounds_gep(self.i64t(), data, &[idx], "ep").unwrap() };
-        let elem_val = self.builder.build_load(self.i64t(), elem_ptr, "elem").unwrap();
+        let elem_ptr = unsafe { self.builder.build_in_bounds_gep(elem_llvm, data, &[idx], "ep").unwrap() };
+        let elem_val = self.builder.build_load(elem_llvm, elem_ptr, "elem").unwrap();
         self.builder.build_store(binding_slot, elem_val).unwrap();
         if !self.lower_stmts(body)? {
             self.builder.build_unconditional_branch(latch).unwrap();
@@ -1241,9 +1259,10 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                     .unwrap()
                     .into_pointer_value();
                 let idx = self.lower_int(index)?;
+                let elem_llvm = self.types.llvm(&elem);
                 let elem_ptr = unsafe {
                     self.builder
-                        .build_in_bounds_gep(self.i64t(), data, &[idx], "elemptr")
+                        .build_in_bounds_gep(elem_llvm, data, &[idx], "elemptr")
                         .unwrap()
                 };
                 Ok((elem_ptr, *elem))
@@ -1364,8 +1383,22 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 }
             }
             MirExpr::ArrayLiteral { elements } => {
-                let n = elements.len();
-                let bytes = self.i64t().const_int((n as u64) * 8, false);
+                // Lower all elements first to learn the element type, then malloc a
+                // buffer of `n * elem_size` and store each (stride = elem type).
+                let mut values = Vec::with_capacity(elements.len());
+                for element in elements {
+                    values.push(self.lower_expr(element)?);
+                }
+                let elem = match values.first() {
+                    Some((_, t)) => t.clone(),
+                    None => ZType::Int,
+                };
+                let elem_llvm = self.types.llvm(&elem);
+                let n = values.len();
+                let bytes = self
+                    .builder
+                    .build_int_mul(self.i64t().const_int(n as u64, false), self.elem_bytes(&elem), "bytes")
+                    .unwrap();
                 let data = self
                     .builder
                     .build_call(self.malloc, &[bytes.into()], "buf")
@@ -1374,12 +1407,11 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                     .basic()
                     .unwrap()
                     .into_pointer_value();
-                for (i, element) in elements.iter().enumerate() {
-                    let v = self.lower_int(element)?;
+                for (i, (v, _)) in values.into_iter().enumerate() {
                     let ptr = unsafe {
                         self.builder
                             .build_in_bounds_gep(
-                                self.i64t(),
+                                elem_llvm,
                                 data,
                                 &[self.i64t().const_int(i as u64, false)],
                                 "ep",
@@ -1402,13 +1434,14 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                     .build_insert_value(arr, data, 1, "a1")
                     .unwrap()
                     .into_struct_value();
-                Ok((arr.into(), ZType::Array(Box::new(ZType::Int))))
+                Ok((arr.into(), ZType::Array(Box::new(elem))))
             }
             MirExpr::Index { base, index } => {
                 let (base_val, base_ty) = self.lower_expr(base)?;
                 let ZType::Array(elem) = base_ty else {
                     return Err("index of non-array".into());
                 };
+                let elem_llvm = self.types.llvm(&elem);
                 let data = self
                     .builder
                     .build_extract_value(base_val.into_struct_value(), 1, "data")
@@ -1417,10 +1450,10 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let idx = self.lower_int(index)?;
                 let ptr = unsafe {
                     self.builder
-                        .build_in_bounds_gep(self.i64t(), data, &[idx], "ep")
+                        .build_in_bounds_gep(elem_llvm, data, &[idx], "ep")
                         .unwrap()
                 };
-                let value = self.builder.build_load(self.i64t(), ptr, "elem").unwrap();
+                let value = self.builder.build_load(elem_llvm, ptr, "elem").unwrap();
                 Ok((value, *elem))
             }
             MirExpr::String(text) => {
@@ -1542,29 +1575,15 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let len = b.build_int_s_extend(written, self.i64t(), "len64").unwrap();
                 Ok(Some((self.make_len_ptr(len, buf).into(), ZType::Str)))
             }
-            "int_array_empty" => {
-                // {0, malloc(0)}: a zero-length, independently-owned buffer (never
-                // dereferenced while len is 0; a real malloc keeps deep-copy memcpy
-                // well-defined).
-                let buf = self.malloc_bytes(self.i64t().const_zero());
-                Ok(Some((self.make_len_ptr(self.i64t().const_zero(), buf).into(), ZType::Array(Box::new(ZType::Int)))))
+            // Growable arrays. bool arrays share the Int (i64) element repr; string
+            // arrays carry `{len,ptr}` elements (stride from the element type).
+            "int_array_empty" | "bool_array_empty" => Ok(Some(self.lower_array_empty(ZType::Int))),
+            "string_array_empty" => Ok(Some(self.lower_array_empty(ZType::Str))),
+            "int_array_push" | "bool_array_push" => {
+                Ok(Some(self.lower_array_push(&args[0], &args[1], ZType::Int)?))
             }
-            "int_array_push" => {
-                // Functional append: a fresh {len+1, buf} with the old elements
-                // copied and `x` stored at the end. The original buffer is untouched
-                // (matches the interpreter's copy-on-write `push`).
-                let (arr, _) = self.lower_expr(&args[0])?;
-                let (len, data) = self.len_ptr_parts(arr.into_struct_value());
-                let x = self.lower_int(&args[1])?;
-                let eight = self.i64t().const_int(8, false);
-                let new_len = b.build_int_add(len, self.i64t().const_int(1, false), "nlen").unwrap();
-                let new_bytes = b.build_int_mul(new_len, eight, "nbytes").unwrap();
-                let buf = self.malloc_bytes(new_bytes);
-                let old_bytes = b.build_int_mul(len, eight, "obytes").unwrap();
-                self.memcpy_bytes(buf, data, old_bytes);
-                let end = unsafe { b.build_in_bounds_gep(self.i64t(), buf, &[len], "endp").unwrap() };
-                b.build_store(end, x).unwrap();
-                Ok(Some((self.make_len_ptr(new_len, buf).into(), ZType::Array(Box::new(ZType::Int)))))
+            "string_array_push" => {
+                Ok(Some(self.lower_array_push(&args[0], &args[1], ZType::Str)?))
             }
             // ascii predicates: Int byte → Bool (i64 0/1). Out-of-[0,255] inputs
             // fall outside every range/equality, yielding 0 — matching the
@@ -1630,6 +1649,40 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
     /// Zero-extend an i1 to the i64 Bool representation (0/1).
     fn bool_to_i64(&self, bit: IntValue<'ctx>) -> IntValue<'ctx> {
         self.builder.build_int_z_extend(bit, self.i64t(), "b64").unwrap()
+    }
+
+    /// `_array_empty()` → `{0, malloc(0)}`: a zero-length, independently-owned
+    /// buffer (never dereferenced while len is 0; a real malloc keeps the deep-copy
+    /// memcpy well-defined).
+    fn lower_array_empty(&self, elem: ZType) -> (BasicValueEnum<'ctx>, ZType) {
+        let buf = self.malloc_bytes(self.i64t().const_zero());
+        let arr = self.make_len_ptr(self.i64t().const_zero(), buf);
+        (arr.into(), ZType::Array(Box::new(elem)))
+    }
+
+    /// `_array_push(arr, x)` → a fresh `{len+1, buf}` with the old elements copied
+    /// and `x` stored at the end (stride = `elem`'s size). The original buffer is
+    /// untouched, matching the interpreter's copy-on-write `push`.
+    fn lower_array_push(
+        &mut self,
+        arr_expr: &MirExpr,
+        value_expr: &MirExpr,
+        elem: ZType,
+    ) -> Result<(BasicValueEnum<'ctx>, ZType), String> {
+        let (arr, _) = self.lower_expr(arr_expr)?;
+        let (len, data) = self.len_ptr_parts(arr.into_struct_value());
+        let (x, _) = self.lower_expr(value_expr)?;
+        let elem_llvm = self.types.llvm(&elem);
+        let elem_sz = self.elem_bytes(&elem);
+        let b = self.builder;
+        let new_len = b.build_int_add(len, self.i64t().const_int(1, false), "nlen").unwrap();
+        let new_bytes = b.build_int_mul(new_len, elem_sz, "nbytes").unwrap();
+        let buf = self.malloc_bytes(new_bytes);
+        let old_bytes = b.build_int_mul(len, elem_sz, "obytes").unwrap();
+        self.memcpy_bytes(buf, data, old_bytes);
+        let end = unsafe { b.build_in_bounds_gep(elem_llvm, buf, &[len], "endp").unwrap() };
+        b.build_store(end, x).unwrap();
+        Ok((self.make_len_ptr(new_len, buf).into(), ZType::Array(Box::new(elem))))
     }
 
     /// Extract `(len, data)` from a `{i64 len, ptr data}` value — the shared layout
