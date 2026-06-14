@@ -160,3 +160,106 @@ fn main() -> Int {
     // head = "zeta"(4) ++ "!"(1) → len 5, byte[4] = '!'(33)
     assert_eq!(check(src), 5 * 100 + 33);
 }
+
+#[test]
+fn int_to_string_zero() {
+    let src = "\
+fn main() -> Int {
+  let s: String = int_to_string(0);
+  return string_len(s) * 1000 + string_byte_at(s, 0);
+}";
+    // "0" → len 1, byte '0'(48)
+    assert_eq!(check(src), 1 * 1000 + 48);
+}
+
+#[test]
+fn int_to_string_multi_digit() {
+    let src = "\
+fn main() -> Int {
+  let s: String = int_to_string(42);
+  return string_len(s) * 10000 + string_byte_at(s, 0) * 100 + string_byte_at(s, 1);
+}";
+    // "42" → len 2, '4'(52), '2'(50)
+    assert_eq!(check(src), 2 * 10000 + 52 * 100 + 50);
+}
+
+#[test]
+fn int_to_string_negative() {
+    let src = "\
+fn main() -> Int {
+  let s: String = int_to_string(0 - 7);
+  return string_len(s) * 10000 + string_byte_at(s, 0) * 100 + string_byte_at(s, 1);
+}";
+    // "-7" → len 2, '-'(45), '7'(55)
+    assert_eq!(check(src), 2 * 10000 + 45 * 100 + 55);
+}
+
+#[test]
+fn int_to_string_large_roundtrip_len() {
+    let src = "\
+fn main() -> Int {
+  let s: String = int_to_string(1234567);
+  return string_len(s);
+}";
+    assert_eq!(check(src), 7);
+}
+
+#[test]
+fn int_to_string_then_byte_at_each() {
+    // Sum all digit bytes of "1234567".
+    let src = "\
+fn main() -> Int {
+  let s: String = int_to_string(1234567);
+  let mut i: Int = 0;
+  let mut total: Int = 0;
+  while i < string_len(s) {
+    total = total + string_byte_at(s, i);
+    i = i + 1;
+  }
+  return total;
+}";
+    // bytes '1'..'7' = 49+50+51+52+53+54+55
+    assert_eq!(check(src), 49 + 50 + 51 + 52 + 53 + 54 + 55);
+}
+
+// --- ascii predicates (Bool → reified to Int via if/else) ---
+
+#[test]
+fn ascii_is_digit_cases() {
+    let src = "\
+fn b(c: Int) -> Int { if ascii_is_digit(c) { return 1; } return 0; }
+fn main() -> Int {
+  // '0'(48) yes, '9'(57) yes, 'A'(65) no, 47 no, 58 no, -1 no, 300 no
+  return b(48) * 1000000 + b(57) * 100000 + b(65) * 10000
+       + b(47) * 1000 + b(58) * 100 + b(0 - 1) * 10 + b(300);
+}";
+    assert_eq!(check(src), 1_100_000);
+}
+
+#[test]
+fn ascii_is_alpha_cases() {
+    let src = "\
+fn b(c: Int) -> Int { if ascii_is_alpha(c) { return 1; } return 0; }
+fn main() -> Int {
+  // 'A'(65) 'Z'(90) 'a'(97) 'z'(122) yes; '0'(48) no; 64 no; 91 no
+  return b(65) * 1000000 + b(90) * 100000 + b(97) * 10000
+       + b(122) * 1000 + b(48) * 100 + b(64) * 10 + b(91);
+}";
+    assert_eq!(check(src), 1_111_000);
+}
+
+#[test]
+fn ascii_is_alnum_and_whitespace() {
+    let src = "\
+fn an(c: Int) -> Int { if ascii_is_alnum(c) { return 1; } return 0; }
+fn ws(c: Int) -> Int { if ascii_is_whitespace(c) { return 1; } return 0; }
+fn main() -> Int {
+  // alnum: '5'(53) yes, 'q'(113) yes, '+'(43) no
+  // whitespace: ' '(32) yes, tab(9) yes, LF(10) yes, vtab(11) NO, 'x'(120) no
+  return an(53) * 100000000 + an(113) * 10000000 + an(43) * 1000000
+       + ws(32) * 100000 + ws(9) * 10000 + ws(10) * 1000
+       + ws(11) * 100 + ws(120) * 10;
+}";
+    // an: 1,1,0 ; ws: 1,1,1,0,0
+    assert_eq!(check(src), 110_111_000);
+}

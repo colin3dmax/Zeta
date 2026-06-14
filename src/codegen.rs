@@ -17,7 +17,9 @@
 //! ops, `let`/assignment, `if`/`while`/`break`/`continue`, user calls + recursion,
 //! and **structs** (value semantics): struct literals, field read/write, struct
 //! locals/params/returns, nesting. Strings (immutable `{len, ptr<i8>}`): literals,
-//! `string_len`, `string_byte_at`. Enums/match/for still `Err`.
+//! `string_len`/`string_byte_at`/`string_byte_slice`/`string_concat`,
+//! `int_to_string` (via libc snprintf), and the `ascii_is_*` predicates.
+//! Enums/match/for still `Err`.
 
 use crate::ast::{BinaryOp, StructDecl, UnaryOp};
 use crate::mir::{MirExpr, MirPlace, MirStmt, Program};
@@ -430,6 +432,14 @@ fn build_module<'ctx>(
         ptr_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into()], false),
         None,
     );
+    // libc snprintf for int_to_string (variadic: i32 snprintf(ptr, size_t, fmt, ...)).
+    let snprintf = module.add_function(
+        "snprintf",
+        context
+            .i32_type()
+            .fn_type(&[ptr_ty.into(), i64_ty.into(), ptr_ty.into()], true),
+        None,
+    );
 
     // Pass 1: declare every function with its typed signature.
     let mut functions: HashMap<String, FunctionValue> = HashMap::new();
@@ -467,6 +477,7 @@ fn build_module<'ctx>(
             functions: &functions,
             malloc,
             memcpy,
+            snprintf,
             llvm_fn,
             entry_bb,
             locals: HashMap::new(),
@@ -631,6 +642,7 @@ struct FnLower<'a, 'ctx> {
     functions: &'a HashMap<String, FunctionValue<'ctx>>,
     malloc: FunctionValue<'ctx>,
     memcpy: FunctionValue<'ctx>,
+    snprintf: FunctionValue<'ctx>,
     llvm_fn: FunctionValue<'ctx>,
     entry_bb: BasicBlock<'ctx>,
     /// local name → (alloca slot, type)
@@ -1103,8 +1115,87 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 self.memcpy_bytes(buf, src, len);
                 Ok(Some((self.make_str(len, buf).into(), ZType::Str)))
             }
+            "int_to_string" => {
+                // snprintf(buf, 24, "%lld", n): 24 ≥ 20 digits + sign + NUL for any
+                // i64. The i32 return is the byte length (excl. NUL), our `len`.
+                let n = self.lower_int(&args[0])?;
+                let fmt = b.build_global_string_ptr("%lld", "fmt").unwrap().as_pointer_value();
+                let cap = self.i64t().const_int(24, false);
+                let buf = self.malloc_bytes(cap);
+                let written = b
+                    .build_call(self.snprintf, &[buf.into(), cap.into(), fmt.into(), n.into()], "snp")
+                    .unwrap()
+                    .try_as_basic_value()
+                    .basic()
+                    .unwrap()
+                    .into_int_value();
+                let len = b.build_int_s_extend(written, self.i64t(), "len64").unwrap();
+                Ok(Some((self.make_str(len, buf).into(), ZType::Str)))
+            }
+            // ascii predicates: Int byte → Bool (i64 0/1). Out-of-[0,255] inputs
+            // fall outside every range/equality, yielding 0 — matching the
+            // interpreter's explicit `(0..=255)` guard.
+            "ascii_is_digit" => {
+                let v = self.lower_int(&args[0])?;
+                let r = self.in_range(v, 48, 57);
+                Ok(Some((self.bool_to_i64(r).into(), ZType::Int)))
+            }
+            "ascii_is_alpha" => {
+                let v = self.lower_int(&args[0])?;
+                let r = self.is_alpha(v);
+                Ok(Some((self.bool_to_i64(r).into(), ZType::Int)))
+            }
+            "ascii_is_alnum" => {
+                let v = self.lower_int(&args[0])?;
+                let digit = self.in_range(v, 48, 57);
+                let alpha = self.is_alpha(v);
+                let r = b.build_or(digit, alpha, "alnum").unwrap();
+                Ok(Some((self.bool_to_i64(r).into(), ZType::Int)))
+            }
+            "ascii_is_whitespace" => {
+                // Rust is_ascii_whitespace: ' '(32) \t(9) \n(10) FF(12) \r(13);
+                // note 0x0B (vertical tab) is excluded.
+                let v = self.lower_int(&args[0])?;
+                let mut acc = self.eq_const(v, 32);
+                for k in [9, 10, 12, 13] {
+                    let e = self.eq_const(v, k);
+                    acc = b.build_or(acc, e, "ws").unwrap();
+                }
+                Ok(Some((self.bool_to_i64(acc).into(), ZType::Int)))
+            }
             _ => Ok(None),
         }
+    }
+
+    /// `lo <= v <= hi` (signed) as an i1.
+    fn in_range(&self, v: IntValue<'ctx>, lo: i64, hi: i64) -> IntValue<'ctx> {
+        let b = self.builder;
+        let ge = b
+            .build_int_compare(IntPredicate::SGE, v, self.i64t().const_int(lo as u64, true), "ge")
+            .unwrap();
+        let le = b
+            .build_int_compare(IntPredicate::SLE, v, self.i64t().const_int(hi as u64, true), "le")
+            .unwrap();
+        b.build_and(ge, le, "rng").unwrap()
+    }
+
+    /// `v == k` as an i1.
+    fn eq_const(&self, v: IntValue<'ctx>, k: i64) -> IntValue<'ctx> {
+        self.builder
+            .build_int_compare(IntPredicate::EQ, v, self.i64t().const_int(k as u64, true), "eqk")
+            .unwrap()
+    }
+
+    /// ASCII alphabetic: `A-Z` or `a-z`.
+    fn is_alpha(&self, v: IntValue<'ctx>) -> IntValue<'ctx> {
+        let upper = self.in_range(v, 65, 90);
+        let lower = self.in_range(v, 97, 122);
+        self.builder.build_or(upper, lower, "alpha").unwrap()
+    }
+
+    /// Zero-extend an i1 to the i64 Bool representation (0/1).
+    fn bool_to_i64(&self, bit: IntValue<'ctx>) -> IntValue<'ctx> {
+        self.builder.build_int_z_extend(bit, self.i64t(), "b64").unwrap()
     }
 
     /// Extract `(len, data)` from a string `{i64, ptr}` value.
