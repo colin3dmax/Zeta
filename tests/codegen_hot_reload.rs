@@ -10,7 +10,7 @@
 // must produce the same state sequence across the same ticks + reload.
 #![cfg(feature = "llvm")]
 
-use zeta::codegen::NativeService;
+use zeta::codegen::{NativeArrayService, NativeService};
 use zeta::runtime::{ServiceDriver, Value};
 
 const V1: &str = "\
@@ -72,6 +72,42 @@ fn native_matches_interpreter_service_across_reload() {
         let o = oracle_state(interp.tick(Value::Int(x)).unwrap());
         assert_eq!(n, o, "post-reload tick {x}: native {n} vs interpreter {o}");
     }
+}
+
+// Non-scalar (IntArray) state across a native hot-swap. The state buffer is on
+// the C heap (libc malloc), so it survives the engine swap; only the code is
+// remapped.
+const ARR_V1: &str = "\
+fn init() -> IntArray { return [0, 0, 0]; }
+reloadable fn step(s: IntArray, n: Int) -> IntArray {
+  let mut t: IntArray = s;
+  t[0] = t[0] + n;
+  return t;
+}";
+const ARR_V2: &str = "\
+fn init() -> IntArray { return [0, 0, 0]; }
+reloadable fn step(s: IntArray, n: Int) -> IntArray {
+  let mut t: IntArray = s;
+  t[0] = t[0] + n * 10;
+  return t;
+}";
+
+#[test]
+fn native_array_state_survives_hot_swap() {
+    let mut svc = NativeArrayService::start(&program(ARR_V1), &[]).expect("array service");
+    assert_eq!(svc.len(), 3);
+
+    svc.tick(3); // [3,0,0]
+    svc.tick(5); // [8,0,0]
+    assert_eq!(svc.get(0), 8);
+
+    // Hot-swap to ×10 rule; the heap-backed array state (8,0,0) survives.
+    svc.reload(&program(ARR_V2), &[]).expect("array reload");
+    svc.tick(2); // [8 + 2*10, 0, 0] = [28,0,0]
+
+    assert_eq!(svc.get(0), 28, "array element carried across swap + new native rule");
+    assert_eq!(svc.len(), 3);
+    assert_eq!(svc.get(1), 0);
 }
 
 #[test]

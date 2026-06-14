@@ -310,6 +310,73 @@ impl NativeService {
     }
 }
 
+/// The `{ i64 len, ptr data }` array value, laid out for the C ABI so it can
+/// cross the Rust↔native boundary (returned/passed in two registers on arm64).
+/// The `data` buffer is libc-malloc'd by the JIT'd code, so it lives on the C
+/// heap and SURVIVES an engine swap — only the code is unmapped on reload.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct NativeArray {
+    pub len: i64,
+    pub data: *mut i64,
+}
+
+/// Like [`NativeService`] but the threaded state is an `IntArray`, proving native
+/// hot-reload works with a non-scalar, heap-backed state. Convention:
+/// `fn init() -> IntArray` and `reloadable fn step(state: IntArray, input: Int) -> IntArray`.
+pub struct NativeArrayService {
+    engine: inkwell::execution_engine::ExecutionEngine<'static>,
+    step_addr: usize,
+    state: NativeArray,
+}
+
+impl NativeArrayService {
+    pub fn start(program: &Program, structs: &[StructDecl]) -> Result<NativeArrayService, String> {
+        let context: &'static Context = Box::leak(Box::new(Context::create()));
+        let engine = compile_engine(context, program, structs)?;
+        let init_addr = engine
+            .get_function_address("init")
+            .map_err(|e| format!("`init` not found: {e}"))?;
+        let init: extern "C" fn() -> NativeArray = unsafe { std::mem::transmute(init_addr) };
+        let state = init();
+        let step_addr = engine
+            .get_function_address("step")
+            .map_err(|e| format!("`step` not found: {e}"))?;
+        Ok(NativeArrayService {
+            engine,
+            step_addr,
+            state,
+        })
+    }
+
+    pub fn tick(&mut self, input: i64) {
+        let step: extern "C" fn(NativeArray, i64) -> NativeArray =
+            unsafe { std::mem::transmute(self.step_addr) };
+        self.state = step(self.state, input);
+    }
+
+    pub fn len(&self) -> i64 {
+        self.state.len
+    }
+
+    /// Read element `i` of the current state buffer.
+    pub fn get(&self, i: i64) -> i64 {
+        assert!(i >= 0 && i < self.state.len, "index out of bounds");
+        unsafe { *self.state.data.offset(i as isize) }
+    }
+
+    pub fn reload(&mut self, program: &Program, structs: &[StructDecl]) -> Result<(), String> {
+        let context: &'static Context = Box::leak(Box::new(Context::create()));
+        let engine = compile_engine(context, program, structs)?;
+        let step_addr = engine
+            .get_function_address("step")
+            .map_err(|e| format!("`step` not found: {e}"))?;
+        self.step_addr = step_addr;
+        self.engine = engine;
+        Ok(())
+    }
+}
+
 /// Build + optimize a module and wrap it in an aggressive JIT engine.
 fn compile_engine(
     context: &'static Context,
