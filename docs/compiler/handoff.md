@@ -75,7 +75,9 @@ native 后端覆盖 Int/Bool/struct/array/**string**(值语义)。要 AOT 编译
    - **NativeStructService**:struct 状态跨 native 热替换,经指针包装器 `__svc_init`/`__svc_step` 绕 per-struct ABI;`tests/codegen_hot_reload.rs`(5 用例)。
    - **数组绑定优化**:新鲜独占 buffer(字面量 / `*_array_*`)绑定时跳过冗余 deep-copy(常数因子;`bind_owned`/`is_fresh_array`)。
 
-**native 后端线全部目标 + 收尾广度项全部达成。** 仅剩真·性能深水区(若需要):动态数组 push 仍 O(n)/次 → 真正 amortized O(1) 需 move-on-last-use/容量分析(解释器已有 `compute_movable_loads` 可借鉴),前端当前够用故未做。struct/array-payload enum(>16B payload)同理未做,前端不需要。
+11. ~~**动态数组摊还 O(1) push**~~ ✅ **完成**:数组 buffer 加 8 字节容量头(值仍 `{len,ptr}`,ptr 指元素、cap 在 ptr[-8]);`xs=push(xs,v)` 自赋值经 `match_inplace_push`/`lower_inplace_push` 原地变异 + 容量翻倍,O(n²)→摊还 O(1)。值语义唯一所有保证原地安全。`tests/codegen_dynarray.rs`(14 用例,含 500 元素压力 + 值语义独立)。
+
+**native 后端线全部目标 + 收尾广度 + 性能项全部达成。** 唯一明确未做(前端不需要,nice-to-have):**>16B payload 的 enum**(struct/array payload,需更宽 payload 槽)。其余皆完成。
 
 **每步都用解释器 `run_mir` 作差分 oracle**(见 tests/codegen_*.rs 的 `check()` 范式),feature-gated,不影响默认构建。
 
