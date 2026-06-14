@@ -405,3 +405,122 @@ fn main() -> Int {
     // ys keeps [1,2] (len 2); xs grows to [1,2,3] (len 3)
     assert_eq!(check(src), 23);
 }
+
+// --- slice 4: string codegen (literal / builtins / equality) ---
+
+#[test]
+fn string_literal_and_len() {
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let s: String = \"hello\";
+  return string_len(s);
+}";
+    assert_eq!(check(src), 5);
+}
+
+#[test]
+fn string_byte_at_value() {
+    let src = "\
+import std.core;
+fn main() -> Int { return string_byte_at(\"hello\", 0); }";
+    // 'h'
+    assert_eq!(check(src), 104);
+}
+
+#[test]
+fn string_concat_len_and_byte() {
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let s: String = string_concat(\"ab\", \"cde\");
+  return string_len(s) * 100 + string_byte_at(s, 2);
+}";
+    // "abcde" len 5, byte[2]='c'(99)
+    assert_eq!(check(src), 599);
+}
+
+#[test]
+fn string_equality_and_inequality() {
+    let src = "\
+import std.core;
+fn main() -> Int {
+  if \"abc\" == \"abc\" {
+    if \"abc\" != \"abd\" {
+      return 1;
+    }
+  }
+  return 0;
+}";
+    assert_eq!(check(src), 1);
+}
+
+#[test]
+fn string_byte_slice_value() {
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let s: String = string_byte_slice(\"hello\", 1, 3);
+  return string_len(s) * 100 + string_byte_at(s, 0);
+}";
+    // "ell" len 3, byte[0]='e'(101)
+    assert_eq!(check(src), 401);
+}
+
+#[test]
+fn int_to_string_roundtrip() {
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let s: String = int_to_string(42);
+  return string_len(s) * 100 + string_byte_at(s, 0);
+}";
+    // "42" len 2, byte[0]='4'(52)
+    assert_eq!(check(src), 252);
+}
+
+#[test]
+fn ascii_predicates() {
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let mut r: Int = 0;
+  if ascii_is_digit(53) { r = r + 1; }
+  if ascii_is_alpha(65) { r = r + 10; }
+  if ascii_is_alnum(122) { r = r + 100; }
+  if ascii_is_whitespace(32) { r = r + 1000; }
+  if !ascii_is_digit(65) { r = r + 10000; }
+  return r;
+}";
+    assert_eq!(check(src), 11111);
+}
+
+#[test]
+fn string_param_and_loop() {
+    let src = "\
+import std.core;
+fn count_l(s: String) -> Int {
+  let mut n: Int = 0;
+  let mut i: Int = 0;
+  while i < string_len(s) {
+    if string_byte_at(s, i) == 108 { n = n + 1; }
+    i = i + 1;
+  }
+  return n;
+}
+fn main() -> Int { return count_l(\"hello\"); }";
+    // 'l' appears twice
+    assert_eq!(check(src), 2);
+}
+
+#[test]
+fn string_returned_from_function() {
+    let src = "\
+import std.core;
+fn greet() -> String { return string_concat(\"hi\", \"!\"); }
+fn main() -> Int {
+  let s: String = greet();
+  return string_len(s);
+}";
+    assert_eq!(check(src), 3);
+}
