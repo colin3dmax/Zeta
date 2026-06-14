@@ -142,6 +142,47 @@ fn main() -> Int {
 }
 
 #[test]
+fn inplace_push_builds_large_array() {
+    // The `xs = push(xs, ...)` self-assignment is lowered in-place with
+    // capacity-doubling growth; build 500 elements and sum them. Exercises the
+    // grow path (~9 reallocs) and confirms correctness at scale.
+    let src = "\
+fn main() -> Int {
+  let mut xs: IntArray = int_array_empty();
+  let mut i: Int = 0;
+  while i < 500 {
+    xs = int_array_push(xs, i);
+    i = i + 1;
+  }
+  let mut sum: Int = 0;
+  for v in xs {
+    sum = sum + v;
+  }
+  return sum * 10000 + xs.len;
+}";
+    // sum 0..499 = 124750, len 500
+    assert_eq!(check(src), 124750 * 10000 + 500);
+}
+
+#[test]
+fn inplace_push_preserves_value_semantics() {
+    // Even with in-place push, a deep copy (`let b = xs`) must stay independent:
+    // pushing onto xs afterwards must not affect b.
+    let src = "\
+fn main() -> Int {
+  let mut xs: IntArray = int_array_empty();
+  xs = int_array_push(xs, 1);
+  xs = int_array_push(xs, 2);
+  let b: IntArray = xs;          // deep copy, len 2
+  xs = int_array_push(xs, 3);    // in-place onto xs only
+  // xs.len == 3, b.len == 2, b unaffected by the third push
+  return xs.len * 1000 + b.len * 100 + xs[2] + b[0] + b[1];
+}";
+    // 3*1000 + 2*100 + 3 + 1 + 2 = 3206
+    assert_eq!(check(src), 3206);
+}
+
+#[test]
 fn bool_array_build_and_index() {
     let src = "\
 fn main() -> Int {

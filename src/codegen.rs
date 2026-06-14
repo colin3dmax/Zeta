@@ -239,6 +239,31 @@ fn is_fresh_array(expr: &MirExpr) -> bool {
     }
 }
 
+/// Recognize the in-place push idiom `name = <T>_array_push(name, value)` —
+/// returns `(name, element type, value expr)` when `place` is exactly the local
+/// the push reads as its first argument.
+fn match_inplace_push<'p>(place: &'p MirPlace, value: &'p MirExpr) -> Option<(&'p str, ZType, &'p MirExpr)> {
+    let MirPlace::Local(name) = place else {
+        return None;
+    };
+    let MirExpr::Call { callee, args } = value else {
+        return None;
+    };
+    if args.len() != 2 {
+        return None;
+    }
+    let elem = match callee.as_str() {
+        "int_array_push" | "bool_array_push" => ZType::Int,
+        "string_array_push" => ZType::Str,
+        _ => return None,
+    };
+    // First arg must be `Load(name)` — the same variable being assigned.
+    match &args[0] {
+        MirExpr::Load(arg_name) if arg_name == name => Some((name, elem, &args[1])),
+        _ => None,
+    }
+}
+
 /// The `{ i64 len, ptr data }` value type used for all arrays.
 fn array_struct_type(context: &Context) -> StructType {
     context.struct_type(
@@ -860,8 +885,38 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         self.types.llvm(elem).size_of().unwrap()
     }
 
-    /// Deep-copy an `{len, data}` array value: malloc a new buffer, memcpy the
-    /// elements (stride = `elem`'s size), return `{len, newdata}`.
+    /// Allocate an array heap buffer with an 8-byte capacity header:
+    /// `[ i64 cap | cap * elem_size bytes ]`. Returns the ELEMENTS pointer (one
+    /// header past the base), so the rest of codegen still sees a plain
+    /// `{len, ptr}` where `ptr` points straight at element 0. `cap` is stored so
+    /// in-place `push` can grow amortized-O(1) (see [`array_cap`]).
+    fn alloc_array_buf(&self, cap: IntValue<'ctx>, elem_size: IntValue<'ctx>) -> PointerValue<'ctx> {
+        let b = self.builder;
+        let header = self.i64t().const_int(8, false);
+        let elem_bytes = b.build_int_mul(cap, elem_size, "capbytes").unwrap();
+        let total = b.build_int_add(header, elem_bytes, "totbytes").unwrap();
+        let base = self.malloc_bytes(total);
+        b.build_store(base, cap).unwrap();
+        unsafe {
+            b.build_in_bounds_gep(self.context.i8_type(), base, &[header], "elems")
+                .unwrap()
+        }
+    }
+
+    /// Read the capacity header stored 8 bytes before the elements pointer.
+    fn array_cap(&self, elems: PointerValue<'ctx>) -> IntValue<'ctx> {
+        let b = self.builder;
+        let back = self.i64t().const_int((-8i64) as u64, true);
+        let hdr = unsafe {
+            b.build_in_bounds_gep(self.context.i8_type(), elems, &[back], "caphdr")
+                .unwrap()
+        };
+        b.build_load(self.i64t(), hdr, "cap").unwrap().into_int_value()
+    }
+
+    /// Deep-copy an `{len, data}` array value into a fresh capacity-headed buffer
+    /// (cap = len), memcpy the elements (stride = `elem`'s size), return `{len,
+    /// newdata}`.
     fn deep_copy_array(
         &self,
         arr: inkwell::values::StructValue<'ctx>,
@@ -870,22 +925,12 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         let b = self.builder;
         let len = b.build_extract_value(arr, 0, "len").unwrap().into_int_value();
         let src = b.build_extract_value(arr, 1, "data").unwrap().into_pointer_value();
-        let bytes = b.build_int_mul(len, self.elem_bytes(elem), "bytes").unwrap();
-        let dst = b
-            .build_call(self.malloc, &[bytes.into()], "buf")
-            .unwrap()
-            .try_as_basic_value()
-            .basic()
-            .unwrap()
-            .into_pointer_value();
+        let elem_size = self.elem_bytes(elem);
+        let bytes = b.build_int_mul(len, elem_size, "bytes").unwrap();
+        let dst = self.alloc_array_buf(len, elem_size);
         b.build_call(self.memcpy, &[dst.into(), src.into(), bytes.into()], "cp")
             .unwrap();
-        let with_len = b
-            .build_insert_value(array_struct_type(self.context).get_undef(), len, 0, "a0")
-            .unwrap();
-        b.build_insert_value(with_len, dst, 1, "a1")
-            .unwrap()
-            .into_struct_value()
+        self.make_len_ptr(len, dst)
     }
 
     /// Allocate a slot of `ty` at the TOP of the entry block (mem2reg-friendly).
@@ -935,6 +980,14 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 Ok(false)
             }
             MirStmt::Store { place, value } => {
+                // Peephole: `xs = <int|bool|string>_array_push(xs, v)` mutates xs's
+                // buffer in place (amortized O(1)) instead of copying. Sound because
+                // value semantics give every variable a uniquely-owned buffer, so no
+                // other live owner observes the old buffer.
+                if let Some((name, elem, value_arg)) = match_inplace_push(place, value) {
+                    self.lower_inplace_push(name, value_arg, elem)?;
+                    return Ok(false);
+                }
                 let (v, vt) = self.lower_expr(value)?;
                 let v = self.bind_owned(value, v, &vt);
                 let (slot, _) = self.resolve_place(place)?;
@@ -1474,18 +1527,11 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 };
                 let elem_llvm = self.types.llvm(&elem);
                 let n = values.len();
-                let bytes = self
-                    .builder
-                    .build_int_mul(self.i64t().const_int(n as u64, false), self.elem_bytes(&elem), "bytes")
-                    .unwrap();
-                let data = self
-                    .builder
-                    .build_call(self.malloc, &[bytes.into()], "buf")
-                    .unwrap()
-                    .try_as_basic_value()
-                    .basic()
-                    .unwrap()
-                    .into_pointer_value();
+                // Capacity-headed buffer (cap = n) so a later in-place push can grow.
+                let data = self.alloc_array_buf(
+                    self.i64t().const_int(n as u64, false),
+                    self.elem_bytes(&elem),
+                );
                 for (i, (v, _)) in values.into_iter().enumerate() {
                     let ptr = unsafe {
                         self.builder
@@ -1727,18 +1773,18 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         self.builder.build_int_z_extend(bit, self.i64t(), "b64").unwrap()
     }
 
-    /// `_array_empty()` → `{0, malloc(0)}`: a zero-length, independently-owned
-    /// buffer (never dereferenced while len is 0; a real malloc keeps the deep-copy
-    /// memcpy well-defined).
+    /// `_array_empty()` → `{0, buf}` with a capacity-headed (cap 0) buffer.
     fn lower_array_empty(&self, elem: ZType) -> (BasicValueEnum<'ctx>, ZType) {
-        let buf = self.malloc_bytes(self.i64t().const_zero());
+        let buf = self.alloc_array_buf(self.i64t().const_zero(), self.elem_bytes(&elem));
         let arr = self.make_len_ptr(self.i64t().const_zero(), buf);
         (arr.into(), ZType::Array(Box::new(elem)))
     }
 
-    /// `_array_push(arr, x)` → a fresh `{len+1, buf}` with the old elements copied
-    /// and `x` stored at the end (stride = `elem`'s size). The original buffer is
-    /// untouched, matching the interpreter's copy-on-write `push`.
+    /// `_array_push(arr, x)` → a fresh `{len+1, buf}` (cap len+1) with the old
+    /// elements copied and `x` stored at the end. The original buffer is untouched
+    /// (matches the interpreter's copy-on-write `push`). This is the FUNCTIONAL
+    /// path; the common `xs = push(xs, x)` self-assignment is lowered in-place by
+    /// [`FnLower::lower_inplace_push`] (amortized O(1)).
     fn lower_array_push(
         &mut self,
         arr_expr: &MirExpr,
@@ -1752,13 +1798,80 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         let elem_sz = self.elem_bytes(&elem);
         let b = self.builder;
         let new_len = b.build_int_add(len, self.i64t().const_int(1, false), "nlen").unwrap();
-        let new_bytes = b.build_int_mul(new_len, elem_sz, "nbytes").unwrap();
-        let buf = self.malloc_bytes(new_bytes);
+        let buf = self.alloc_array_buf(new_len, elem_sz);
         let old_bytes = b.build_int_mul(len, elem_sz, "obytes").unwrap();
         self.memcpy_bytes(buf, data, old_bytes);
         let end = unsafe { b.build_in_bounds_gep(elem_llvm, buf, &[len], "endp").unwrap() };
         b.build_store(end, x).unwrap();
         Ok((self.make_len_ptr(new_len, buf).into(), ZType::Array(Box::new(elem))))
+    }
+
+    /// In-place `name = push(name, value)`: append into `name`'s buffer, growing
+    /// (capacity-doubling) only when full — amortized O(1). Sound because value
+    /// semantics make `name`'s buffer uniquely owned (no aliasing observer).
+    fn lower_inplace_push(
+        &mut self,
+        name: &str,
+        value_arg: &MirExpr,
+        elem: ZType,
+    ) -> Result<(), String> {
+        let slot = self
+            .locals
+            .get(name)
+            .ok_or_else(|| format!("in-place push on unknown local `{name}`"))?
+            .0;
+        let elem_llvm = self.types.llvm(&elem);
+        let elem_sz = self.elem_bytes(&elem);
+
+        let arr = self
+            .builder
+            .build_load(array_struct_type(self.context), slot, "arr")
+            .unwrap()
+            .into_struct_value();
+        let (len, ptr) = self.len_ptr_parts(arr);
+        let cap = self.array_cap(ptr);
+        let (v, _) = self.lower_expr(value_arg)?;
+
+        // len < cap → append in place; else grow to max(1, cap*2) and copy.
+        let cur = self.builder.get_insert_block().unwrap();
+        let grow = self.context.append_basic_block(self.llvm_fn, "push.grow");
+        let cont = self.context.append_basic_block(self.llvm_fn, "push.cont");
+        let has_room = self
+            .builder
+            .build_int_compare(IntPredicate::SLT, len, cap, "room")
+            .unwrap();
+        self.builder.build_conditional_branch(has_room, cont, grow).unwrap();
+
+        self.builder.position_at_end(grow);
+        let cap2 = self.builder.build_int_mul(cap, self.i64t().const_int(2, false), "cap2").unwrap();
+        let is_zero = self
+            .builder
+            .build_int_compare(IntPredicate::EQ, cap, self.i64t().const_zero(), "capz")
+            .unwrap();
+        let newcap = self
+            .builder
+            .build_select(is_zero, self.i64t().const_int(1, false), cap2, "newcap")
+            .unwrap()
+            .into_int_value();
+        let newbuf = self.alloc_array_buf(newcap, elem_sz);
+        let old_bytes = self.builder.build_int_mul(len, elem_sz, "ob").unwrap();
+        self.memcpy_bytes(newbuf, ptr, old_bytes);
+        self.builder.build_unconditional_branch(cont).unwrap();
+
+        self.builder.position_at_end(cont);
+        let phi = self
+            .builder
+            .build_phi(self.context.ptr_type(inkwell::AddressSpace::default()), "newptr")
+            .unwrap();
+        phi.add_incoming(&[(&ptr, cur), (&newbuf, grow)]);
+        let newptr = phi.as_basic_value().into_pointer_value();
+
+        let endp = unsafe { self.builder.build_in_bounds_gep(elem_llvm, newptr, &[len], "endp").unwrap() };
+        self.builder.build_store(endp, v).unwrap();
+        let newlen = self.builder.build_int_add(len, self.i64t().const_int(1, false), "nlen").unwrap();
+        let newarr = self.make_len_ptr(newlen, newptr);
+        self.builder.build_store(slot, newarr).unwrap();
+        Ok(())
     }
 
     /// Extract `(len, data)` from a `{i64 len, ptr data}` value — the shared layout
