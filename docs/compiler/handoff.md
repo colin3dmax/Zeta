@@ -66,9 +66,10 @@ native 后端覆盖 Int/Bool/struct/array/**string**(值语义)。要 AOT 编译
 
 7. ~~**试推全前端**~~ ✅ **里程碑达成**:补 String `==`/`!=`(memcmp)+ **块级作用域**(按需分配 local 槽 + 嵌套块 locals 快照/恢复,修同名变量在不相交分支不同类型重声明的槽冲突)后,**整个 `arena_frontend.zeta`(306 函数/20 struct)lower 成 native .o**。门禁 `tests/codegen_frontend_probe.rs`(ignored)。前端不用 enum/match、也没真调文件 IO(path_join 等自实现),故已全覆盖。
 
-**native subset 已能 lower 整个自举前端到 native object。** 剩余:
-   - **下一步:差分验证 native 跑前端**——native 编译的前端在某输入上的输出须对齐解释器 dump(真正的闭环正确性证明)。建议写个小 `main()` 调前端管线返回 Int 摘要(或经 FFI 比对 dump String),解释器 vs native 差分。
-   - **文件 IO builtin**(`file_read_to_string` 等):若要 native 前端从真实文件读源,需 Rust 侧 extern shim;但前端核心管线是纯函数(吃 String source),可绕过。
+8. ~~**差分验证 native 跑前端**~~ ✅ **闭环达成**:在前端源后追加 `main()` 调 `compile(src,mode)`,把 dump String 归约成 Int 摘要;解释器 `run_mir` 与 native `jit_run_i64` 跑同一组合程序、摘要相等 → **native 编译的整个前端逐字节复现解释器产物**(ast-dump/mir-dump/typecheck/run 模式,run 经自托管求值器)。门禁 `tests/codegen_selfhost_run.rs`(6 用例)。
+
+**native 后端线核心目标达成:Zeta 自举前端经 Zeta 自己的 native 后端编译并跑出与参考解释器一致的产物。** 可选的进一步收尾:
+   - **AOT 独立可执行的前端**:把组合程序 `aot_compile_object` 成 .o 链接成 exe,吃文件/stdin 输出 dump —— 需 `file_read_to_string` 等的 Rust 侧 extern shim(JIT 差分已证正确,这是打包/部署步骤)。
    - **String-payload enum**(E2)、NativeService struct 状态:低优先,前端不需要。
 
 **每步都用解释器 `run_mir` 作差分 oracle**(见 tests/codegen_*.rs 的 `check()` 范式),feature-gated,不影响默认构建。
