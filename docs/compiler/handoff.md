@@ -50,12 +50,12 @@ cargo test --release --test selfhost_fixpoint -- --ignored
 - `testdata/selfhost/arena_frontend.zeta`(7500 行):Zeta 写的自举前端(lex/parse/resolve/typecheck/MIR/interp + 统一 `compile(source,mode)` driver)。
 - `docs/compiler/self-hosting-roadmap.md` / `hot-reload-design.md`(含 §3 性能约束)。
 
-## 5. 下一步规划(剩余 = 广度,enum/match/string codegen)
+## 5. 下一步规划(剩余 = 广度,enum/match codegen)
 
-native 后端只覆盖 Int/Bool/struct/array(值语义)。要 AOT 编译完整自举前端,需补:
+native 后端覆盖 Int/Bool/struct/array/**string**(值语义)。要 AOT 编译完整自举前端,还需补:
 
-1. **string codegen**(最像已做的 array):字符串字面量 = 堆 `{len, ptr<i8>}`;`.len` / `string_byte_at` / `string_concat`(malloc+memcpy)等 std builtin。值语义同 array(eager 深拷贝)。先做这个,因模式与 IntArray 同构。
-2. **enum codegen**:tagged union = `{ i64 tag, <payload union> }`(payload 取最大变体大小,或简化为单 payload 槽)。`EnumVariant` 构造、`FieldAccess`/match 取 tag+payload。
+1. ~~**string codegen**~~ ✅ **已完成(三切片)**:`ZType::Str`=`{i64 len, ptr<i8>}`(复用 array 布局);**string 不可变 → 共享只读 buffer,bind 点无需深拷贝**;字面量(global const)+ `string_len`/`string_byte_at`/`string_byte_slice`/`string_concat`(malloc+memcpy)+ `int_to_string`(libc snprintf)+ `ascii_is_*`(纯 i64 比较)。std builtin 在 `lower_builtin` 拦截。门禁 `tests/codegen_string.rs`(19 用例)。
+2. **enum codegen**(下一步):tagged union = `{ i64 tag, <payload> }`(payload 取最大变体大小,或简化为单 payload 槽)。`EnumVariant` 构造、`FieldAccess`/match 取 tag+payload。
 3. **match codegen**:对 enum tag 做 `switch` + 每 arm 绑定 payload 到 local;穷尽性已由 typecheck 保证。
 4. 之后:`codegen` 把整个 `arena_frontend.zeta` AOT 成二进制 → 真正的自举闭环(脱离 Stage0 解释器);NativeService 支持 struct 状态(ABI 杂,低优先)。
 
