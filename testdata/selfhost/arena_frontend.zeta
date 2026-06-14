@@ -7564,29 +7564,54 @@ export fn run_main_via_arena(source: String) -> String {
 // lives in tests/selfhost_fixpoint.rs, and driver dispatch is gated by
 // tests/selfhost_driver.rs.
 // ===========================================================================
-// Stage2 (slice 1): MIR arena -> LLVM IR text (scalar subset).
+// Stage2: MIR arena -> LLVM IR text (slice 1 scalar + slice 2 struct).
 //
-// Emits textual LLVM IR for the scalar subset (Int / Bool unified as i64):
-// functions with Int params, let / assign / return, arithmetic / bitwise /
+// Emits textual LLVM IR. Int / Bool unify as i64; structs map to named `%S`
+// aggregate types (alloca / load / store for locals, insertvalue for literals,
+// extractvalue for field reads, getelementptr for field writes; pass / return
+// by value). Covered: functions with Int / Bool / struct params and returns,
+// let / assign (local + field place) / return, arithmetic / bitwise /
 // comparison / unary (neg / not / bit_not) / logical and-or, if / else /
-// while / break / continue, and user calls including recursion. Locals use
-// alloca / load / store with every alloca hoisted to the entry block. Each
-// user function is emitted as `@z_<name>` so the linked C driver can call
-// `@z_main` without clashing with C's own `main`. The Rust gate
-// (tests/selfhost_llvm.rs) compiles this IR with clang, links a tiny C driver,
-// runs it, and asserts the printed result equals the Stage0 interpreter oracle
-// (run_mir). Short-circuit is not observable in this pure subset, so and / or
-// lower to value-equivalent normalized bitwise ops; true short-circuit and the
-// String / Array / Struct / Enum / match / for families come in later slices.
+// while / break / continue, and user calls including recursion. Every alloca is
+// hoisted to the entry block. Each user function is emitted as `@z_<name>` so
+// the linked C driver can call `@z_main` without clashing with C's own `main`.
+// A read-only `Tcx` rides inside `Emit` to type every value (struct decls from
+// the AST arena, function return types from the MIR table, per-function local
+// scope). The Rust gate (tests/selfhost_llvm.rs) compiles this IR with clang,
+// links a tiny C driver, runs it, and asserts the printed result equals the
+// Stage0 interpreter oracle (run_mir). Short-circuit is not observable in this
+// pure subset, so and / or lower to value-equivalent normalized bitwise ops;
+// true short-circuit and the String / Array / Enum / match / for families come
+// in later slices.
 // ===========================================================================
 
+// Read-only type context threaded (inside Emit) through the emitter so it can
+// type each value: struct decls (from the AST arena), function return types
+// (from the MIR table), and the current function's local scope (name -> type,
+// rebuilt per function). Types are the same display strings the typechecker
+// uses ("Int" / "Bool" / struct name / ...).
+struct Tcx {
+  struct_name: StringArray,
+  struct_field_start: IntArray,
+  struct_field_count: IntArray,
+  field_name: StringArray,
+  field_type: StringArray,
+  efn_name: StringArray,
+  efn_has_ret: IntArray,
+  efn_ret: StringArray,
+  loc_name: StringArray,
+  loc_type: StringArray,
+}
+
 // Threaded emitter state: accumulated IR text, next %tN register id, next
-// basic-block label id, and whether the current block already has a terminator.
+// basic-block label id, whether the current block already has a terminator, and
+// the read-only type context.
 struct Emit {
   out: String,
   reg: Int,
   block: Int,
   term: Int,
+  tcx: Tcx,
 }
 
 // An emitted expression: the threaded state plus the value reference (an "%tN"
@@ -7594,6 +7619,226 @@ struct Emit {
 struct EmitVal {
   em: Emit,
   vref: String,
+}
+
+// A resolved assignment place: the threaded state, the pointer register holding
+// the address, and the Zeta type stored there.
+struct PlaceRef {
+  em: Emit,
+  ptr: String,
+  ty: String,
+}
+
+// Index of `name` in the struct table, or `len` when absent (so the caller can
+// test `< struct_name.len` for "is a struct type").
+fn find_struct(tcx: Tcx, name: String) -> Int {
+  let mut i: Int = 0;
+  while i < tcx.struct_name.len {
+    if tcx.struct_name[i] == name {
+      return i;
+    }
+    i = i + 1;
+  }
+  return tcx.struct_name.len;
+}
+
+fn find_fn(tcx: Tcx, name: String) -> Int {
+  let mut i: Int = 0;
+  while i < tcx.efn_name.len {
+    if tcx.efn_name[i] == name {
+      return i;
+    }
+    i = i + 1;
+  }
+  return tcx.efn_name.len;
+}
+
+// Declaration index (0-based) of field `fname` within struct `si`.
+fn struct_field_index(tcx: Tcx, si: Int, fname: String) -> Int {
+  let start: Int = tcx.struct_field_start[si];
+  let count: Int = tcx.struct_field_count[si];
+  let mut i: Int = 0;
+  while i < count {
+    if tcx.field_name[start + i] == fname {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0;
+}
+
+fn struct_field_type_at(tcx: Tcx, si: Int, idx: Int) -> String {
+  return tcx.field_type[tcx.struct_field_start[si] + idx];
+}
+
+// Type of local / param `name`, searched newest-first for shadowing.
+fn scope_type(tcx: Tcx, name: String) -> String {
+  let mut i: Int = tcx.loc_name.len;
+  while i > 0 {
+    i = i - 1;
+    if tcx.loc_name[i] == name {
+      return tcx.loc_type[i];
+    }
+  }
+  return "Int";
+}
+
+// The LLVM type for a Zeta type string. Int / Bool unify as i64; a struct maps
+// to its named `%Name` type. (String / array / enum arrive in later slices.)
+fn llvm_ty(tcx: Tcx, ty: String) -> String {
+  if ty == "Int" {
+    return "i64";
+  }
+  if ty == "Bool" {
+    return "i64";
+  }
+  if find_struct(tcx, ty) < tcx.struct_name.len {
+    return string_concat("%", ty);
+  }
+  return "i64";
+}
+
+// Static type of an expression node (scalar + struct subset).
+fn type_of_expr(tcx: Tcx, mir: Mir, node: Int) -> String {
+  let kind: Int = mir.me_kind[node];
+  if kind == mir_int_expr() {
+    return "Int";
+  }
+  if kind == mir_bool_expr() {
+    return "Bool";
+  }
+  if kind == mir_string_expr() {
+    return "String";
+  }
+  if kind == mir_load_expr() {
+    return scope_type(tcx, mir.me_text[node]);
+  }
+  if kind == mir_unary_expr() {
+    if mir.me_text[node] == "not" {
+      return "Bool";
+    }
+    return "Int";
+  }
+  if kind == mir_binary_expr() {
+    let op: String = mir.me_text[node];
+    if llvm_is_arith(op) {
+      return "Int";
+    }
+    return "Bool";
+  }
+  if kind == mir_call_expr() {
+    let ci: Int = find_fn(tcx, mir.me_text[node]);
+    if ci < tcx.efn_name.len {
+      if tcx.efn_has_ret[ci] == 1 {
+        return tcx.efn_ret[ci];
+      }
+      return "Unit";
+    }
+    return "Int";
+  }
+  if kind == mir_struct_expr() {
+    return mir.me_text[node];
+  }
+  if kind == mir_field_expr() {
+    let bty: String = type_of_expr(tcx, mir, mir.me_a[node]);
+    let si: Int = find_struct(tcx, bty);
+    if si < tcx.struct_name.len {
+      let fidx: Int = struct_field_index(tcx, si, mir.me_text[node]);
+      return struct_field_type_at(tcx, si, fidx);
+    }
+    return "Int";
+  }
+  return "Int";
+}
+
+// `%Name = type { ... }` for every struct, fields in declaration order.
+fn llvm_emit_struct_defs(out: String, tcx: Tcx) -> String {
+  let mut o: String = out;
+  let mut si: Int = 0;
+  while si < tcx.struct_name.len {
+    o = string_concat(o, "%");
+    o = string_concat(o, tcx.struct_name[si]);
+    o = string_concat(o, " = type { ");
+    let start: Int = tcx.struct_field_start[si];
+    let count: Int = tcx.struct_field_count[si];
+    let mut fi: Int = 0;
+    while fi < count {
+      if fi > 0 {
+        o = string_concat(o, ", ");
+      }
+      o = string_concat(o, llvm_ty(tcx, tcx.field_type[start + fi]));
+      fi = fi + 1;
+    }
+    o = string_concat(o, " }\n");
+    si = si + 1;
+  }
+  if tcx.struct_name.len > 0 {
+    o = string_concat(o, "\n");
+  }
+  return o;
+}
+
+// Build the module-global type context (struct decls + function return types).
+fn tcx_global(arena: Arena, mir: Mir) -> Tcx {
+  return Tcx {
+    struct_name: arena.struct_name,
+    struct_field_start: arena.struct_field_start,
+    struct_field_count: arena.struct_field_count,
+    field_name: arena.field_name,
+    field_type: arena.field_type,
+    efn_name: mir.mf_name,
+    efn_has_ret: mir.mf_has_ret,
+    efn_ret: mir.mf_ret,
+    loc_name: string_array_empty(),
+    loc_type: string_array_empty(),
+  };
+}
+
+// Record local types declared in a block (recursing into if / while bodies);
+// each let's type is its annotation, else the inferred type of its initializer.
+fn tcx_scan_lets(tcx: Tcx, mir: Mir, start: Int, count: Int) -> Tcx {
+  let mut acc: Tcx = tcx;
+  let mut i: Int = 0;
+  while i < count {
+    let s: Int = mir.mblock_list[start + i];
+    let k: Int = mir.ms_kind[s];
+    if k == mir_local_stmt() {
+      let mut ty: String = "Int";
+      if mir.ms_has_type[s] == 1 {
+        ty = mir.ms_type[s];
+      } else {
+        ty = type_of_expr(acc, mir, mir.ms_expr[s]);
+      }
+      acc.loc_name = string_array_push(acc.loc_name, mir.ms_name[s]);
+      acc.loc_type = string_array_push(acc.loc_type, ty);
+    }
+    if k == mir_if_stmt() {
+      acc = tcx_scan_lets(acc, mir, mir.ms_then_start[s], mir.ms_then_count[s]);
+      acc = tcx_scan_lets(acc, mir, mir.ms_else_start[s], mir.ms_else_count[s]);
+    }
+    if k == mir_while_stmt() {
+      acc = tcx_scan_lets(acc, mir, mir.ms_then_start[s], mir.ms_then_count[s]);
+    }
+    i = i + 1;
+  }
+  return acc;
+}
+
+// Per-function context: params first, then every let, layered on the globals.
+fn tcx_with_scope(g: Tcx, mir: Mir, fi: Int) -> Tcx {
+  let mut t: Tcx = g;
+  t.loc_name = string_array_empty();
+  t.loc_type = string_array_empty();
+  let pstart: Int = mir.mf_param_start[fi];
+  let pcount: Int = mir.mf_param_count[fi];
+  let mut pi: Int = 0;
+  while pi < pcount {
+    t.loc_name = string_array_push(t.loc_name, mir.mp_name[pstart + pi]);
+    t.loc_type = string_array_push(t.loc_type, mir.mp_type[pstart + pi]);
+    pi = pi + 1;
+  }
+  t = tcx_scan_lets(t, mir, mir.mf_body_start[fi], mir.mf_body_count[fi]);
+  return t;
 }
 
 fn llvm_reg_name(n: Int) -> String {
@@ -7678,12 +7923,15 @@ fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
   }
   if kind == mir_load_expr() {
     let mut e: Emit = em;
+    let llty: String = llvm_ty(e.tcx, scope_type(e.tcx, mir.me_text[node]));
     let r: Int = e.reg;
     e.reg = e.reg + 1;
     let rn: String = llvm_reg_name(r);
     e.out = string_concat(e.out, "  ");
     e.out = string_concat(e.out, rn);
-    e.out = string_concat(e.out, " = load i64, ptr ");
+    e.out = string_concat(e.out, " = load ");
+    e.out = string_concat(e.out, llty);
+    e.out = string_concat(e.out, ", ptr ");
     e.out = string_concat(e.out, llvm_slot_ref(mir.me_text[node]));
     e.out = string_concat(e.out, "\n");
     return EmitVal { em: e, vref: rn };
@@ -7805,29 +8053,109 @@ fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
     let mut args: String = "";
     let mut i: Int = 0;
     while i < acount {
-      let a: EmitVal = llvm_expr(e, mir, mir.mchild_list[astart + i]);
+      let argnode: Int = mir.mchild_list[astart + i];
+      let argty: String = llvm_ty(e.tcx, type_of_expr(e.tcx, mir, argnode));
+      let a: EmitVal = llvm_expr(e, mir, argnode);
       e = a.em;
       if i > 0 {
         args = string_concat(args, ", ");
       }
-      args = string_concat(args, "i64 ");
+      args = string_concat(args, argty);
+      args = string_concat(args, " ");
       args = string_concat(args, a.vref);
       i = i + 1;
+    }
+    let callee: String = mir.me_text[node];
+    let ci: Int = find_fn(e.tcx, callee);
+    let mut retllty: String = "i64";
+    let mut has_ret: Int = 1;
+    if ci < e.tcx.efn_name.len {
+      has_ret = e.tcx.efn_has_ret[ci];
+      if has_ret == 1 {
+        retllty = llvm_ty(e.tcx, e.tcx.efn_ret[ci]);
+      } else {
+        retllty = "void";
+      }
+    }
+    if has_ret == 0 {
+      e.out = string_concat(e.out, "  call void @z_");
+      e.out = string_concat(e.out, callee);
+      e.out = string_concat(e.out, "(");
+      e.out = string_concat(e.out, args);
+      e.out = string_concat(e.out, ")\n");
+      return EmitVal { em: e, vref: "0" };
     }
     let r: Int = e.reg;
     e.reg = e.reg + 1;
     let rn: String = llvm_reg_name(r);
     e.out = string_concat(e.out, "  ");
     e.out = string_concat(e.out, rn);
-    e.out = string_concat(e.out, " = call i64 @z_");
-    e.out = string_concat(e.out, mir.me_text[node]);
+    e.out = string_concat(e.out, " = call ");
+    e.out = string_concat(e.out, retllty);
+    e.out = string_concat(e.out, " @z_");
+    e.out = string_concat(e.out, callee);
     e.out = string_concat(e.out, "(");
     e.out = string_concat(e.out, args);
     e.out = string_concat(e.out, ")\n");
     return EmitVal { em: e, vref: rn };
   }
-  // Unsupported in slice 1 (string / enum / struct / array / index / field):
-  // the gate corpus avoids these; emit a sentinel so any accidental use is a 0.
+  if kind == mir_struct_expr() {
+    let sname: String = mir.me_text[node];
+    let si: Int = find_struct(em.tcx, sname);
+    let llty: String = string_concat("%", sname);
+    let fstart: Int = mir.me_a[node];
+    let fcount: Int = mir.me_b[node];
+    let mut e: Emit = em;
+    let mut agg: String = "undef";
+    let mut i: Int = 0;
+    while i < fcount {
+      let fidx: Int = struct_field_index(e.tcx, si, mir.msl_field_name[fstart + i]);
+      let fllty: String = llvm_ty(e.tcx, struct_field_type_at(e.tcx, si, fidx));
+      let v: EmitVal = llvm_expr(e, mir, mir.msl_field_value[fstart + i]);
+      e = v.em;
+      let r: Int = e.reg;
+      e.reg = e.reg + 1;
+      let rn: String = llvm_reg_name(r);
+      e.out = string_concat(e.out, "  ");
+      e.out = string_concat(e.out, rn);
+      e.out = string_concat(e.out, " = insertvalue ");
+      e.out = string_concat(e.out, llty);
+      e.out = string_concat(e.out, " ");
+      e.out = string_concat(e.out, agg);
+      e.out = string_concat(e.out, ", ");
+      e.out = string_concat(e.out, fllty);
+      e.out = string_concat(e.out, " ");
+      e.out = string_concat(e.out, v.vref);
+      e.out = string_concat(e.out, ", ");
+      e.out = string_concat(e.out, int_to_string(fidx));
+      e.out = string_concat(e.out, "\n");
+      agg = rn;
+      i = i + 1;
+    }
+    return EmitVal { em: e, vref: agg };
+  }
+  if kind == mir_field_expr() {
+    let bty: String = type_of_expr(em.tcx, mir, mir.me_a[node]);
+    let si: Int = find_struct(em.tcx, bty);
+    let fidx: Int = struct_field_index(em.tcx, si, mir.me_text[node]);
+    let base: EmitVal = llvm_expr(em, mir, mir.me_a[node]);
+    let mut e: Emit = base.em;
+    let r: Int = e.reg;
+    e.reg = e.reg + 1;
+    let rn: String = llvm_reg_name(r);
+    e.out = string_concat(e.out, "  ");
+    e.out = string_concat(e.out, rn);
+    e.out = string_concat(e.out, " = extractvalue %");
+    e.out = string_concat(e.out, bty);
+    e.out = string_concat(e.out, " ");
+    e.out = string_concat(e.out, base.vref);
+    e.out = string_concat(e.out, ", ");
+    e.out = string_concat(e.out, int_to_string(fidx));
+    e.out = string_concat(e.out, "\n");
+    return EmitVal { em: e, vref: rn };
+  }
+  // Unsupported in this slice (string / enum / array / index): the gate corpus
+  // avoids these; emit a sentinel so any accidental use is a 0.
   return EmitVal { em: em, vref: "0" };
 }
 
@@ -7868,12 +8196,47 @@ fn llvm_cond_bit(em: Emit, vref: String) -> EmitBit {
   return EmitBit { em: e, bit: rn };
 }
 
+// Resolve an assignment place to (pointer register, Zeta type). A local is its
+// alloca slot; a field GEPs into its base (chains for nested fields).
+fn resolve_place(em: Emit, mir: Mir, place: Int) -> PlaceRef {
+  let k: Int = mir.mpl_kind[place];
+  if k == mir_place_local() {
+    let nm: String = mir.mpl_name[place];
+    return PlaceRef { em: em, ptr: llvm_slot_ref(nm), ty: scope_type(em.tcx, nm) };
+  }
+  if k == mir_place_field() {
+    let base: PlaceRef = resolve_place(em, mir, mir.mpl_base[place]);
+    let mut e: Emit = base.em;
+    let si: Int = find_struct(e.tcx, base.ty);
+    let fidx: Int = struct_field_index(e.tcx, si, mir.mpl_name[place]);
+    let fty: String = struct_field_type_at(e.tcx, si, fidx);
+    let r: Int = e.reg;
+    e.reg = e.reg + 1;
+    let rn: String = llvm_reg_name(r);
+    e.out = string_concat(e.out, "  ");
+    e.out = string_concat(e.out, rn);
+    e.out = string_concat(e.out, " = getelementptr %");
+    e.out = string_concat(e.out, base.ty);
+    e.out = string_concat(e.out, ", ptr ");
+    e.out = string_concat(e.out, base.ptr);
+    e.out = string_concat(e.out, ", i32 0, i32 ");
+    e.out = string_concat(e.out, int_to_string(fidx));
+    e.out = string_concat(e.out, "\n");
+    return PlaceRef { em: e, ptr: rn, ty: fty };
+  }
+  // index place (array): not in this slice.
+  return PlaceRef { em: em, ptr: llvm_slot_ref(mir.mpl_name[place]), ty: "Int" };
+}
+
 fn llvm_stmt(em: Emit, mir: Mir, sidx: Int, brk: Int, cont: Int) -> Emit {
   let kind: Int = mir.ms_kind[sidx];
   if kind == mir_local_stmt() {
+    let llty: String = llvm_ty(em.tcx, scope_type(em.tcx, mir.ms_name[sidx]));
     let v: EmitVal = llvm_expr(em, mir, mir.ms_expr[sidx]);
     let mut e: Emit = v.em;
-    e.out = string_concat(e.out, "  store i64 ");
+    e.out = string_concat(e.out, "  store ");
+    e.out = string_concat(e.out, llty);
+    e.out = string_concat(e.out, " ");
     e.out = string_concat(e.out, v.vref);
     e.out = string_concat(e.out, ", ptr ");
     e.out = string_concat(e.out, llvm_slot_ref(mir.ms_name[sidx]));
@@ -7882,26 +8245,30 @@ fn llvm_stmt(em: Emit, mir: Mir, sidx: Int, brk: Int, cont: Int) -> Emit {
   }
   if kind == mir_store_stmt() {
     let v: EmitVal = llvm_expr(em, mir, mir.ms_expr[sidx]);
-    let mut e: Emit = v.em;
-    let place: Int = mir.ms_place[sidx];
-    // Slice 1: local places only (field / index assignment in a later slice).
-    e.out = string_concat(e.out, "  store i64 ");
+    let pr: PlaceRef = resolve_place(v.em, mir, mir.ms_place[sidx]);
+    let mut e: Emit = pr.em;
+    e.out = string_concat(e.out, "  store ");
+    e.out = string_concat(e.out, llvm_ty(e.tcx, pr.ty));
+    e.out = string_concat(e.out, " ");
     e.out = string_concat(e.out, v.vref);
     e.out = string_concat(e.out, ", ptr ");
-    e.out = string_concat(e.out, llvm_slot_ref(mir.mpl_name[place]));
+    e.out = string_concat(e.out, pr.ptr);
     e.out = string_concat(e.out, "\n");
     return e;
   }
   if kind == mir_return_stmt() {
     let mut e: Emit = em;
     if mir.ms_expr[sidx] >= 0 {
+      let rty: String = llvm_ty(em.tcx, type_of_expr(em.tcx, mir, mir.ms_expr[sidx]));
       let v: EmitVal = llvm_expr(em, mir, mir.ms_expr[sidx]);
       e = v.em;
-      e.out = string_concat(e.out, "  ret i64 ");
+      e.out = string_concat(e.out, "  ret ");
+      e.out = string_concat(e.out, rty);
+      e.out = string_concat(e.out, " ");
       e.out = string_concat(e.out, v.vref);
       e.out = string_concat(e.out, "\n");
     } else {
-      e.out = string_concat(e.out, "  ret i64 0\n");
+      e.out = string_concat(e.out, "  ret void\n");
     }
     e.term = 1;
     return e;
@@ -8036,8 +8403,15 @@ fn llvm_collect_locals(mir: Mir, start: Int, count: Int, names: StringArray) -> 
   return acc;
 }
 
-fn llvm_emit_function(out: String, mir: Mir, fi: Int) -> String {
-  let mut o: String = string_concat(out, "define i64 @z_");
+fn llvm_emit_function(out: String, mir: Mir, g: Tcx, fi: Int) -> String {
+  let tcx: Tcx = tcx_with_scope(g, mir, fi);
+  let mut retty: String = "void";
+  if mir.mf_has_ret[fi] == 1 {
+    retty = llvm_ty(tcx, mir.mf_ret[fi]);
+  }
+  let mut o: String = string_concat(out, "define ");
+  o = string_concat(o, retty);
+  o = string_concat(o, " @z_");
   o = string_concat(o, mir.mf_name[fi]);
   o = string_concat(o, "(");
   let pstart: Int = mir.mf_param_start[fi];
@@ -8047,7 +8421,8 @@ fn llvm_emit_function(out: String, mir: Mir, fi: Int) -> String {
     if pi > 0 {
       o = string_concat(o, ", ");
     }
-    o = string_concat(o, "i64 %");
+    o = string_concat(o, llvm_ty(tcx, mir.mp_type[pstart + pi]));
+    o = string_concat(o, " %");
     o = string_concat(o, mir.mp_name[pstart + pi]);
     o = string_concat(o, ".arg");
     pi = pi + 1;
@@ -8058,7 +8433,9 @@ fn llvm_emit_function(out: String, mir: Mir, fi: Int) -> String {
   while pi < pcount {
     o = string_concat(o, "  ");
     o = string_concat(o, llvm_slot_ref(mir.mp_name[pstart + pi]));
-    o = string_concat(o, " = alloca i64\n");
+    o = string_concat(o, " = alloca ");
+    o = string_concat(o, llvm_ty(tcx, mir.mp_type[pstart + pi]));
+    o = string_concat(o, "\n");
     pi = pi + 1;
   }
   let mut locals: StringArray = string_array_empty();
@@ -8067,13 +8444,17 @@ fn llvm_emit_function(out: String, mir: Mir, fi: Int) -> String {
   while li < locals.len {
     o = string_concat(o, "  ");
     o = string_concat(o, llvm_slot_ref(locals[li]));
-    o = string_concat(o, " = alloca i64\n");
+    o = string_concat(o, " = alloca ");
+    o = string_concat(o, llvm_ty(tcx, scope_type(tcx, locals[li])));
+    o = string_concat(o, "\n");
     li = li + 1;
   }
   // Store each incoming param value into its slot.
   pi = 0;
   while pi < pcount {
-    o = string_concat(o, "  store i64 %");
+    o = string_concat(o, "  store ");
+    o = string_concat(o, llvm_ty(tcx, mir.mp_type[pstart + pi]));
+    o = string_concat(o, " %");
     o = string_concat(o, mir.mp_name[pstart + pi]);
     o = string_concat(o, ".arg, ptr ");
     o = string_concat(o, llvm_slot_ref(mir.mp_name[pstart + pi]));
@@ -8082,21 +8463,32 @@ fn llvm_emit_function(out: String, mir: Mir, fi: Int) -> String {
   }
   // Body. break / continue targets default to 0 (never branched to outside a
   // loop; the verifier guarantees break / continue appear only inside one).
-  let mut em: Emit = Emit { out: o, reg: 0, block: 0, term: 0 };
+  let mut em: Emit = Emit { out: o, reg: 0, block: 0, term: 0, tcx: tcx };
   em = llvm_block(em, mir, mir.mf_body_start[fi], mir.mf_body_count[fi], 0, 0);
   let mut body: String = em.out;
   if em.term == 0 {
-    body = string_concat(body, "  ret i64 0\n");
+    if mir.mf_has_ret[fi] == 1 {
+      if retty == "i64" {
+        body = string_concat(body, "  ret i64 0\n");
+      } else {
+        body = string_concat(body, "  ret ");
+        body = string_concat(body, retty);
+        body = string_concat(body, " zeroinitializer\n");
+      }
+    } else {
+      body = string_concat(body, "  ret void\n");
+    }
   }
   body = string_concat(body, "}\n\n");
   return body;
 }
 
-fn llvm_emit_module(mir: Mir) -> String {
-  let mut out: String = "";
+fn llvm_emit_module(arena: Arena, mir: Mir) -> String {
+  let g: Tcx = tcx_global(arena, mir);
+  let mut out: String = llvm_emit_struct_defs("", g);
   let mut f: Int = 0;
   while f < mir.mf_name.len {
-    out = llvm_emit_function(out, mir, f);
+    out = llvm_emit_function(out, mir, g, f);
     f = f + 1;
   }
   return out;
@@ -8114,7 +8506,7 @@ export fn llvm_ir_via_arena(source: String) -> String {
   let mut mir: Mir = mir_empty();
   mir = mir_enum_dump_table(parsed.arena, mir, false, false);
   mir = lower_module(parsed.arena, enums, mir);
-  return llvm_emit_module(mir);
+  return llvm_emit_module(parsed.arena, mir);
 }
 
 export fn compile(source: String, mode: String) -> String {

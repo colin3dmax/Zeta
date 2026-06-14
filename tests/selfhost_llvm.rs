@@ -249,3 +249,79 @@ fn main() -> Int {
 }";
     assert_eq!(check(src), 11);
 }
+
+// --- slice 2: struct codegen (literal / field / param / return / nested) ---
+
+#[test]
+fn struct_literal_and_field_read() {
+    let src = "\
+struct Point { x: Int, y: Int }
+fn main() -> Int {
+  let p: Point = Point { x: 3, y: 4 };
+  return p.x + p.y;
+}";
+    assert_eq!(check(src), 7);
+}
+
+#[test]
+fn struct_field_mutation() {
+    let src = "\
+struct Point { x: Int, y: Int }
+fn main() -> Int {
+  let mut p: Point = Point { x: 3, y: 4 };
+  p.x = 10;
+  return p.x * 100 + p.y;
+}";
+    assert_eq!(check(src), 1004);
+}
+
+#[test]
+fn struct_param_by_value() {
+    let src = "\
+struct Point { x: Int, y: Int }
+fn area(p: Point) -> Int { return p.x * p.y; }
+fn main() -> Int {
+  let p: Point = Point { x: 6, y: 7 };
+  return area(p);
+}";
+    assert_eq!(check(src), 42);
+}
+
+#[test]
+fn struct_returned_from_function() {
+    let src = "\
+struct Point { x: Int, y: Int }
+fn mk(a: Int, b: Int) -> Point { return Point { x: a, y: b }; }
+fn main() -> Int {
+  let p: Point = mk(8, 9);
+  return p.x * 10 + p.y;
+}";
+    assert_eq!(check(src), 89);
+}
+
+#[test]
+fn nested_struct_read_and_write() {
+    let src = "\
+struct Point { x: Int, y: Int }
+struct Line { a: Point, b: Point }
+fn main() -> Int {
+  let mut l: Line = Line { a: Point { x: 1, y: 2 }, b: Point { x: 3, y: 4 } };
+  l.a.x = 100;
+  return l.a.x + l.b.y;
+}";
+    assert_eq!(check(src), 104);
+}
+
+#[test]
+fn struct_assignment_is_value_copy() {
+    let src = "\
+struct Point { x: Int, y: Int }
+fn main() -> Int {
+  let p: Point = Point { x: 1, y: 2 };
+  let mut q: Point = p;
+  q.x = 99;
+  return p.x * 10 + q.x;
+}";
+    // p stays {1,2}; q becomes {99,2}
+    assert_eq!(check(src), 109);
+}
