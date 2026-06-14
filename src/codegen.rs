@@ -220,6 +220,25 @@ fn parse_ztype(text: &str, struct_names: &[&str], enum_names: &[&str]) -> Result
     }
 }
 
+/// Whether `expr` evaluates to a freshly-allocated, unaliased array buffer (so a
+/// binding need not deep-copy it for value semantics): an array literal or an
+/// `*_array_empty` / `*_array_push` builtin result.
+fn is_fresh_array(expr: &MirExpr) -> bool {
+    match expr {
+        MirExpr::ArrayLiteral { .. } => true,
+        MirExpr::Call { callee, .. } => matches!(
+            callee.as_str(),
+            "int_array_empty"
+                | "int_array_push"
+                | "bool_array_empty"
+                | "bool_array_push"
+                | "string_array_empty"
+                | "string_array_push"
+        ),
+        _ => false,
+    }
+}
+
 /// The `{ i64 len, ptr data }` value type used for all arrays.
 fn array_struct_type(context: &Context) -> StructType {
     context.struct_type(
@@ -818,6 +837,23 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         }
     }
 
+    /// Like [`bind_value`] but skips the array deep-copy when `expr` already
+    /// produced a fresh, unaliased buffer (an array literal or an `*_array_*`
+    /// builtin result) — copying it would be pure waste. (Strings are never copied
+    /// regardless, being immutable.)
+    fn bind_owned(
+        &self,
+        expr: &MirExpr,
+        value: BasicValueEnum<'ctx>,
+        zt: &ZType,
+    ) -> BasicValueEnum<'ctx> {
+        if is_fresh_array(expr) {
+            value
+        } else {
+            self.bind_value(value, zt)
+        }
+    }
+
     /// Byte size of one element of `elem` (8 for Int, 16 for the `{len,ptr}` of
     /// String/array elements, etc.) as a runtime i64 (LLVM folds it to a constant).
     fn elem_bytes(&self, elem: &ZType) -> IntValue<'ctx> {
@@ -892,7 +928,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 // `x`), then allocate a fresh slot typed by the value and bind it —
                 // shadowing any outer binding until this scope ends.
                 let (v, vt) = self.lower_expr(value)?;
-                let v = self.bind_value(v, &vt);
+                let v = self.bind_owned(value, v, &vt);
                 let slot = self.entry_alloca(name, self.types.llvm(&vt));
                 self.builder.build_store(slot, v).unwrap();
                 self.locals.insert(name.clone(), (slot, vt));
@@ -900,7 +936,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             }
             MirStmt::Store { place, value } => {
                 let (v, vt) = self.lower_expr(value)?;
-                let v = self.bind_value(v, &vt);
+                let v = self.bind_owned(value, v, &vt);
                 let (slot, _) = self.resolve_place(place)?;
                 self.builder.build_store(slot, v).unwrap();
                 Ok(false)
@@ -1359,7 +1395,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let mut argv = Vec::with_capacity(args.len());
                 for arg in args {
                     let (v, vt) = self.lower_expr(arg)?;
-                    argv.push(self.bind_value(v, &vt).into());
+                    argv.push(self.bind_owned(arg, v, &vt).into());
                 }
                 let call = self.builder.build_call(function, &argv, "call").unwrap();
                 let ret = self
