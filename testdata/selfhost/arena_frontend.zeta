@@ -7620,7 +7620,11 @@ struct Tcx {
   men_variant_count: IntArray,
   mev_name: StringArray,
   mev_payload: StringArray,
+  // Dynamic local scope (grown as `let`s are emitted, snapshot/restored at block
+  // boundaries): name -> (alloca slot register, Zeta type). Shadowing is handled
+  // because each `let` gets a FRESH slot and the newest entry wins on lookup.
   loc_name: StringArray,
+  loc_slot: StringArray,
   loc_type: StringArray,
 }
 
@@ -7636,6 +7640,8 @@ struct Emit {
   tcx: Tcx,
   gcount: Int,
   globals: String,
+  slotctr: Int,
+  allocas: String,
 }
 
 // What a function emission yields: its `define` body plus the updated
@@ -7786,6 +7792,35 @@ fn scope_type(tcx: Tcx, name: String) -> String {
     }
   }
   return "Int";
+}
+
+// Alloca slot register of local / param `name`, newest-first.
+fn scope_slot(tcx: Tcx, name: String) -> String {
+  let mut i: Int = tcx.loc_name.len;
+  while i > 0 {
+    i = i - 1;
+    if tcx.loc_name[i] == name {
+      return tcx.loc_slot[i];
+    }
+  }
+  return "%missing.slot";
+}
+
+// Declare a local: allocate a fresh entry-block slot of `ty` and record the
+// name -> (slot, type) binding in the dynamic scope.
+fn scope_push(em: Emit, name: String, ty: String) -> Emit {
+  let mut e: Emit = em;
+  let slot: String = string_concat(string_concat("%v", int_to_string(e.slotctr)), ".slot");
+  e.slotctr = e.slotctr + 1;
+  e.allocas = string_concat(e.allocas, "  ");
+  e.allocas = string_concat(e.allocas, slot);
+  e.allocas = string_concat(e.allocas, " = alloca ");
+  e.allocas = string_concat(e.allocas, llvm_ty(e.tcx, ty));
+  e.allocas = string_concat(e.allocas, "\n");
+  e.tcx.loc_name = string_array_push(e.tcx.loc_name, name);
+  e.tcx.loc_slot = string_array_push(e.tcx.loc_slot, slot);
+  e.tcx.loc_type = string_array_push(e.tcx.loc_type, ty);
+  return e;
 }
 
 // Whether `ty` is a dynamic array. Arrays are the `%zarr = { i64 len, ptr data }`
@@ -8040,6 +8075,7 @@ fn tcx_global(arena: Arena, mir: Mir) -> Tcx {
     mev_name: mir.mev_name,
     mev_payload: mir.mev_payload,
     loc_name: string_array_empty(),
+    loc_slot: string_array_empty(),
     loc_type: string_array_empty(),
   };
 }
@@ -8264,7 +8300,7 @@ fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
     e.out = string_concat(e.out, " = load ");
     e.out = string_concat(e.out, llty);
     e.out = string_concat(e.out, ", ptr ");
-    e.out = string_concat(e.out, llvm_slot_ref(mir.me_text[node]));
+    e.out = string_concat(e.out, scope_slot(e.tcx, mir.me_text[node]));
     e.out = string_concat(e.out, "\n");
     return EmitVal { em: e, vref: rn };
   }
@@ -9253,7 +9289,7 @@ fn resolve_place(em: Emit, mir: Mir, place: Int) -> PlaceRef {
   let k: Int = mir.mpl_kind[place];
   if k == mir_place_local() {
     let nm: String = mir.mpl_name[place];
-    return PlaceRef { em: em, ptr: llvm_slot_ref(nm), ty: scope_type(em.tcx, nm) };
+    return PlaceRef { em: em, ptr: scope_slot(em.tcx, nm), ty: scope_type(em.tcx, nm) };
   }
   if k == mir_place_field() {
     let base: PlaceRef = resolve_place(em, mir, mir.mpl_base[place]);
@@ -9314,7 +9350,7 @@ fn resolve_place(em: Emit, mir: Mir, place: Int) -> PlaceRef {
     return PlaceRef { em: e, ptr: p, ty: elem };
   }
   // unreachable in this slice.
-  return PlaceRef { em: em, ptr: llvm_slot_ref(mir.mpl_name[place]), ty: "Int" };
+  return PlaceRef { em: em, ptr: scope_slot(em.tcx, mir.mpl_name[place]), ty: "Int" };
 }
 
 // The i64 switch-case constant for a concrete match pattern (variant tag /
@@ -9337,13 +9373,13 @@ fn pattern_case_const(tcx: Tcx, pat: String) -> Int {
 // (Int/Bool from p0, String reconstructed from (p0, p1)).
 fn emit_match_binding(em: Emit, mir: Mir, scrut: String, scrut_ty: String, pat: String) -> Emit {
   if string_starts_with(pat, "name:") {
-    let mut e: Emit = em;
+    let mut e: Emit = scope_push(em, pattern_binding(pat), scrut_ty);
     e.out = string_concat(e.out, "  store ");
     e.out = string_concat(e.out, llvm_ty(e.tcx, scrut_ty));
     e.out = string_concat(e.out, " ");
     e.out = string_concat(e.out, scrut);
     e.out = string_concat(e.out, ", ptr ");
-    e.out = string_concat(e.out, llvm_slot_ref(pattern_binding(pat)));
+    e.out = string_concat(e.out, scope_slot(e.tcx, pattern_binding(pat)));
     e.out = string_concat(e.out, "\n");
     return e;
   }
@@ -9351,7 +9387,7 @@ fn emit_match_binding(em: Emit, mir: Mir, scrut: String, scrut_ty: String, pat: 
     let bnd: String = pattern_binding(pat);
     if string_len(bnd) > 0 {
       let pty: String = variant_payload_type(em.tcx, pattern_variant_enum(pat), pattern_variant_name(pat));
-      let mut e: Emit = em;
+      let mut e: Emit = scope_push(em, bnd, pty);
       let rp0: Int = e.reg;
       e.reg = e.reg + 1;
       let p0: String = llvm_reg_name(rp0);
@@ -9374,13 +9410,13 @@ fn emit_match_binding(em: Emit, mir: Mir, scrut: String, scrut_ty: String, pat: 
         e.out = string_concat(e.out, "  store %zstr ");
         e.out = string_concat(e.out, s.vref);
         e.out = string_concat(e.out, ", ptr ");
-        e.out = string_concat(e.out, llvm_slot_ref(bnd));
+        e.out = string_concat(e.out, scope_slot(e.tcx, bnd));
         e.out = string_concat(e.out, "\n");
       } else {
         e.out = string_concat(e.out, "  store i64 ");
         e.out = string_concat(e.out, p0);
         e.out = string_concat(e.out, ", ptr ");
-        e.out = string_concat(e.out, llvm_slot_ref(bnd));
+        e.out = string_concat(e.out, scope_slot(e.tcx, bnd));
         e.out = string_concat(e.out, "\n");
       }
       return e;
@@ -9392,15 +9428,19 @@ fn emit_match_binding(em: Emit, mir: Mir, scrut: String, scrut_ty: String, pat: 
 fn llvm_stmt(em: Emit, mir: Mir, sidx: Int, brk: Int, cont: Int) -> Emit {
   let kind: Int = mir.ms_kind[sidx];
   if kind == mir_local_stmt() {
-    let llty: String = llvm_ty(em.tcx, scope_type(em.tcx, mir.ms_name[sidx]));
+    // Type from annotation, else inferred from the initializer.
+    let mut ty: String = type_of_expr(em.tcx, mir, mir.ms_expr[sidx]);
+    if mir.ms_has_type[sidx] == 1 {
+      ty = mir.ms_type[sidx];
+    }
     let v: EmitVal = emit_bind(em, mir, mir.ms_expr[sidx]);
-    let mut e: Emit = v.em;
+    let mut e: Emit = scope_push(v.em, mir.ms_name[sidx], ty);
     e.out = string_concat(e.out, "  store ");
-    e.out = string_concat(e.out, llty);
+    e.out = string_concat(e.out, llvm_ty(e.tcx, ty));
     e.out = string_concat(e.out, " ");
     e.out = string_concat(e.out, v.vref);
     e.out = string_concat(e.out, ", ptr ");
-    e.out = string_concat(e.out, llvm_slot_ref(mir.ms_name[sidx]));
+    e.out = string_concat(e.out, scope_slot(e.tcx, mir.ms_name[sidx]));
     e.out = string_concat(e.out, "\n");
     return e;
   }
@@ -9586,6 +9626,9 @@ fn llvm_stmt(em: Emit, mir: Mir, sidx: Int, brk: Int, cont: Int) -> Emit {
     let mut any_fall: Int = 0;
     ai = 0;
     while ai < acount {
+      let an: StringArray = e.tcx.loc_name;
+      let asl: StringArray = e.tcx.loc_slot;
+      let at: StringArray = e.tcx.loc_type;
       e = llvm_open_block(e, arm_ids[ai]);
       e = emit_match_binding(e, mir, sval.vref, scrut_ty, mir.marm_pattern[astart + ai]);
       e = llvm_block(e, mir, mir.marm_body_start[astart + ai], mir.marm_body_count[astart + ai], brk, cont);
@@ -9593,6 +9636,9 @@ fn llvm_stmt(em: Emit, mir: Mir, sidx: Int, brk: Int, cont: Int) -> Emit {
         any_fall = 1;
         e = llvm_branch(e, end_id);
       }
+      e.tcx.loc_name = an;
+      e.tcx.loc_slot = asl;
+      e.tcx.loc_type = at;
       ai = ai + 1;
     }
     if any_fall == 1 {
@@ -9606,12 +9652,16 @@ fn llvm_stmt(em: Emit, mir: Mir, sidx: Int, brk: Int, cont: Int) -> Emit {
     // for i in start..end: store start into i's slot, eval end once, loop with
     // i < end; continue increments (the latch), break exits.
     let nm: String = mir.ms_name[sidx];
-    let startv: EmitVal = llvm_expr(em, mir, mir.ms_expr[sidx]);
-    let mut e: Emit = startv.em;
+    let fsn: StringArray = em.tcx.loc_name;
+    let fss: StringArray = em.tcx.loc_slot;
+    let fst: StringArray = em.tcx.loc_type;
+    let mut e: Emit = scope_push(em, nm, "Int");
+    let startv: EmitVal = llvm_expr(e, mir, mir.ms_expr[sidx]);
+    e = startv.em;
     e.out = string_concat(e.out, "  store i64 ");
     e.out = string_concat(e.out, startv.vref);
     e.out = string_concat(e.out, ", ptr ");
-    e.out = string_concat(e.out, llvm_slot_ref(nm));
+    e.out = string_concat(e.out, scope_slot(e.tcx, nm));
     e.out = string_concat(e.out, "\n");
     let endv: EmitVal = llvm_expr(e, mir, mir.ms_expr2[sidx]);
     e = endv.em;
@@ -9631,7 +9681,7 @@ fn llvm_stmt(em: Emit, mir: Mir, sidx: Int, brk: Int, cont: Int) -> Emit {
     e.out = string_concat(e.out, "  ");
     e.out = string_concat(e.out, iv);
     e.out = string_concat(e.out, " = load i64, ptr ");
-    e.out = string_concat(e.out, llvm_slot_ref(nm));
+    e.out = string_concat(e.out, scope_slot(e.tcx, nm));
     e.out = string_concat(e.out, "\n");
     let rc: Int = e.reg;
     e.reg = e.reg + 1;
@@ -9665,7 +9715,7 @@ fn llvm_stmt(em: Emit, mir: Mir, sidx: Int, brk: Int, cont: Int) -> Emit {
     e.out = string_concat(e.out, "  ");
     e.out = string_concat(e.out, iv2);
     e.out = string_concat(e.out, " = load i64, ptr ");
-    e.out = string_concat(e.out, llvm_slot_ref(nm));
+    e.out = string_concat(e.out, scope_slot(e.tcx, nm));
     e.out = string_concat(e.out, "\n  ");
     e.out = string_concat(e.out, nn);
     e.out = string_concat(e.out, " = add i64 ");
@@ -9673,17 +9723,25 @@ fn llvm_stmt(em: Emit, mir: Mir, sidx: Int, brk: Int, cont: Int) -> Emit {
     e.out = string_concat(e.out, ", 1\n  store i64 ");
     e.out = string_concat(e.out, nn);
     e.out = string_concat(e.out, ", ptr ");
-    e.out = string_concat(e.out, llvm_slot_ref(nm));
+    e.out = string_concat(e.out, scope_slot(e.tcx, nm));
     e.out = string_concat(e.out, "\n");
     e = llvm_branch(e, head_id);
     e = llvm_open_block(e, end_id);
+    e.tcx.loc_name = fsn;
+    e.tcx.loc_slot = fss;
+    e.tcx.loc_type = fst;
     return e;
   }
   if kind == mir_for_in_stmt() {
     // for x in arr: index from 0 to len, binding x = data[i].
     let nm: String = mir.ms_name[sidx];
-    let elemll: String = llvm_ty(em.tcx, array_elem_type(type_of_expr(em.tcx, mir, mir.ms_expr[sidx])));
-    let arrv: EmitVal = llvm_expr(em, mir, mir.ms_expr[sidx]);
+    let elem_ty: String = array_elem_type(type_of_expr(em.tcx, mir, mir.ms_expr[sidx]));
+    let elemll: String = llvm_ty(em.tcx, elem_ty);
+    let isn: StringArray = em.tcx.loc_name;
+    let iss: StringArray = em.tcx.loc_slot;
+    let ist: StringArray = em.tcx.loc_type;
+    let estep: Emit = scope_push(em, nm, elem_ty);
+    let arrv: EmitVal = llvm_expr(estep, mir, mir.ms_expr[sidx]);
     let mut e: Emit = arrv.em;
     let rl: Int = e.reg;
     e.reg = e.reg + 1;
@@ -9769,7 +9827,7 @@ fn llvm_stmt(em: Emit, mir: Mir, sidx: Int, brk: Int, cont: Int) -> Emit {
     e.out = string_concat(e.out, " ");
     e.out = string_concat(e.out, elem);
     e.out = string_concat(e.out, ", ptr ");
-    e.out = string_concat(e.out, llvm_slot_ref(nm));
+    e.out = string_concat(e.out, scope_slot(e.tcx, nm));
     e.out = string_concat(e.out, "\n");
     e = llvm_block(e, mir, mir.ms_then_start[sidx], mir.ms_then_count[sidx], end_id, latch_id);
     if e.term == 0 {
@@ -9797,10 +9855,16 @@ fn llvm_stmt(em: Emit, mir: Mir, sidx: Int, brk: Int, cont: Int) -> Emit {
     e.out = string_concat(e.out, "\n");
     e = llvm_branch(e, head_id);
     e = llvm_open_block(e, end_id);
+    e.tcx.loc_name = isn;
+    e.tcx.loc_slot = iss;
+    e.tcx.loc_type = ist;
     return e;
   }
   if kind == mir_for_c_stmt() {
     // for (init; cond; step): init once, loop on cond, continue runs step.
+    let csn: StringArray = em.tcx.loc_name;
+    let css: StringArray = em.tcx.loc_slot;
+    let cst: StringArray = em.tcx.loc_type;
     let mut e: Emit = llvm_stmt(em, mir, mir.ms_init[sidx], 0, 0);
     let head_id: Int = e.block;
     e.block = e.block + 1;
@@ -9832,6 +9896,9 @@ fn llvm_stmt(em: Emit, mir: Mir, sidx: Int, brk: Int, cont: Int) -> Emit {
     e = llvm_stmt(e, mir, mir.ms_step[sidx], 0, 0);
     e = llvm_branch(e, head_id);
     e = llvm_open_block(e, end_id);
+    e.tcx.loc_name = csn;
+    e.tcx.loc_slot = css;
+    e.tcx.loc_type = cst;
     return e;
   }
   return em;
@@ -9839,6 +9906,11 @@ fn llvm_stmt(em: Emit, mir: Mir, sidx: Int, brk: Int, cont: Int) -> Emit {
 
 fn llvm_block(em: Emit, mir: Mir, start: Int, count: Int, brk: Int, cont: Int) -> Emit {
   let mut e: Emit = em;
+  // Snapshot the scope so locals declared in this block fall out of scope at its
+  // end (value-semantics copy; slotctr / allocas keep accumulating).
+  let saved_name: StringArray = e.tcx.loc_name;
+  let saved_slot: StringArray = e.tcx.loc_slot;
+  let saved_type: StringArray = e.tcx.loc_type;
   let mut i: Int = 0;
   while i < count {
     if e.term == 0 {
@@ -9846,6 +9918,9 @@ fn llvm_block(em: Emit, mir: Mir, start: Int, count: Int, brk: Int, cont: Int) -
     }
     i = i + 1;
   }
+  e.tcx.loc_name = saved_name;
+  e.tcx.loc_slot = saved_slot;
+  e.tcx.loc_type = saved_type;
   return e;
 }
 
@@ -9923,68 +9998,50 @@ fn llvm_collect_locals(mir: Mir, start: Int, count: Int, names: StringArray) -> 
 }
 
 fn llvm_emit_function(mir: Mir, g: Tcx, fi: Int, gcount_in: Int, globals_in: String) -> FnResult {
-  let tcx: Tcx = tcx_with_scope(g, mir, fi);
   let mut retty: String = "void";
   if mir.mf_has_ret[fi] == 1 {
-    retty = llvm_ty(tcx, mir.mf_ret[fi]);
+    retty = llvm_ty(g, mir.mf_ret[fi]);
   }
-  let mut o: String = string_concat("", "define ");
-  o = string_concat(o, retty);
-  o = string_concat(o, " @z_");
-  o = string_concat(o, mir.mf_name[fi]);
-  o = string_concat(o, "(");
+  let mut sig: String = string_concat("define ", retty);
+  sig = string_concat(sig, " @z_");
+  sig = string_concat(sig, mir.mf_name[fi]);
+  sig = string_concat(sig, "(");
   let pstart: Int = mir.mf_param_start[fi];
   let pcount: Int = mir.mf_param_count[fi];
   let mut pi: Int = 0;
   while pi < pcount {
     if pi > 0 {
-      o = string_concat(o, ", ");
+      sig = string_concat(sig, ", ");
     }
-    o = string_concat(o, llvm_ty(tcx, mir.mp_type[pstart + pi]));
-    o = string_concat(o, " %");
-    o = string_concat(o, mir.mp_name[pstart + pi]);
-    o = string_concat(o, ".arg");
+    sig = string_concat(sig, llvm_ty(g, mir.mp_type[pstart + pi]));
+    sig = string_concat(sig, " %");
+    sig = string_concat(sig, mir.mp_name[pstart + pi]);
+    sig = string_concat(sig, ".arg");
     pi = pi + 1;
   }
-  o = string_concat(o, ") {\n");
-  // Entry block: alloca every param slot, then every distinct local slot.
+  sig = string_concat(sig, ") {\n");
+  // Fresh per-function emitter: empty dynamic scope, empty entry-alloca buffer.
+  let mut em: Emit = Emit { out: "", reg: 0, block: 0, term: 0, tcx: g, gcount: gcount_in, globals: globals_in, slotctr: 0, allocas: "" };
+  // Each param gets a slot (via scope_push) and its incoming value stored in.
   pi = 0;
   while pi < pcount {
-    o = string_concat(o, "  ");
-    o = string_concat(o, llvm_slot_ref(mir.mp_name[pstart + pi]));
-    o = string_concat(o, " = alloca ");
-    o = string_concat(o, llvm_ty(tcx, mir.mp_type[pstart + pi]));
-    o = string_concat(o, "\n");
-    pi = pi + 1;
-  }
-  let mut locals: StringArray = string_array_empty();
-  locals = llvm_collect_locals(mir, mir.mf_body_start[fi], mir.mf_body_count[fi], locals);
-  let mut li: Int = 0;
-  while li < locals.len {
-    o = string_concat(o, "  ");
-    o = string_concat(o, llvm_slot_ref(locals[li]));
-    o = string_concat(o, " = alloca ");
-    o = string_concat(o, llvm_ty(tcx, scope_type(tcx, locals[li])));
-    o = string_concat(o, "\n");
-    li = li + 1;
-  }
-  // Store each incoming param value into its slot.
-  pi = 0;
-  while pi < pcount {
-    o = string_concat(o, "  store ");
-    o = string_concat(o, llvm_ty(tcx, mir.mp_type[pstart + pi]));
-    o = string_concat(o, " %");
-    o = string_concat(o, mir.mp_name[pstart + pi]);
-    o = string_concat(o, ".arg, ptr ");
-    o = string_concat(o, llvm_slot_ref(mir.mp_name[pstart + pi]));
-    o = string_concat(o, "\n");
+    let pty: String = mir.mp_type[pstart + pi];
+    em = scope_push(em, mir.mp_name[pstart + pi], pty);
+    em.out = string_concat(em.out, "  store ");
+    em.out = string_concat(em.out, llvm_ty(em.tcx, pty));
+    em.out = string_concat(em.out, " %");
+    em.out = string_concat(em.out, mir.mp_name[pstart + pi]);
+    em.out = string_concat(em.out, ".arg, ptr ");
+    em.out = string_concat(em.out, scope_slot(em.tcx, mir.mp_name[pstart + pi]));
+    em.out = string_concat(em.out, "\n");
     pi = pi + 1;
   }
   // Body. break / continue targets default to 0 (never branched to outside a
   // loop; the verifier guarantees break / continue appear only inside one).
-  let mut em: Emit = Emit { out: o, reg: 0, block: 0, term: 0, tcx: tcx, gcount: gcount_in, globals: globals_in };
   em = llvm_block(em, mir, mir.mf_body_start[fi], mir.mf_body_count[fi], 0, 0);
-  let mut body: String = em.out;
+  // Entry-block allocas first, then param stores + body.
+  let mut body: String = string_concat(sig, em.allocas);
+  body = string_concat(body, em.out);
   if em.term == 0 {
     if mir.mf_has_ret[fi] == 1 {
       if retty == "i64" {

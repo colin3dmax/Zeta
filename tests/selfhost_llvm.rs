@@ -844,3 +844,75 @@ fn main() -> Int {
     // ys keeps 2, xs grows to 3
     assert_eq!(check(src), 23);
 }
+
+// --- slice 8: block scoping (same name, different type in disjoint branches) ---
+
+#[test]
+fn shadowed_local_different_types() {
+    let src = "\
+struct Foo { x: Int }
+fn f(c: Bool) -> Int {
+  if c {
+    let v: Foo = Foo { x: 5 };
+    return v.x;
+  } else {
+    let v: Int = 9;
+    return v;
+  }
+}
+fn main() -> Int { return f(true) + f(false); }";
+    // f(true)=5, f(false)=9
+    assert_eq!(check(src), 14);
+}
+
+#[test]
+fn shadowed_local_array_then_scalar() {
+    let src = "\
+import std.core;
+fn g(c: Bool) -> Int {
+  if c {
+    let v: IntArray = [3, 4, 5];
+    return v.len;
+  } else {
+    let v: String = \"hello\";
+    return string_len(v);
+  }
+}
+fn main() -> Int { return g(true) * 10 + g(false); }";
+    // g(true)=3, g(false)=5
+    assert_eq!(check(src), 35);
+}
+
+/// Capstone probe: emit LLVM IR for the ENTIRE self-hosting frontend via the
+/// Zeta-side codegen (`compile(frontend, "llvm")`) and assert clang compiles it
+/// to an object. Proves the Zeta emitter covers every construct the frontend
+/// uses (no unsupported expression falls back to garbage IR).
+#[test]
+#[ignore]
+fn frontend_emits_compilable_ir() {
+    let ir = emit_ir(FRONTEND_SOURCE);
+    assert!(
+        ir.len() > 50_000,
+        "emitted IR is suspiciously small ({} bytes) — emission likely failed",
+        ir.len()
+    );
+    let id = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("zeta_frontend_{}_{}", std::process::id(), id));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let ll = dir.join("frontend.ll");
+    std::fs::write(&ll, &ir).expect("write frontend.ll");
+    let obj = dir.join("frontend.o");
+    let out = Command::new(clang_path())
+        .arg("-c")
+        .arg(&ll)
+        .arg("-o")
+        .arg(&obj)
+        .output()
+        .expect("invoke clang");
+    assert!(
+        out.status.success(),
+        "clang failed to compile the frontend IR:\n{}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
