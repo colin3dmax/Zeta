@@ -162,6 +162,45 @@ fn main() -> Int {
 }
 
 #[test]
+fn string_eq_equal_and_unequal() {
+    let src = "\
+fn eq(a: String, b: String) -> Int { if a == b { return 1; } return 0; }
+fn main() -> Int {
+  // equal; different length; same length different bytes; empty==empty
+  return eq(\"abc\", \"abc\") * 1000
+       + eq(\"abc\", \"ab\") * 100
+       + eq(\"abc\", \"abd\") * 10
+       + eq(\"\", \"\");
+}";
+    // 1, 0, 0, 1
+    assert_eq!(check(src), 1001);
+}
+
+#[test]
+fn string_neq() {
+    let src = "\
+fn main() -> Int {
+  let s: String = string_concat(\"foo\", \"bar\");
+  if s != \"foobar\" { return 7; }
+  if s != \"foobaz\" { return 9; }
+  return 0;
+}";
+    // s == \"foobar\" so first != is false; s != \"foobaz\" is true → 9
+    assert_eq!(check(src), 9);
+}
+
+#[test]
+fn string_eq_after_concat_dynamic() {
+    let src = "\
+fn main() -> Int {
+  let a: String = string_concat(int_to_string(12), int_to_string(34));
+  if a == \"1234\" { return 42; }
+  return 0;
+}";
+    assert_eq!(check(src), 42);
+}
+
+#[test]
 fn int_to_string_zero() {
     let src = "\
 fn main() -> Int {
