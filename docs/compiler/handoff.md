@@ -55,9 +55,15 @@ cargo test --release --test selfhost_fixpoint -- --ignored
 native 后端覆盖 Int/Bool/struct/array/**string**(值语义)。要 AOT 编译完整自举前端,还需补:
 
 1. ~~**string codegen**~~ ✅ **已完成(三切片)**:`ZType::Str`=`{i64 len, ptr<i8>}`(复用 array 布局);**string 不可变 → 共享只读 buffer,bind 点无需深拷贝**;字面量(global const)+ `string_len`/`string_byte_at`/`string_byte_slice`/`string_concat`(malloc+memcpy)+ `int_to_string`(libc snprintf)+ `ascii_is_*`(纯 i64 比较)。std builtin 在 `lower_builtin` 拦截。门禁 `tests/codegen_string.rs`(19 用例)。
-2. **enum codegen**(下一步):tagged union = `{ i64 tag, <payload> }`(payload 取最大变体大小,或简化为单 payload 槽)。`EnumVariant` 构造、`FieldAccess`/match 取 tag+payload。
-3. **match codegen**:对 enum tag 做 `switch` + 每 arm 绑定 payload 到 local;穷尽性已由 typecheck 保证。
-4. 之后:`codegen` 把整个 `arena_frontend.zeta` AOT 成二进制 → 真正的自举闭环(脱离 Stage0 解释器);NativeService 支持 struct 状态(ABI 杂,低优先)。
+2. ~~**enum codegen**~~ ✅ **已完成(E1)**:tagged union `{ i64 tag, i64 payload }`(Int/无 payload 变体)。`EnumVariant` 构造;`MirStmt::Match`→`lower_match` 对 i64 scrutinee(enum tag / Int/Bool 值)建 LLVM `switch`,catch-all 作 default、穷尽无 catch-all 时 default=`unreachable`。门禁 `tests/codegen_enum.rs`(11 用例)。
+3. ~~**match codegen**~~ ✅ 同上(与 enum 同切片完成)。
+
+**native subset 语言核心广度(标量/struct/array/string/enum/match)已完整。** 通往"AOT 整个 `arena_frontend.zeta` 走真闭环"的剩余项,实测前端用量,每个都是独立工程:
+   - **for 循环(70 处)**:`ForRange`/`ForIn` codegen,纯控制流像 `while`,最干净高复用 —— **建议下一步**。
+   - **动态数组(`_array_push`/`_empty` 551 处)**:可增长数组,当前 array 是定长 malloc,需 realloc/push + 值语义重做(大)。
+   - **文件 IO builtin**(`file_read_to_string`/`path_join`/`path_basename`/`diagnostic_format`):需运行时支持且有副作用,差分测试不易。
+   - **String-payload enum**(E2):加宽 payload 槽以放 `{len,ptr}`。
+   - NativeService struct 状态(ABI 杂,低优先)。
 
 **每步都用解释器 `run_mir` 作差分 oracle**(见 tests/codegen_*.rs 的 `check()` 范式),feature-gated,不影响默认构建。
 
