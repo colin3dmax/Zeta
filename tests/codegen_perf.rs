@@ -62,60 +62,71 @@ fn optimized_native_matches_interpreter() {
     assert_eq!(native, oracle, "optimized native bench(1000) must match interpreter");
 }
 
+/// Compile the C bench with `flags`, run it with `n`, return (elapsed_ns, result).
+fn run_c(flags: &[&str], n: i64) -> (i64, i64) {
+    let dir = std::env::temp_dir();
+    let c_path = dir.join("zeta_bench.c");
+    let bin_path = dir.join(format!("zeta_bench_c_{}", flags.join("_").replace('-', "")));
+    std::fs::File::create(&c_path)
+        .unwrap()
+        .write_all(C_BENCH.as_bytes())
+        .unwrap();
+    let ok = Command::new("cc")
+        .args(flags)
+        .arg("-o")
+        .arg(&bin_path)
+        .arg(&c_path)
+        .status()
+        .expect("cc should run")
+        .success();
+    assert!(ok, "C bench should compile with {flags:?}");
+    let out = Command::new(&bin_path)
+        .arg(n.to_string())
+        .output()
+        .expect("C bench should run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let mut parts = stderr.split_whitespace();
+    let ns: i64 = parts.next().unwrap().parse().unwrap();
+    let result: i64 = parts.next().unwrap().parse().unwrap();
+    (ns, result)
+}
+
 #[test]
 #[ignore = "perf comparison; run with --ignored --nocapture"]
 fn native_vs_c_hot_loop() {
     const N: i64 = 500_000_000;
     let program = zeta::lower_source(ZETA_BENCH).unwrap();
 
-    // --- Zeta → LLVM → native (call timed, compilation excluded) ---
+    // Zeta → LLVM → native (call timed, compilation excluded). Zeta Int is
+    // WRAPPING (matches the interpreter), so codegen emits no `nsw`.
     let (native_result, native_dt) =
         zeta::codegen::jit_time_i64_arg(&program, &[], "bench", N).expect("native bench");
-
-    // --- hand-written C at cc -O2 ---
-    let dir = std::env::temp_dir();
-    let c_path = dir.join("zeta_bench.c");
-    let bin_path = dir.join("zeta_bench_c");
-    std::fs::File::create(&c_path)
-        .unwrap()
-        .write_all(C_BENCH.as_bytes())
-        .unwrap();
-    let compile = Command::new("cc")
-        .args(["-O2", "-o"])
-        .arg(&bin_path)
-        .arg(&c_path)
-        .status()
-        .expect("cc should run");
-    assert!(compile.success(), "C bench should compile");
-    let run = Command::new(&bin_path)
-        .arg(N.to_string())
-        .output()
-        .expect("C bench should run");
-    let stderr = String::from_utf8_lossy(&run.stderr);
-    let mut parts = stderr.split_whitespace();
-    let c_ns: i64 = parts.next().unwrap().parse().unwrap();
-    let c_result: i64 = parts.next().unwrap().parse().unwrap();
-
-    // --- correctness across all three ---
-    assert_eq!(native_result, c_result, "native and C must agree");
-
     let native_ns = native_dt.as_nanos() as f64;
-    let c_ns = c_ns as f64;
-    let ratio = native_ns / c_ns;
 
+    // C at -O2 exploits signed-overflow UB (assumes no wrap) — a transform Zeta's
+    // defined wrapping semantics forbid. C at -O2 -fwrapv defines overflow as
+    // wrapping, i.e. the SAME semantics as Zeta: the apples-to-apples baseline.
+    let (c_o2_ns, c_o2_res) = run_c(&["-O2"], N);
+    let (c_wrap_ns, c_wrap_res) = run_c(&["-O2", "-fwrapv"], N);
+
+    assert_eq!(native_result, c_o2_res, "native and C(-O2) must agree");
+    assert_eq!(native_result, c_wrap_res, "native and C(-fwrapv) must agree");
+
+    let c_o2 = c_o2_ns as f64;
+    let c_wrap = c_wrap_ns as f64;
     println!("\n=== hot Int loop, n={N} (result={native_result}) ===");
-    println!("  C (cc -O2)        : {:>9.2} ms", c_ns / 1e6);
-    println!("  Zeta→LLVM native  : {:>9.2} ms", native_ns / 1e6);
-    println!("  native / C ratio  : {ratio:.2}x");
-    println!(
-        "  per-iteration     : C {:.3} ns | native {:.3} ns",
-        c_ns / N as f64,
-        native_ns / N as f64
-    );
+    println!("  C (-O2, UB no-wrap) : {:>9.2} ms  ({:.3} ns/iter)", c_o2 / 1e6, c_o2 / N as f64);
+    println!("  C (-O2 -fwrapv)     : {:>9.2} ms  ({:.3} ns/iter)", c_wrap / 1e6, c_wrap / N as f64);
+    println!("  Zeta→LLVM native    : {:>9.2} ms  ({:.3} ns/iter)", native_ns / 1e6, native_ns / N as f64);
+    println!("  native / C(-O2)     : {:.2}x", native_ns / c_o2);
+    println!("  native / C(-fwrapv) : {:.2}x  <- same (wrapping) semantics", native_ns / c_wrap);
 
-    // Sanity gate: native should be in the same ballpark as C (not interpreted).
+    // The honest gate: against C with MATCHING (wrapping) semantics, native is
+    // C-class. (Against -O2's UB-based transforms it may be slower — by design,
+    // since Zeta's Int wraps.)
     assert!(
-        ratio < 3.0,
-        "native is {ratio:.2}x slower than C — expected ~1x (same LLVM backend)"
+        native_ns / c_wrap < 1.5,
+        "native is {:.2}x slower than C(-fwrapv) — should be ~1x at matching semantics",
+        native_ns / c_wrap
     );
 }
