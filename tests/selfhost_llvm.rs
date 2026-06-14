@@ -325,3 +325,83 @@ fn main() -> Int {
     // p stays {1,2}; q becomes {99,2}
     assert_eq!(check(src), 109);
 }
+
+// --- slice 3: IntArray codegen (literal / index / len / push / value copy) ---
+
+#[test]
+fn array_literal_index_and_len() {
+    let src = "\
+fn main() -> Int {
+  let xs: IntArray = [10, 20, 30];
+  return xs.len * 1000 + xs[0] + xs[2];
+}";
+    assert_eq!(check(src), 3040);
+}
+
+#[test]
+fn array_index_write() {
+    let src = "\
+fn main() -> Int {
+  let mut xs: IntArray = [1, 2, 3];
+  xs[1] = 99;
+  return xs[0] + xs[1] + xs[2];
+}";
+    assert_eq!(check(src), 103);
+}
+
+#[test]
+fn array_empty_push_and_sum() {
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let mut xs: IntArray = int_array_empty();
+  let mut i: Int = 0;
+  while i < 5 { xs = int_array_push(xs, i * i); i = i + 1; }
+  let mut s: Int = 0;
+  let mut j: Int = 0;
+  while j < xs.len { s = s + xs[j]; j = j + 1; }
+  return s * 100 + xs.len;
+}";
+    // squares 0+1+4+9+16 = 30, len 5
+    assert_eq!(check(src), 3005);
+}
+
+#[test]
+fn array_assignment_is_value_copy() {
+    let src = "\
+fn main() -> Int {
+  let xs: IntArray = [1, 2, 3];
+  let mut ys: IntArray = xs;
+  ys[0] = 99;
+  return xs[0] * 10 + ys[0];
+}";
+    // xs[0] stays 1; ys[0] becomes 99
+    assert_eq!(check(src), 109);
+}
+
+#[test]
+fn array_param_read() {
+    let src = "\
+fn sum2(a: IntArray) -> Int { return a[0] + a[1]; }
+fn main() -> Int {
+  let xs: IntArray = [7, 8];
+  return sum2(xs);
+}";
+    assert_eq!(check(src), 15);
+}
+
+#[test]
+fn array_copy_independent_of_later_push() {
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let mut xs: IntArray = int_array_empty();
+  xs = int_array_push(xs, 1);
+  xs = int_array_push(xs, 2);
+  let ys: IntArray = xs;
+  xs = int_array_push(xs, 3);
+  return ys.len * 10 + xs.len;
+}";
+    // ys keeps [1,2] (len 2); xs grows to [1,2,3] (len 3)
+    assert_eq!(check(src), 23);
+}
