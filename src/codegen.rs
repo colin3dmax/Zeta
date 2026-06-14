@@ -16,7 +16,8 @@
 //! Supported subset: Int/Bool (i64), arithmetic/bitwise/comparison/logical, unary
 //! ops, `let`/assignment, `if`/`while`/`break`/`continue`, user calls + recursion,
 //! and **structs** (value semantics): struct literals, field read/write, struct
-//! locals/params/returns, nesting. Arrays/strings/enums/match/for still `Err`.
+//! locals/params/returns, nesting. Strings (immutable `{len, ptr<i8>}`): literals,
+//! `string_len`, `string_byte_at`. Enums/match/for still `Err`.
 
 use crate::ast::{BinaryOp, StructDecl, UnaryOp};
 use crate::mir::{MirExpr, MirPlace, MirStmt, Program};
@@ -67,6 +68,13 @@ enum ZType {
     /// assignment / argument), so each owner has its own buffer — observably
     /// identical to the interpreter's copy-on-write. Only Int elements for now.
     Array(Box<ZType>),
+    /// A string, represented at runtime as `{ i64 len, ptr<i8> data }` — the same
+    /// `{len, ptr}` layout as [`ZType::Array`], but `data` points at a byte buffer
+    /// and `len` is the byte count. Zeta strings are IMMUTABLE (no `s[i] = ...`),
+    /// so multiple owners can share one read-only buffer — no deep copy at binding
+    /// points is needed. Literals lower to a private global constant; `concat` /
+    /// `byte_slice` allocate fresh malloc'd buffers.
+    Str,
 }
 
 /// Per-struct layout: field name → index (declaration order) and each field's
@@ -132,7 +140,7 @@ impl<'ctx> Types<'ctx> {
         match zt {
             ZType::Int => self.context.i64_type().into(),
             ZType::Struct(name) => self.structs[name].ty.into(),
-            ZType::Array(_) => array_struct_type(self.context).into(),
+            ZType::Array(_) | ZType::Str => array_struct_type(self.context).into(),
         }
     }
 
@@ -153,9 +161,22 @@ fn parse_ztype(text: &str, struct_names: &[&str]) -> Result<ZType, String> {
     match text {
         "Int" | "Bool" => Ok(ZType::Int),
         "Unit" => Ok(ZType::Int),
+        "String" => Ok(ZType::Str),
         "IntArray" => Ok(ZType::Array(Box::new(ZType::Int))),
         name if struct_names.contains(&name) => Ok(ZType::Struct(name.to_string())),
         other => Err(format!("type `{other}` not in the native subset")),
+    }
+}
+
+/// Return type of a std builtin understood by the native backend, or `None` if
+/// `callee` is not a (supported) builtin — then it must be a user function. Kept
+/// in sync with [`FnLower::lower_builtin`] and `runtime::is_std_builtin`.
+fn builtin_return_type(callee: &str) -> Option<ZType> {
+    match callee {
+        "string_len" | "string_byte_at" | "ascii_is_digit" | "ascii_is_alpha"
+        | "ascii_is_alnum" | "ascii_is_whitespace" => Some(ZType::Int),
+        "string_concat" | "string_byte_slice" | "int_to_string" => Some(ZType::Str),
+        _ => None,
     }
 }
 
@@ -178,7 +199,7 @@ fn llvm_type_of<'ctx>(
     match zt {
         ZType::Int => context.i64_type().into(),
         ZType::Struct(name) => opaque[name].into(),
-        ZType::Array(_) => array_struct_type(context).into(),
+        ZType::Array(_) | ZType::Str => array_struct_type(context).into(),
     }
 }
 
@@ -521,6 +542,7 @@ fn infer_expr_type(
             .get(name)
             .cloned()
             .ok_or_else(|| format!("type of unknown local `{name}`"))?,
+        MirExpr::String(_) => ZType::Str,
         MirExpr::StructLiteral { ty, .. } => ZType::Struct(ty.clone()),
         MirExpr::ArrayLiteral { .. } => ZType::Array(Box::new(ZType::Int)),
         MirExpr::Index { base, .. } => match infer_expr_type(base, types, env)? {
@@ -535,11 +557,14 @@ fn infer_expr_type(
                 _ => return Err("field access on non-struct".into()),
             }
         }
-        MirExpr::Call { callee, .. } => types
-            .returns
-            .get(callee)
-            .cloned()
-            .ok_or_else(|| format!("unknown function `{callee}`"))?,
+        MirExpr::Call { callee, .. } => match builtin_return_type(callee) {
+            Some(zt) => zt,
+            None => types
+                .returns
+                .get(callee)
+                .cloned()
+                .ok_or_else(|| format!("unknown function `{callee}`"))?,
+        },
         _ => return Err("expression not in the native subset".into()),
     })
 }
@@ -622,7 +647,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         match zt {
             ZType::Int => self.i64t().const_zero().into(),
             ZType::Struct(name) => self.types.structs[name].ty.const_zero().into(),
-            ZType::Array(_) => array_struct_type(self.context).const_zero().into(),
+            ZType::Array(_) | ZType::Str => array_struct_type(self.context).const_zero().into(),
         }
     }
 
@@ -868,6 +893,9 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 Ok((self.lower_binary(*op, left, right)?.into(), ZType::Int))
             }
             MirExpr::Call { callee, args } => {
+                if let Some(result) = self.lower_builtin(callee, args)? {
+                    return Ok(result);
+                }
                 let function = *self
                     .functions
                     .get(callee)
@@ -1001,9 +1029,62 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let value = self.builder.build_load(self.i64t(), ptr, "elem").unwrap();
                 Ok((value, *elem))
             }
-            MirExpr::String(_) | MirExpr::EnumVariant { .. } => {
-                Err("string/enum expression not in the native subset".into())
+            MirExpr::String(text) => {
+                // Immutable bytes → a private global constant; the value is
+                // `{ byte_len, ptr-to-global }`. `build_global_string_ptr` appends a
+                // NUL, but `len` excludes it (matches the interpreter's byte count).
+                let global = self.builder.build_global_string_ptr(text, "str").unwrap();
+                let data = global.as_pointer_value();
+                let len = self.i64t().const_int(text.len() as u64, false);
+                let v = self
+                    .builder
+                    .build_insert_value(array_struct_type(self.context).get_undef(), len, 0, "s0")
+                    .unwrap();
+                let v = self
+                    .builder
+                    .build_insert_value(v, data, 1, "s1")
+                    .unwrap()
+                    .into_struct_value();
+                Ok((v.into(), ZType::Str))
             }
+            MirExpr::EnumVariant { .. } => Err("enum expression not in the native subset".into()),
+        }
+    }
+
+    /// Lower a std builtin call, or `Ok(None)` if `callee` is not a builtin (then
+    /// it is a user function). Strings are `{len, ptr<i8>}`; see `runtime.rs` for
+    /// the differential-oracle semantics each builtin must match.
+    fn lower_builtin(
+        &mut self,
+        callee: &str,
+        args: &[MirExpr],
+    ) -> Result<Option<(BasicValueEnum<'ctx>, ZType)>, String> {
+        let b = self.builder;
+        match callee {
+            "string_len" => {
+                let (s, _) = self.lower_expr(&args[0])?;
+                let len = b
+                    .build_extract_value(s.into_struct_value(), 0, "slen")
+                    .unwrap();
+                Ok(Some((len, ZType::Int)))
+            }
+            "string_byte_at" => {
+                // `data[index]` as an unsigned byte zero-extended to i64 (the
+                // interpreter does `i64::from(u8)`). No bounds check, matching the
+                // array path; tests only index in range.
+                let (s, _) = self.lower_expr(&args[0])?;
+                let data = b
+                    .build_extract_value(s.into_struct_value(), 1, "sdata")
+                    .unwrap()
+                    .into_pointer_value();
+                let idx = self.lower_int(&args[1])?;
+                let i8t = self.context.i8_type();
+                let ptr = unsafe { b.build_in_bounds_gep(i8t, data, &[idx], "bp").unwrap() };
+                let byte = b.build_load(i8t, ptr, "byte").unwrap().into_int_value();
+                let widened = b.build_int_z_extend(byte, self.i64t(), "byte64").unwrap();
+                Ok(Some((widened.into(), ZType::Int)))
+            }
+            _ => Ok(None),
         }
     }
 
