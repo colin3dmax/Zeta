@@ -61,6 +61,12 @@ pub fn jit_smoke_constant(value: i64) -> i64 {
 enum ZType {
     Int,
     Struct(String),
+    /// A dynamic array, represented at runtime as `{ i64 len, ptr data }` with
+    /// `data` pointing at a heap (malloc) buffer of elements. Value semantics is
+    /// realized by eagerly deep-copying the buffer at binding points (let /
+    /// assignment / argument), so each owner has its own buffer — observably
+    /// identical to the interpreter's copy-on-write. Only Int elements for now.
+    Array(Box<ZType>),
 }
 
 /// Per-struct layout: field name → index (declaration order) and each field's
@@ -126,6 +132,7 @@ impl<'ctx> Types<'ctx> {
         match zt {
             ZType::Int => self.context.i64_type().into(),
             ZType::Struct(name) => self.structs[name].ty.into(),
+            ZType::Array(_) => array_struct_type(self.context).into(),
         }
     }
 
@@ -146,9 +153,21 @@ fn parse_ztype(text: &str, struct_names: &[&str]) -> Result<ZType, String> {
     match text {
         "Int" | "Bool" => Ok(ZType::Int),
         "Unit" => Ok(ZType::Int),
+        "IntArray" => Ok(ZType::Array(Box::new(ZType::Int))),
         name if struct_names.contains(&name) => Ok(ZType::Struct(name.to_string())),
         other => Err(format!("type `{other}` not in the native subset")),
     }
+}
+
+/// The `{ i64 len, ptr data }` value type used for all arrays.
+fn array_struct_type(context: &Context) -> StructType {
+    context.struct_type(
+        &[
+            context.i64_type().into(),
+            context.ptr_type(inkwell::AddressSpace::default()).into(),
+        ],
+        false,
+    )
 }
 
 fn llvm_type_of<'ctx>(
@@ -159,6 +178,7 @@ fn llvm_type_of<'ctx>(
     match zt {
         ZType::Int => context.i64_type().into(),
         ZType::Struct(name) => opaque[name].into(),
+        ZType::Array(_) => array_struct_type(context).into(),
     }
 }
 
@@ -237,6 +257,16 @@ fn build_module<'ctx>(
     let builder = context.create_builder();
     let struct_names: Vec<&str> = types.structs.keys().map(|s| s.as_str()).collect();
 
+    // libc malloc/memcpy for array buffers + deep copies (link via libc).
+    let ptr_ty = context.ptr_type(inkwell::AddressSpace::default());
+    let i64_ty = context.i64_type();
+    let malloc = module.add_function("malloc", ptr_ty.fn_type(&[i64_ty.into()], false), None);
+    let memcpy = module.add_function(
+        "memcpy",
+        ptr_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into()], false),
+        None,
+    );
+
     // Pass 1: declare every function with its typed signature.
     let mut functions: HashMap<String, FunctionValue> = HashMap::new();
     for function in &program.functions {
@@ -271,6 +301,8 @@ fn build_module<'ctx>(
             builder: &builder,
             types,
             functions: &functions,
+            malloc,
+            memcpy,
             llvm_fn,
             entry_bb,
             locals: HashMap::new(),
@@ -347,11 +379,17 @@ fn infer_expr_type(
             .cloned()
             .ok_or_else(|| format!("type of unknown local `{name}`"))?,
         MirExpr::StructLiteral { ty, .. } => ZType::Struct(ty.clone()),
+        MirExpr::ArrayLiteral { .. } => ZType::Array(Box::new(ZType::Int)),
+        MirExpr::Index { base, .. } => match infer_expr_type(base, types, env)? {
+            ZType::Array(elem) => *elem,
+            _ => return Err("index of non-array".into()),
+        },
         MirExpr::FieldAccess { base, field } => {
             let base_ty = infer_expr_type(base, types, env)?;
             match base_ty {
                 ZType::Struct(name) => types.field_index(&name, field)?.1,
-                ZType::Int => return Err("field access on non-struct".into()),
+                ZType::Array(_) if field == "len" => ZType::Int,
+                _ => return Err("field access on non-struct".into()),
             }
         }
         MirExpr::Call { callee, .. } => types
@@ -394,6 +432,8 @@ struct FnLower<'a, 'ctx> {
     builder: &'a Builder<'ctx>,
     types: &'a Types<'ctx>,
     functions: &'a HashMap<String, FunctionValue<'ctx>>,
+    malloc: FunctionValue<'ctx>,
+    memcpy: FunctionValue<'ctx>,
     llvm_fn: FunctionValue<'ctx>,
     entry_bb: BasicBlock<'ctx>,
     /// local name → (alloca slot, type)
@@ -410,7 +450,48 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         match zt {
             ZType::Int => self.i64t().const_zero().into(),
             ZType::Struct(name) => self.types.structs[name].ty.const_zero().into(),
+            ZType::Array(_) => array_struct_type(self.context).const_zero().into(),
         }
+    }
+
+    /// Apply value-semantics at a binding point: if `value` is an array, return a
+    /// deep copy (fresh malloc'd buffer) so the new owner is independent; other
+    /// types are already value types in LLVM and pass through.
+    fn bind_value(&self, value: BasicValueEnum<'ctx>, zt: &ZType) -> BasicValueEnum<'ctx> {
+        if matches!(zt, ZType::Array(_)) {
+            self.deep_copy_array(value.into_struct_value()).into()
+        } else {
+            value
+        }
+    }
+
+    /// Deep-copy an `{len, data}` array value: malloc a new buffer, memcpy the
+    /// elements, return `{len, newdata}`.
+    fn deep_copy_array(
+        &self,
+        arr: inkwell::values::StructValue<'ctx>,
+    ) -> inkwell::values::StructValue<'ctx> {
+        let b = self.builder;
+        let len = b.build_extract_value(arr, 0, "len").unwrap().into_int_value();
+        let src = b.build_extract_value(arr, 1, "data").unwrap().into_pointer_value();
+        let bytes = b
+            .build_int_mul(len, self.i64t().const_int(8, false), "bytes")
+            .unwrap();
+        let dst = b
+            .build_call(self.malloc, &[bytes.into()], "buf")
+            .unwrap()
+            .try_as_basic_value()
+            .basic()
+            .unwrap()
+            .into_pointer_value();
+        b.build_call(self.memcpy, &[dst.into(), src.into(), bytes.into()], "cp")
+            .unwrap();
+        let with_len = b
+            .build_insert_value(array_struct_type(self.context).get_undef(), len, 0, "a0")
+            .unwrap();
+        b.build_insert_value(with_len, dst, 1, "a1")
+            .unwrap()
+            .into_struct_value()
     }
 
     /// Allocate a slot of `ty` at the TOP of the entry block (mem2reg-friendly).
@@ -439,12 +520,14 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
     fn lower_stmt(&mut self, stmt: &MirStmt) -> Result<bool, String> {
         match stmt {
             MirStmt::Local { name, value, .. } => {
-                let (v, _) = self.lower_expr(value)?;
+                let (v, vt) = self.lower_expr(value)?;
+                let v = self.bind_value(v, &vt);
                 self.builder.build_store(self.locals[name].0, v).unwrap();
                 Ok(false)
             }
             MirStmt::Store { place, value } => {
-                let (v, _) = self.lower_expr(value)?;
+                let (v, vt) = self.lower_expr(value)?;
+                let v = self.bind_value(v, &vt);
                 let (slot, _) = self.resolve_place(place)?;
                 self.builder.build_store(slot, v).unwrap();
                 Ok(false)
@@ -549,7 +632,31 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                     .map_err(|_| "struct GEP failed".to_string())?;
                 Ok((field_ptr, field_ty))
             }
-            MirPlace::Index { .. } => Err("index assignment not in the native subset".into()),
+            MirPlace::Index { base, index } => {
+                let (base_slot, base_ty) = self.resolve_place(base)?;
+                let ZType::Array(elem) = base_ty else {
+                    return Err("index assignment on non-array".into());
+                };
+                // Load the {len, data} struct from the base slot, GEP into the
+                // (exclusively owned) heap buffer, and return the element ptr.
+                let arr = self
+                    .builder
+                    .build_load(array_struct_type(self.context), base_slot, "arr")
+                    .unwrap()
+                    .into_struct_value();
+                let data = self
+                    .builder
+                    .build_extract_value(arr, 1, "data")
+                    .unwrap()
+                    .into_pointer_value();
+                let idx = self.lower_int(index)?;
+                let elem_ptr = unsafe {
+                    self.builder
+                        .build_in_bounds_gep(self.i64t(), data, &[idx], "elemptr")
+                        .unwrap()
+                };
+                Ok((elem_ptr, *elem))
+            }
         }
     }
 
@@ -595,7 +702,8 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                     .ok_or_else(|| format!("call to unknown `{callee}`"))?;
                 let mut argv = Vec::with_capacity(args.len());
                 for arg in args {
-                    argv.push(self.lower_expr(arg)?.0.into());
+                    let (v, vt) = self.lower_expr(arg)?;
+                    argv.push(self.bind_value(v, &vt).into());
                 }
                 let call = self.builder.build_call(function, &argv, "call").unwrap();
                 let ret = self
@@ -642,20 +750,88 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             }
             MirExpr::FieldAccess { base, field } => {
                 let (base_val, base_ty) = self.lower_expr(base)?;
-                let ZType::Struct(struct_name) = base_ty else {
-                    return Err("field access on non-struct".into());
-                };
-                let (index, field_ty) = self.types.field_index(&struct_name, field)?;
-                let value = self
-                    .builder
-                    .build_extract_value(base_val.into_struct_value(), index, "field")
-                    .unwrap();
-                Ok((value, field_ty))
+                match base_ty {
+                    ZType::Struct(struct_name) => {
+                        let (index, field_ty) = self.types.field_index(&struct_name, field)?;
+                        let value = self
+                            .builder
+                            .build_extract_value(base_val.into_struct_value(), index, "field")
+                            .unwrap();
+                        Ok((value, field_ty))
+                    }
+                    ZType::Array(_) if field == "len" => {
+                        let len = self
+                            .builder
+                            .build_extract_value(base_val.into_struct_value(), 0, "len")
+                            .unwrap();
+                        Ok((len, ZType::Int))
+                    }
+                    _ => Err(format!("field `{field}` access not in the native subset")),
+                }
             }
-            MirExpr::String(_)
-            | MirExpr::EnumVariant { .. }
-            | MirExpr::ArrayLiteral { .. }
-            | MirExpr::Index { .. } => Err("expression not in the native subset".into()),
+            MirExpr::ArrayLiteral { elements } => {
+                let n = elements.len();
+                let bytes = self.i64t().const_int((n as u64) * 8, false);
+                let data = self
+                    .builder
+                    .build_call(self.malloc, &[bytes.into()], "buf")
+                    .unwrap()
+                    .try_as_basic_value()
+                    .basic()
+                    .unwrap()
+                    .into_pointer_value();
+                for (i, element) in elements.iter().enumerate() {
+                    let v = self.lower_int(element)?;
+                    let ptr = unsafe {
+                        self.builder
+                            .build_in_bounds_gep(
+                                self.i64t(),
+                                data,
+                                &[self.i64t().const_int(i as u64, false)],
+                                "ep",
+                            )
+                            .unwrap()
+                    };
+                    self.builder.build_store(ptr, v).unwrap();
+                }
+                let arr = self
+                    .builder
+                    .build_insert_value(
+                        array_struct_type(self.context).get_undef(),
+                        self.i64t().const_int(n as u64, false),
+                        0,
+                        "a0",
+                    )
+                    .unwrap();
+                let arr = self
+                    .builder
+                    .build_insert_value(arr, data, 1, "a1")
+                    .unwrap()
+                    .into_struct_value();
+                Ok((arr.into(), ZType::Array(Box::new(ZType::Int))))
+            }
+            MirExpr::Index { base, index } => {
+                let (base_val, base_ty) = self.lower_expr(base)?;
+                let ZType::Array(elem) = base_ty else {
+                    return Err("index of non-array".into());
+                };
+                let data = self
+                    .builder
+                    .build_extract_value(base_val.into_struct_value(), 1, "data")
+                    .unwrap()
+                    .into_pointer_value();
+                let idx = self.lower_int(index)?;
+                let ptr = unsafe {
+                    self.builder
+                        .build_in_bounds_gep(self.i64t(), data, &[idx], "ep")
+                        .unwrap()
+                };
+                let value = self.builder.build_load(self.i64t(), ptr, "elem").unwrap();
+                Ok((value, *elem))
+            }
+            MirExpr::String(_) | MirExpr::EnumVariant { .. } => {
+                Err("string/enum expression not in the native subset".into())
+            }
         }
     }
 
