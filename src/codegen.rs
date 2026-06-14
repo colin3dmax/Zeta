@@ -22,6 +22,8 @@
 //! Enums (`{i64 tag, i64 payload}`, Int/no-payload variants) + `match` (lowered to
 //! an LLVM `switch` over the tag, or over an Int/Bool value). `for` loops:
 //! `for i in a..b`, `for x in intArray`, and C-style `for (init; cond; step)`.
+//! Growable IntArrays via `int_array_empty` / `int_array_push` (functional append:
+//! each push returns a fresh buffer, O(n) per push).
 
 use crate::ast::{BinaryOp, StructDecl, UnaryOp};
 use crate::mir::{MirExpr, MirPattern, MirPlace, MirStmt, Program};
@@ -222,6 +224,7 @@ fn builtin_return_type(callee: &str) -> Option<ZType> {
         "string_len" | "string_byte_at" | "ascii_is_digit" | "ascii_is_alpha"
         | "ascii_is_alnum" | "ascii_is_whitespace" => Some(ZType::Int),
         "string_concat" | "string_byte_slice" | "int_to_string" => Some(ZType::Str),
+        "int_array_empty" | "int_array_push" => Some(ZType::Array(Box::new(ZType::Int))),
         _ => None,
     }
 }
@@ -1427,7 +1430,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let global = self.builder.build_global_string_ptr(text, "str").unwrap();
                 let data = global.as_pointer_value();
                 let len = self.i64t().const_int(text.len() as u64, false);
-                Ok((self.make_str(len, data).into(), ZType::Str))
+                Ok((self.make_len_ptr(len, data).into(), ZType::Str))
             }
             MirExpr::EnumVariant {
                 enum_name,
@@ -1498,29 +1501,29 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 // malloc(la+lb), memcpy a then b, return {la+lb, buf}.
                 let (a, _) = self.lower_expr(&args[0])?;
                 let (bv, _) = self.lower_expr(&args[1])?;
-                let (la, pa) = self.str_parts(a.into_struct_value());
-                let (lb, pb) = self.str_parts(bv.into_struct_value());
+                let (la, pa) = self.len_ptr_parts(a.into_struct_value());
+                let (lb, pb) = self.len_ptr_parts(bv.into_struct_value());
                 let total = b.build_int_add(la, lb, "clen").unwrap();
                 let buf = self.malloc_bytes(total);
                 self.memcpy_bytes(buf, pa, la);
                 let i8t = self.context.i8_type();
                 let tail = unsafe { b.build_in_bounds_gep(i8t, buf, &[la], "tail").unwrap() };
                 self.memcpy_bytes(tail, pb, lb);
-                Ok(Some((self.make_str(total, buf).into(), ZType::Str)))
+                Ok(Some((self.make_len_ptr(total, buf).into(), ZType::Str)))
             }
             "string_byte_slice" => {
                 // s[start .. start+len] → malloc(len) + memcpy from data+start. No
                 // bounds/utf-8 check (the array path is likewise unchecked); tests
                 // stay in range.
                 let (s, _) = self.lower_expr(&args[0])?;
-                let (_, data) = self.str_parts(s.into_struct_value());
+                let (_, data) = self.len_ptr_parts(s.into_struct_value());
                 let start = self.lower_int(&args[1])?;
                 let len = self.lower_int(&args[2])?;
                 let i8t = self.context.i8_type();
                 let src = unsafe { b.build_in_bounds_gep(i8t, data, &[start], "slcsrc").unwrap() };
                 let buf = self.malloc_bytes(len);
                 self.memcpy_bytes(buf, src, len);
-                Ok(Some((self.make_str(len, buf).into(), ZType::Str)))
+                Ok(Some((self.make_len_ptr(len, buf).into(), ZType::Str)))
             }
             "int_to_string" => {
                 // snprintf(buf, 24, "%lld", n): 24 ≥ 20 digits + sign + NUL for any
@@ -1537,7 +1540,31 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                     .unwrap()
                     .into_int_value();
                 let len = b.build_int_s_extend(written, self.i64t(), "len64").unwrap();
-                Ok(Some((self.make_str(len, buf).into(), ZType::Str)))
+                Ok(Some((self.make_len_ptr(len, buf).into(), ZType::Str)))
+            }
+            "int_array_empty" => {
+                // {0, malloc(0)}: a zero-length, independently-owned buffer (never
+                // dereferenced while len is 0; a real malloc keeps deep-copy memcpy
+                // well-defined).
+                let buf = self.malloc_bytes(self.i64t().const_zero());
+                Ok(Some((self.make_len_ptr(self.i64t().const_zero(), buf).into(), ZType::Array(Box::new(ZType::Int)))))
+            }
+            "int_array_push" => {
+                // Functional append: a fresh {len+1, buf} with the old elements
+                // copied and `x` stored at the end. The original buffer is untouched
+                // (matches the interpreter's copy-on-write `push`).
+                let (arr, _) = self.lower_expr(&args[0])?;
+                let (len, data) = self.len_ptr_parts(arr.into_struct_value());
+                let x = self.lower_int(&args[1])?;
+                let eight = self.i64t().const_int(8, false);
+                let new_len = b.build_int_add(len, self.i64t().const_int(1, false), "nlen").unwrap();
+                let new_bytes = b.build_int_mul(new_len, eight, "nbytes").unwrap();
+                let buf = self.malloc_bytes(new_bytes);
+                let old_bytes = b.build_int_mul(len, eight, "obytes").unwrap();
+                self.memcpy_bytes(buf, data, old_bytes);
+                let end = unsafe { b.build_in_bounds_gep(self.i64t(), buf, &[len], "endp").unwrap() };
+                b.build_store(end, x).unwrap();
+                Ok(Some((self.make_len_ptr(new_len, buf).into(), ZType::Array(Box::new(ZType::Int)))))
             }
             // ascii predicates: Int byte → Bool (i64 0/1). Out-of-[0,255] inputs
             // fall outside every range/equality, yielding 0 — matching the
@@ -1605,8 +1632,9 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         self.builder.build_int_z_extend(bit, self.i64t(), "b64").unwrap()
     }
 
-    /// Extract `(len, data)` from a string `{i64, ptr}` value.
-    fn str_parts(
+    /// Extract `(len, data)` from a `{i64 len, ptr data}` value — the shared layout
+    /// of both strings and arrays.
+    fn len_ptr_parts(
         &self,
         s: inkwell::values::StructValue<'ctx>,
     ) -> (IntValue<'ctx>, PointerValue<'ctx>) {
@@ -1634,8 +1662,8 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             .unwrap();
     }
 
-    /// Build a string `{len, data}` value.
-    fn make_str(&self, len: IntValue<'ctx>, data: PointerValue<'ctx>) -> inkwell::values::StructValue<'ctx> {
+    /// Build a `{len, data}` value (used for both strings and arrays).
+    fn make_len_ptr(&self, len: IntValue<'ctx>, data: PointerValue<'ctx>) -> inkwell::values::StructValue<'ctx> {
         let b = self.builder;
         let v = b
             .build_insert_value(array_struct_type(self.context).get_undef(), len, 0, "s0")
