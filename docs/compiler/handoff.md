@@ -62,11 +62,13 @@ native 后端覆盖 Int/Bool/struct/array/**string**(值语义)。要 AOT 编译
 
 5. ~~**动态数组(IntArray)**~~ ✅ **已完成**:`int_array_empty`/`int_array_push`,沿用 `{len,ptr}` 布局(无 capacity);push 函数式 append(每次 malloc+memcpy,O(n))。门禁 `tests/codegen_dynarray.rs`(8 用例)。
 
-**native subset:标量/struct/array(定长+动态 IntArray)/string/enum/match/while/for —— 控制流全齐。** 通往"AOT 整个 `arena_frontend.zeta` 走真闭环"的剩余项:
-   - **动态数组其余族**:`string_array`/`bool_array` 的 `_empty`/`_push`(bool 同 int=i64 trivial;string_array 元素是 16 字节 `{len,ptr}`,需把 push 的元素 stride 泛化)。
-   - **文件 IO builtin**(`file_read_to_string`/`path_join`/`path_basename`/`diagnostic_format`):需运行时支持且有副作用,差分测试不易。
+6. ~~**动态数组其余族**~~ ✅ **已完成**:数组操作泛化到任意元素类型(`size_of` 算 stride),`bool_array_*`(=i64)、`string_array_*`(`{len,ptr}` 元素)全通。门禁 `tests/codegen_dynarray.rs`(12 用例)。
+
+**native subset:标量/struct/array(定长+动态,Int/Bool/String 元素)/string/enum/match/while/for —— 语言核心+控制流+集合全齐。** 通往"AOT 整个 `arena_frontend.zeta` 走真闭环"的剩余项:
+   - **文件 IO builtin**(`file_read_to_string`/`path_join`/`path_basename`/`diagnostic_format`):需运行时支持且有副作用,差分测试不易(可能要 Rust 侧 extern shim)。
    - **String-payload enum**(E2):加宽 payload 槽以放 `{len,ptr}`。
    - NativeService struct 状态(ABI 杂,低优先)。
+   - 实测:可拿 `arena_frontend.zeta` 跑 codegen 看还卡哪,驱动后续优先级。
 
 **每步都用解释器 `run_mir` 作差分 oracle**(见 tests/codegen_*.rs 的 `check()` 范式),feature-gated,不影响默认构建。
 
