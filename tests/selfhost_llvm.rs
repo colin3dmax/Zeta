@@ -524,3 +524,162 @@ fn main() -> Int {
 }";
     assert_eq!(check(src), 3);
 }
+
+// --- slice 5: enum + match codegen (switch on tag / value) ---
+
+#[test]
+fn enum_payloadless_dispatch() {
+    let src = "\
+enum Color { Red, Green, Blue }
+fn code(c: Color) -> Int {
+  match c {
+    Color.Red -> { return 1; }
+    Color.Green -> { return 2; }
+    Color.Blue -> { return 3; }
+  }
+  return 0;
+}
+fn main() -> Int {
+  return code(Color.Red) * 100 + code(Color.Green) * 10 + code(Color.Blue);
+}";
+    assert_eq!(check(src), 123);
+}
+
+#[test]
+fn enum_int_payload_bind() {
+    let src = "\
+enum OptionInt { Some(Int), None }
+fn unwrap_or(v: OptionInt, f: Int) -> Int {
+  match v {
+    OptionInt.Some(n) -> { return n; }
+    OptionInt.None -> { return f; }
+  }
+  return 0;
+}
+fn main() -> Int {
+  let a: OptionInt = OptionInt.Some(40);
+  let b: OptionInt = OptionInt.None;
+  return unwrap_or(a, 99) + unwrap_or(b, 99);
+}";
+    // 40 + 99
+    assert_eq!(check(src), 139);
+}
+
+#[test]
+fn enum_wildcard_default() {
+    let src = "\
+enum Dir { North, East, South, West }
+fn main() -> Int {
+  let d: Dir = Dir.South;
+  match d {
+    Dir.North -> { return 1; }
+    _ -> { return 99; }
+  }
+  return 0;
+}";
+    assert_eq!(check(src), 99);
+}
+
+#[test]
+fn match_over_int_value() {
+    let src = "\
+fn classify(n: Int) -> Int {
+  match n {
+    0 -> { return 100; }
+    1 -> { return 200; }
+    _ -> { return 300; }
+  }
+  return 0;
+}
+fn main() -> Int { return classify(0) + classify(1) + classify(5); }";
+    // 100 + 200 + 300
+    assert_eq!(check(src), 600);
+}
+
+#[test]
+fn match_over_bool_value() {
+    let src = "\
+fn pick(b: Bool) -> Int {
+  match b {
+    true -> { return 11; }
+    false -> { return 22; }
+  }
+  return 0;
+}
+fn main() -> Int { return pick(true) * 100 + pick(false); }";
+    assert_eq!(check(src), 1122);
+}
+
+#[test]
+fn match_name_binding_default() {
+    let src = "\
+fn f(n: Int) -> Int {
+  match n {
+    7 -> { return 0; }
+    other -> { return other * 2; }
+  }
+  return 0;
+}
+fn main() -> Int { return f(7) + f(21); }";
+    // 0 + 42
+    assert_eq!(check(src), 42);
+}
+
+#[test]
+fn enum_string_payload() {
+    let src = "\
+import std.core;
+enum Msg { Text(String), Empty }
+fn describe(m: Msg) -> Int {
+  match m {
+    Msg.Text(s) -> { return string_len(s) * 100 + string_byte_at(s, 0); }
+    Msg.Empty -> { return 0 - 1; }
+  }
+  return 0;
+}
+fn main() -> Int {
+  let a: Msg = Msg.Text(\"hi\");
+  let b: Msg = Msg.Empty;
+  return describe(a) * 10 + describe(b) + 1;
+}";
+    // describe(a): len 2 * 100 + 'h'(104) = 304; describe(b) = -1
+    // 304*10 + (-1) + 1 = 3040
+    assert_eq!(check(src), 3040);
+}
+
+#[test]
+fn match_falls_through_to_end() {
+    let src = "\
+enum Sign { Neg, Zero, Pos }
+fn main() -> Int {
+  let s: Sign = Sign.Pos;
+  let mut score: Int = 0;
+  match s {
+    Sign.Neg -> { score = 1; }
+    Sign.Zero -> { score = 2; }
+    Sign.Pos -> { score = 3; }
+  }
+  return score * 10;
+}";
+    assert_eq!(check(src), 30);
+}
+
+#[test]
+fn match_in_loop() {
+    let src = "\
+enum Step { Inc, Dec }
+fn main() -> Int {
+  let mut acc: Int = 0;
+  let mut i: Int = 0;
+  while i < 5 {
+    let s: Step = Step.Inc;
+    match s {
+      Step.Inc -> { acc = acc + 2; }
+      Step.Dec -> { acc = acc - 1; }
+    }
+    i = i + 1;
+  }
+  return acc;
+}";
+    assert_eq!(check(src), 10);
+}
