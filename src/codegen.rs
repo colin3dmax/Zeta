@@ -20,7 +20,8 @@
 //! `string_len`/`string_byte_at`/`string_byte_slice`/`string_concat`,
 //! `int_to_string` (via libc snprintf), and the `ascii_is_*` predicates.
 //! Enums (`{i64 tag, i64 payload}`, Int/no-payload variants) + `match` (lowered to
-//! an LLVM `switch` over the tag, or over an Int/Bool value). `for` still `Err`.
+//! an LLVM `switch` over the tag, or over an Int/Bool value). `for` loops:
+//! `for i in a..b`, `for x in intArray`, and C-style `for (init; cond; step)`.
 
 use crate::ast::{BinaryOp, StructDecl, UnaryOp};
 use crate::mir::{MirExpr, MirPattern, MirPlace, MirStmt, Program};
@@ -591,6 +592,29 @@ fn infer_locals(
             MirStmt::While { body, .. } => {
                 infer_locals(body, types, struct_names, enum_names, env)?
             }
+            MirStmt::ForRange { binding, body, .. } => {
+                env.insert(binding.clone(), ZType::Int);
+                infer_locals(body, types, struct_names, enum_names, env)?;
+            }
+            MirStmt::ForIn {
+                binding,
+                iterable,
+                body,
+            } => {
+                let elem = match infer_expr_type(iterable, types, env)? {
+                    ZType::Array(elem) => *elem,
+                    _ => return Err("for-in iterable must be an array".into()),
+                };
+                env.insert(binding.clone(), elem);
+                infer_locals(body, types, struct_names, enum_names, env)?;
+            }
+            MirStmt::ForC {
+                init, step, body, ..
+            } => {
+                infer_locals(std::slice::from_ref(init), types, struct_names, enum_names, env)?;
+                infer_locals(std::slice::from_ref(step), types, struct_names, enum_names, env)?;
+                infer_locals(body, types, struct_names, enum_names, env)?;
+            }
             MirStmt::Match { value, arms } => {
                 // Each arm's pattern may bind a local; register its type, then
                 // recurse into the arm body (whose `let`s also need slots).
@@ -743,6 +767,10 @@ struct FnLower<'a, 'ctx> {
     entry_bb: BasicBlock<'ctx>,
     /// local name → (alloca slot, type)
     locals: HashMap<String, (PointerValue<'ctx>, ZType)>,
+    /// Enclosing loops as `(continue_target, exit)`. `break` jumps to `exit`;
+    /// `continue` jumps to `continue_target` — which is the condition head for
+    /// `while`, but the increment/step block for `for` loops (so `continue` still
+    /// advances the counter / runs the step, matching the interpreter).
     loops: Vec<(BasicBlock<'ctx>, BasicBlock<'ctx>)>,
 }
 
@@ -909,10 +937,164 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 Ok(false)
             }
             MirStmt::Match { value, arms } => self.lower_match(value, arms),
-            MirStmt::ForIn { .. } | MirStmt::ForRange { .. } | MirStmt::ForC { .. } => {
-                Err("for not in the native subset".into())
-            }
+            MirStmt::ForRange {
+                binding,
+                start,
+                end,
+                body,
+            } => self.lower_for_range(binding, start, end, body),
+            MirStmt::ForIn {
+                binding,
+                iterable,
+                body,
+            } => self.lower_for_in(binding, iterable, body),
+            MirStmt::ForC {
+                init,
+                condition,
+                step,
+                body,
+            } => self.lower_for_c(init, condition, step, body),
         }
+    }
+
+    /// `for i in start..end`: evaluate both bounds once, then `while i < end` with
+    /// `i` incremented in the latch (so `continue` still advances). Exclusive end,
+    /// matching the interpreter.
+    fn lower_for_range(
+        &mut self,
+        binding: &str,
+        start: &MirExpr,
+        end: &MirExpr,
+        body: &[MirStmt],
+    ) -> Result<bool, String> {
+        let start_v = self.lower_int(start)?;
+        let end_v = self.lower_int(end)?;
+        let slot = self.locals[binding].0;
+        self.builder.build_store(slot, start_v).unwrap();
+
+        let head = self.context.append_basic_block(self.llvm_fn, "for.head");
+        let body_bb = self.context.append_basic_block(self.llvm_fn, "for.body");
+        let latch = self.context.append_basic_block(self.llvm_fn, "for.latch");
+        let exit = self.context.append_basic_block(self.llvm_fn, "for.exit");
+
+        self.builder.build_unconditional_branch(head).unwrap();
+        self.builder.position_at_end(head);
+        let i = self.builder.build_load(self.i64t(), slot, "i").unwrap().into_int_value();
+        let cond = self
+            .builder
+            .build_int_compare(IntPredicate::SLT, i, end_v, "for.cmp")
+            .unwrap();
+        self.builder.build_conditional_branch(cond, body_bb, exit).unwrap();
+
+        self.loops.push((latch, exit));
+        self.builder.position_at_end(body_bb);
+        if !self.lower_stmts(body)? {
+            self.builder.build_unconditional_branch(latch).unwrap();
+        }
+        self.loops.pop();
+
+        self.builder.position_at_end(latch);
+        let i = self.builder.build_load(self.i64t(), slot, "i").unwrap().into_int_value();
+        let next = self.builder.build_int_add(i, self.i64t().const_int(1, false), "inc").unwrap();
+        self.builder.build_store(slot, next).unwrap();
+        self.builder.build_unconditional_branch(head).unwrap();
+
+        self.builder.position_at_end(exit);
+        Ok(false)
+    }
+
+    /// `for x in array`: walk indices `0..len`, binding each element. Only IntArray
+    /// (Int elements) is in the native subset.
+    fn lower_for_in(
+        &mut self,
+        binding: &str,
+        iterable: &MirExpr,
+        body: &[MirStmt],
+    ) -> Result<bool, String> {
+        let (arr, arr_ty) = self.lower_expr(iterable)?;
+        let ZType::Array(elem) = arr_ty else {
+            return Err("for-in iterable must be an array".into());
+        };
+        if *elem != ZType::Int {
+            return Err("for-in only supports Int-element arrays in the native subset".into());
+        }
+        let arr = arr.into_struct_value();
+        let len = self.builder.build_extract_value(arr, 0, "len").unwrap().into_int_value();
+        let data = self.builder.build_extract_value(arr, 1, "data").unwrap().into_pointer_value();
+
+        let idx_slot = self.entry_alloca("for.idx", self.i64t().into());
+        self.builder.build_store(idx_slot, self.i64t().const_zero()).unwrap();
+        let binding_slot = self.locals[binding].0;
+
+        let head = self.context.append_basic_block(self.llvm_fn, "forin.head");
+        let body_bb = self.context.append_basic_block(self.llvm_fn, "forin.body");
+        let latch = self.context.append_basic_block(self.llvm_fn, "forin.latch");
+        let exit = self.context.append_basic_block(self.llvm_fn, "forin.exit");
+
+        self.builder.build_unconditional_branch(head).unwrap();
+        self.builder.position_at_end(head);
+        let idx = self.builder.build_load(self.i64t(), idx_slot, "idx").unwrap().into_int_value();
+        let cond = self
+            .builder
+            .build_int_compare(IntPredicate::SLT, idx, len, "forin.cmp")
+            .unwrap();
+        self.builder.build_conditional_branch(cond, body_bb, exit).unwrap();
+
+        self.loops.push((latch, exit));
+        self.builder.position_at_end(body_bb);
+        // Bind the current element, then lower the body.
+        let elem_ptr = unsafe { self.builder.build_in_bounds_gep(self.i64t(), data, &[idx], "ep").unwrap() };
+        let elem_val = self.builder.build_load(self.i64t(), elem_ptr, "elem").unwrap();
+        self.builder.build_store(binding_slot, elem_val).unwrap();
+        if !self.lower_stmts(body)? {
+            self.builder.build_unconditional_branch(latch).unwrap();
+        }
+        self.loops.pop();
+
+        self.builder.position_at_end(latch);
+        let idx = self.builder.build_load(self.i64t(), idx_slot, "idx").unwrap().into_int_value();
+        let next = self.builder.build_int_add(idx, self.i64t().const_int(1, false), "inc").unwrap();
+        self.builder.build_store(idx_slot, next).unwrap();
+        self.builder.build_unconditional_branch(head).unwrap();
+
+        self.builder.position_at_end(exit);
+        Ok(false)
+    }
+
+    /// `for (init; cond; step) { body }`: init once, then `loop { if !cond break;
+    /// body; step }`. `continue` jumps to the step block, matching the interpreter.
+    fn lower_for_c(
+        &mut self,
+        init: &MirStmt,
+        condition: &MirExpr,
+        step: &MirStmt,
+        body: &[MirStmt],
+    ) -> Result<bool, String> {
+        self.lower_stmt(init)?;
+
+        let head = self.context.append_basic_block(self.llvm_fn, "forc.head");
+        let body_bb = self.context.append_basic_block(self.llvm_fn, "forc.body");
+        let step_bb = self.context.append_basic_block(self.llvm_fn, "forc.step");
+        let exit = self.context.append_basic_block(self.llvm_fn, "forc.exit");
+
+        self.builder.build_unconditional_branch(head).unwrap();
+        self.builder.position_at_end(head);
+        let cond = self.lower_cond(condition)?;
+        self.builder.build_conditional_branch(cond, body_bb, exit).unwrap();
+
+        self.loops.push((step_bb, exit));
+        self.builder.position_at_end(body_bb);
+        if !self.lower_stmts(body)? {
+            self.builder.build_unconditional_branch(step_bb).unwrap();
+        }
+        self.loops.pop();
+
+        self.builder.position_at_end(step_bb);
+        self.lower_stmt(step)?;
+        self.builder.build_unconditional_branch(head).unwrap();
+
+        self.builder.position_at_end(exit);
+        Ok(false)
     }
 
     /// Lower a `match`: switch on a single i64 scrutinee (an enum's tag, or an
