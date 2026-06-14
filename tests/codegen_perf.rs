@@ -12,7 +12,6 @@
 
 use std::io::Write;
 use std::process::Command;
-use std::time::Instant;
 
 use zeta::runtime::Value;
 
