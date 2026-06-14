@@ -19,10 +19,11 @@
 //! locals/params/returns, nesting. Strings (immutable `{len, ptr<i8>}`): literals,
 //! `string_len`/`string_byte_at`/`string_byte_slice`/`string_concat`,
 //! `int_to_string` (via libc snprintf), and the `ascii_is_*` predicates.
-//! Enums/match/for still `Err`.
+//! Enums (`{i64 tag, i64 payload}`, Int/no-payload variants) + `match` (lowered to
+//! an LLVM `switch` over the tag, or over an Int/Bool value). `for` still `Err`.
 
 use crate::ast::{BinaryOp, StructDecl, UnaryOp};
-use crate::mir::{MirExpr, MirPlace, MirStmt, Program};
+use crate::mir::{MirExpr, MirPattern, MirPlace, MirStmt, Program};
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
@@ -77,6 +78,13 @@ enum ZType {
     /// points is needed. Literals lower to a private global constant; `concat` /
     /// `byte_slice` allocate fresh malloc'd buffers.
     Str,
+    /// An enum (tagged union), represented at runtime as `{ i64 tag, i64 payload }`
+    /// where `tag` is the variant's declaration index and `payload` holds an Int
+    /// payload (or 0 for payload-less variants). Only Int / no-payload variants are
+    /// in the native subset for now (String/struct payloads would need a wider
+    /// slot). The interpreter's by-name enum value is never observed directly (main
+    /// returns Int), so this internal tag layout need not match it.
+    Enum(String),
 }
 
 /// Per-struct layout: field name → index (declaration order) and each field's
@@ -91,6 +99,9 @@ struct StructInfo<'ctx> {
 struct Types<'ctx> {
     context: &'ctx Context,
     structs: HashMap<String, StructInfo<'ctx>>,
+    /// Enum name → variants in declaration order (the index is the runtime tag),
+    /// each with its optional payload type.
+    enums: HashMap<String, Vec<(String, Option<ZType>)>>,
     /// Function name → return type (so calls know their result type).
     returns: HashMap<String, ZType>,
 }
@@ -102,6 +113,7 @@ impl<'ctx> Types<'ctx> {
         program: &Program,
     ) -> Result<Self, String> {
         let names: Vec<&str> = struct_decls.iter().map(|d| d.name.as_str()).collect();
+        let enum_names: Vec<&str> = program.enums.iter().map(|e| e.name.as_str()).collect();
         // Pass 1: opaque named struct types (so fields can reference each other).
         let mut opaque: HashMap<String, StructType> = HashMap::new();
         for decl in struct_decls {
@@ -113,7 +125,7 @@ impl<'ctx> Types<'ctx> {
             let mut fields = Vec::with_capacity(decl.fields.len());
             let mut field_llvm: Vec<BasicTypeEnum> = Vec::with_capacity(decl.fields.len());
             for field in &decl.fields {
-                let zt = parse_ztype(&field.ty, &names)?;
+                let zt = parse_ztype(&field.ty, &names, &enum_names)?;
                 field_llvm.push(llvm_type_of(context, &zt, &opaque));
                 fields.push((field.name.clone(), zt));
             }
@@ -122,10 +134,24 @@ impl<'ctx> Types<'ctx> {
             structs.insert(decl.name.clone(), StructInfo { fields, ty });
         }
 
+        // Enum tables: variant order (= tag) + each variant's optional payload type.
+        let mut enums = HashMap::new();
+        for enum_decl in &program.enums {
+            let mut variants = Vec::with_capacity(enum_decl.variants.len());
+            for variant in &enum_decl.variants {
+                let payload = match &variant.payload_type {
+                    Some(t) => Some(parse_ztype(t, &names, &enum_names)?),
+                    None => None,
+                };
+                variants.push((variant.name.clone(), payload));
+            }
+            enums.insert(enum_decl.name.clone(), variants);
+        }
+
         let mut returns = HashMap::new();
         for function in &program.functions {
             let zt = match &function.return_type {
-                Some(t) => parse_ztype(t, &names).unwrap_or(ZType::Int),
+                Some(t) => parse_ztype(t, &names, &enum_names).unwrap_or(ZType::Int),
                 None => ZType::Int, // Unit-returning → i64 0
             };
             returns.insert(function.name.clone(), zt);
@@ -134,6 +160,7 @@ impl<'ctx> Types<'ctx> {
         Ok(Types {
             context,
             structs,
+            enums,
             returns,
         })
     }
@@ -143,7 +170,22 @@ impl<'ctx> Types<'ctx> {
             ZType::Int => self.context.i64_type().into(),
             ZType::Struct(name) => self.structs[name].ty.into(),
             ZType::Array(_) | ZType::Str => array_struct_type(self.context).into(),
+            ZType::Enum(_) => enum_struct_type(self.context).into(),
         }
+    }
+
+    /// Resolve `enum_name.variant` to `(tag, payload_type)`; tag is the variant's
+    /// declaration index.
+    fn variant_tag(&self, enum_name: &str, variant: &str) -> Result<(u64, Option<ZType>), String> {
+        let variants = self
+            .enums
+            .get(enum_name)
+            .ok_or_else(|| format!("unknown enum `{enum_name}`"))?;
+        variants
+            .iter()
+            .position(|(name, _)| name == variant)
+            .map(|i| (i as u64, variants[i].1.clone()))
+            .ok_or_else(|| format!("enum `{enum_name}` has no variant `{variant}`"))
     }
 
     fn field_index(&self, struct_name: &str, field: &str) -> Result<(u32, ZType), String> {
@@ -159,13 +201,14 @@ impl<'ctx> Types<'ctx> {
     }
 }
 
-fn parse_ztype(text: &str, struct_names: &[&str]) -> Result<ZType, String> {
+fn parse_ztype(text: &str, struct_names: &[&str], enum_names: &[&str]) -> Result<ZType, String> {
     match text {
         "Int" | "Bool" => Ok(ZType::Int),
         "Unit" => Ok(ZType::Int),
         "String" => Ok(ZType::Str),
         "IntArray" => Ok(ZType::Array(Box::new(ZType::Int))),
         name if struct_names.contains(&name) => Ok(ZType::Struct(name.to_string())),
+        name if enum_names.contains(&name) => Ok(ZType::Enum(name.to_string())),
         other => Err(format!("type `{other}` not in the native subset")),
     }
 }
@@ -193,6 +236,12 @@ fn array_struct_type(context: &Context) -> StructType {
     )
 }
 
+/// The `{ i64 tag, i64 payload }` value type used for all enums (E1 subset).
+fn enum_struct_type(context: &Context) -> StructType {
+    let i64_ty = context.i64_type();
+    context.struct_type(&[i64_ty.into(), i64_ty.into()], false)
+}
+
 fn llvm_type_of<'ctx>(
     context: &'ctx Context,
     zt: &ZType,
@@ -202,6 +251,7 @@ fn llvm_type_of<'ctx>(
         ZType::Int => context.i64_type().into(),
         ZType::Struct(name) => opaque[name].into(),
         ZType::Array(_) | ZType::Str => array_struct_type(context).into(),
+        ZType::Enum(_) => enum_struct_type(context).into(),
     }
 }
 
@@ -422,6 +472,7 @@ fn build_module<'ctx>(
     let module = context.create_module("zeta_native");
     let builder = context.create_builder();
     let struct_names: Vec<&str> = types.structs.keys().map(|s| s.as_str()).collect();
+    let enum_names: Vec<&str> = types.enums.keys().map(|s| s.as_str()).collect();
 
     // libc malloc/memcpy for array buffers + deep copies (link via libc).
     let ptr_ty = context.ptr_type(inkwell::AddressSpace::default());
@@ -446,7 +497,7 @@ fn build_module<'ctx>(
     for function in &program.functions {
         let mut param_types = Vec::with_capacity(function.params.len());
         for param in &function.params {
-            let zt = parse_ztype(&param.ty, &struct_names)?;
+            let zt = parse_ztype(&param.ty, &struct_names, &enum_names)?;
             param_types.push(types.llvm(&zt).into());
         }
         let ret = &types.returns[&function.name];
@@ -466,9 +517,12 @@ fn build_module<'ctx>(
         // Infer the type of every local so we can pre-allocate typed slots.
         let mut env: HashMap<String, ZType> = HashMap::new();
         for param in &function.params {
-            env.insert(param.name.clone(), parse_ztype(&param.ty, &struct_names)?);
+            env.insert(
+                param.name.clone(),
+                parse_ztype(&param.ty, &struct_names, &enum_names)?,
+            );
         }
-        infer_locals(&function.body, types, &struct_names, &mut env)?;
+        infer_locals(&function.body, types, &struct_names, &enum_names, &mut env)?;
 
         let mut lower = FnLower {
             context,
@@ -512,6 +566,7 @@ fn infer_locals(
     stmts: &[MirStmt],
     types: &Types,
     struct_names: &[&str],
+    enum_names: &[&str],
     env: &mut HashMap<String, ZType>,
 ) -> Result<(), String> {
     for stmt in stmts {
@@ -520,7 +575,7 @@ fn infer_locals(
                 name, ty, value, ..
             } => {
                 let zt = match ty {
-                    Some(t) => parse_ztype(t, struct_names)?,
+                    Some(t) => parse_ztype(t, struct_names, enum_names)?,
                     None => infer_expr_type(value, types, env)?,
                 };
                 env.insert(name.clone(), zt);
@@ -530,14 +585,55 @@ fn infer_locals(
                 else_body,
                 ..
             } => {
-                infer_locals(then_body, types, struct_names, env)?;
-                infer_locals(else_body, types, struct_names, env)?;
+                infer_locals(then_body, types, struct_names, enum_names, env)?;
+                infer_locals(else_body, types, struct_names, enum_names, env)?;
             }
-            MirStmt::While { body, .. } => infer_locals(body, types, struct_names, env)?,
+            MirStmt::While { body, .. } => {
+                infer_locals(body, types, struct_names, enum_names, env)?
+            }
+            MirStmt::Match { value, arms } => {
+                // Each arm's pattern may bind a local; register its type, then
+                // recurse into the arm body (whose `let`s also need slots).
+                let value_ty = infer_expr_type(value, types, env)?;
+                for arm in arms {
+                    match &arm.pattern {
+                        MirPattern::Name(name) => {
+                            env.insert(name.clone(), value_ty.clone());
+                        }
+                        MirPattern::Variant {
+                            enum_name, binding, ..
+                        } => {
+                            if let Some(binding) = binding {
+                                // Payload-binding type comes from the variant decl.
+                                let payload = match &value_ty {
+                                    ZType::Enum(_) => arm_variant_payload(types, enum_name, &arm.pattern),
+                                    _ => None,
+                                };
+                                env.insert(binding.clone(), payload.unwrap_or(ZType::Int));
+                            }
+                        }
+                        _ => {}
+                    }
+                    infer_locals(&arm.body, types, struct_names, enum_names, env)?;
+                }
+            }
             _ => {}
         }
     }
     Ok(())
+}
+
+/// Payload type bound by a `Variant` arm pattern, if any.
+fn arm_variant_payload(types: &Types, enum_name: &str, pattern: &MirPattern) -> Option<ZType> {
+    if let MirPattern::Variant { variant, .. } = pattern {
+        types
+            .enums
+            .get(enum_name)
+            .and_then(|variants| variants.iter().find(|(n, _)| n == variant))
+            .and_then(|(_, payload)| payload.clone())
+    } else {
+        None
+    }
 }
 
 fn infer_expr_type(
@@ -554,6 +650,7 @@ fn infer_expr_type(
             .cloned()
             .ok_or_else(|| format!("type of unknown local `{name}`"))?,
         MirExpr::String(_) => ZType::Str,
+        MirExpr::EnumVariant { enum_name, .. } => ZType::Enum(enum_name.clone()),
         MirExpr::StructLiteral { ty, .. } => ZType::Struct(ty.clone()),
         MirExpr::ArrayLiteral { .. } => ZType::Array(Box::new(ZType::Int)),
         MirExpr::Index { base, .. } => match infer_expr_type(base, types, env)? {
@@ -576,7 +673,6 @@ fn infer_expr_type(
                 .cloned()
                 .ok_or_else(|| format!("unknown function `{callee}`"))?,
         },
-        _ => return Err("expression not in the native subset".into()),
     })
 }
 
@@ -660,6 +756,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             ZType::Int => self.i64t().const_zero().into(),
             ZType::Struct(name) => self.types.structs[name].ty.const_zero().into(),
             ZType::Array(_) | ZType::Str => array_struct_type(self.context).const_zero().into(),
+            ZType::Enum(_) => enum_struct_type(self.context).const_zero().into(),
         }
     }
 
@@ -811,11 +908,111 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 self.lower_expr(expr)?;
                 Ok(false)
             }
-            MirStmt::ForIn { .. }
-            | MirStmt::ForRange { .. }
-            | MirStmt::ForC { .. }
-            | MirStmt::Match { .. } => Err("for/match not in the native subset".into()),
+            MirStmt::Match { value, arms } => self.lower_match(value, arms),
+            MirStmt::ForIn { .. } | MirStmt::ForRange { .. } | MirStmt::ForC { .. } => {
+                Err("for not in the native subset".into())
+            }
         }
+    }
+
+    /// Lower a `match`: switch on a single i64 scrutinee (an enum's tag, or an
+    /// Int/Bool value itself). Each concrete pattern becomes a switch case; a
+    /// `Name`/`Wildcard` arm is the default. Exhaustiveness is guaranteed by the
+    /// MIR verifier, so when there is no catch-all the switch default is
+    /// `unreachable`. Returns whether control is guaranteed terminated afterwards.
+    fn lower_match(&mut self, value: &MirExpr, arms: &[crate::mir::MirMatchArm]) -> Result<bool, String> {
+        let (val, vty) = self.lower_expr(value)?;
+        let scrutinee = match &vty {
+            ZType::Enum(_) => self
+                .builder
+                .build_extract_value(val.into_struct_value(), 0, "tag")
+                .unwrap()
+                .into_int_value(),
+            ZType::Int => val.into_int_value(),
+            _ => return Err("match scrutinee must be an enum or Int/Bool".into()),
+        };
+        // The block holding the scrutinee; the switch terminates it. Building the
+        // `unreachable` default below repositions the builder, so capture it now.
+        let head_bb = self.builder.get_insert_block().unwrap();
+
+        let arm_blocks: Vec<BasicBlock<'ctx>> = arms
+            .iter()
+            .map(|_| self.context.append_basic_block(self.llvm_fn, "arm"))
+            .collect();
+        let end_bb = self.context.append_basic_block(self.llvm_fn, "match.end");
+
+        // Map each concrete pattern to (case const, its arm block); find the
+        // catch-all arm (first Name/Wildcard) to use as the switch default.
+        let mut cases: Vec<(IntValue<'ctx>, BasicBlock<'ctx>)> = Vec::new();
+        let mut default_bb: Option<BasicBlock<'ctx>> = None;
+        for (i, arm) in arms.iter().enumerate() {
+            match &arm.pattern {
+                MirPattern::Name(_) | MirPattern::Wildcard => {
+                    if default_bb.is_none() {
+                        default_bb = Some(arm_blocks[i]);
+                    }
+                }
+                MirPattern::Variant { enum_name, variant, .. } => {
+                    let (tag, _) = self.types.variant_tag(enum_name, variant)?;
+                    cases.push((self.i64t().const_int(tag, false), arm_blocks[i]));
+                }
+                MirPattern::Int(text) => {
+                    let n: i64 = text.parse().map_err(|_| format!("bad Int pattern `{text}`"))?;
+                    cases.push((self.i64t().const_int(n as u64, true), arm_blocks[i]));
+                }
+                MirPattern::Bool(b) => {
+                    cases.push((self.i64t().const_int(*b as u64, false), arm_blocks[i]));
+                }
+                MirPattern::String(_) => {
+                    return Err("string match patterns not in the native subset".into())
+                }
+            }
+        }
+
+        // Exhaustive-but-no-catch-all → an `unreachable` default block.
+        let default = match default_bb {
+            Some(bb) => bb,
+            None => {
+                let bb = self.context.append_basic_block(self.llvm_fn, "match.unreachable");
+                self.builder.position_at_end(bb);
+                self.builder.build_unreachable().unwrap();
+                bb
+            }
+        };
+        self.builder.position_at_end(head_bb);
+        self.builder.build_switch(scrutinee, default, &cases).unwrap();
+
+        // Lower each arm: bind its pattern variable, then its body.
+        for (i, arm) in arms.iter().enumerate() {
+            self.builder.position_at_end(arm_blocks[i]);
+            match &arm.pattern {
+                MirPattern::Name(name) => {
+                    self.builder.build_store(self.locals[name].0, val).unwrap();
+                }
+                MirPattern::Variant {
+                    enum_name,
+                    variant,
+                    binding: Some(binding),
+                } => {
+                    let (_, payload_ty) = self.types.variant_tag(enum_name, variant)?;
+                    if !matches!(payload_ty, Some(ZType::Int)) {
+                        return Err("only Int enum payloads are in the native subset".into());
+                    }
+                    let payload = self
+                        .builder
+                        .build_extract_value(val.into_struct_value(), 1, "payload")
+                        .unwrap();
+                    self.builder.build_store(self.locals[binding].0, payload).unwrap();
+                }
+                _ => {}
+            }
+            if !self.lower_stmts(&arm.body)? {
+                self.builder.build_unconditional_branch(end_bb).unwrap();
+            }
+        }
+
+        self.builder.position_at_end(end_bb);
+        Ok(false)
     }
 
     /// Resolve an assignment place to (pointer-to-slot, type).
@@ -1050,7 +1247,35 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let len = self.i64t().const_int(text.len() as u64, false);
                 Ok((self.make_str(len, data).into(), ZType::Str))
             }
-            MirExpr::EnumVariant { .. } => Err("enum expression not in the native subset".into()),
+            MirExpr::EnumVariant {
+                enum_name,
+                variant,
+                payload,
+            } => {
+                // {tag, payload}: tag = variant index; payload = the Int (or 0 for
+                // payload-less variants). Non-Int payloads aren't in the E1 subset
+                // (lower_int rejects them).
+                let (tag, _) = self.types.variant_tag(enum_name, variant)?;
+                let payload_val = match payload {
+                    Some(expr) => self.lower_int(expr)?,
+                    None => self.i64t().const_zero(),
+                };
+                let v = self
+                    .builder
+                    .build_insert_value(
+                        enum_struct_type(self.context).get_undef(),
+                        self.i64t().const_int(tag, false),
+                        0,
+                        "e0",
+                    )
+                    .unwrap();
+                let v = self
+                    .builder
+                    .build_insert_value(v, payload_val, 1, "e1")
+                    .unwrap()
+                    .into_struct_value();
+                Ok((v.into(), ZType::Enum(enum_name.clone())))
+            }
         }
     }
 
