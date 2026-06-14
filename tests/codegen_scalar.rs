@@ -21,7 +21,7 @@ fn check(source: &str) -> i64 {
         Value::Int(n) => n,
         other => panic!("expected Int from interpreter, got {other:?}"),
     };
-    let native = zeta::codegen::jit_run_i64(&program, "main").expect("native JIT should run");
+    let native = zeta::codegen::jit_run_i64(&program, &[], "main").expect("native JIT should run");
 
     assert_eq!(
         native, oracle,

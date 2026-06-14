@@ -2,9 +2,6 @@
 //! `llvm`). Behind a feature so the default build/test needs no LLVM toolchain.
 //! Targets the system LLVM 22 via inkwell `llvm22-1`.
 //!
-//! This module starts as a toolchain smoke test; real MIR lowering lands on top
-//! once inkwell↔LLVM-22 is proven to build and JIT end-to-end.
-//!
 //! Build/run (arm64 macOS, system LLVM 22 from `brew install llvm`):
 //!
 //! ```sh
@@ -15,13 +12,19 @@
 //! The `llvm22-1-prefer-dynamic` inkwell feature links the single
 //! libLLVM-22.dylib (which bundles zstd/z3/xml2), avoiding static component
 //! libs whose Intel x86_64 copies under /usr/local shadow the arm64 ones.
+//!
+//! Supported subset: Int/Bool (i64), arithmetic/bitwise/comparison/logical, unary
+//! ops, `let`/assignment, `if`/`while`/`break`/`continue`, user calls + recursion,
+//! and **structs** (value semantics): struct literals, field read/write, struct
+//! locals/params/returns, nesting. Arrays/strings/enums/match/for still `Err`.
 
-use crate::ast::{BinaryOp, UnaryOp};
+use crate::ast::{BinaryOp, StructDecl, UnaryOp};
 use crate::mir::{MirExpr, MirPlace, MirStmt, Program};
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
-use inkwell::values::{FunctionValue, IntValue, PointerValue};
+use inkwell::types::{BasicType, BasicTypeEnum, StructType};
+use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{IntPredicate, OptimizationLevel};
 use std::collections::HashMap;
 
@@ -52,19 +55,119 @@ pub fn jit_smoke_constant(value: i64) -> i64 {
     }
 }
 
-/// JIT-compile `program` and run its `entry` function (which must take no
-/// parameters and return Int) to a single `i64`. The scalar subset: Int/Bool
-/// (both modelled as `i64`), arithmetic/bitwise/comparison/logical operators,
-/// unary ops, `let`/assignment of locals, `if`/`while`/`break`/`continue`,
-/// user function calls, and `return`. Aggregates (struct/array/enum/match/for/
-/// string) return an `Err` for now — they land in the next slice.
-///
-/// The Stage0 interpreter (`run_mir`) is the differential oracle: for any
-/// program in this subset, `jit_run_i64(p, "main")` must equal the `i64` the
-/// interpreter produces.
-pub fn jit_run_i64(program: &Program, entry: &str) -> Result<i64, String> {
+/// A Zeta value type as seen by codegen. Int and Bool are both `i64`; struct
+/// types carry their declared name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ZType {
+    Int,
+    Struct(String),
+}
+
+/// Per-struct layout: field name → index (declaration order) and each field's
+/// type, plus the LLVM struct type. Field ORDER is internal and need not match
+/// the interpreter's by-name map — `main` returns an Int, so the differential
+/// oracle never observes the layout.
+struct StructInfo<'ctx> {
+    fields: Vec<(String, ZType)>,
+    ty: StructType<'ctx>,
+}
+
+struct Types<'ctx> {
+    context: &'ctx Context,
+    structs: HashMap<String, StructInfo<'ctx>>,
+    /// Function name → return type (so calls know their result type).
+    returns: HashMap<String, ZType>,
+}
+
+impl<'ctx> Types<'ctx> {
+    fn build(
+        context: &'ctx Context,
+        struct_decls: &[StructDecl],
+        program: &Program,
+    ) -> Result<Self, String> {
+        let names: Vec<&str> = struct_decls.iter().map(|d| d.name.as_str()).collect();
+        // Pass 1: opaque named struct types (so fields can reference each other).
+        let mut opaque: HashMap<String, StructType> = HashMap::new();
+        for decl in struct_decls {
+            opaque.insert(decl.name.clone(), context.opaque_struct_type(&decl.name));
+        }
+        // Pass 2: resolve field types and set bodies.
+        let mut structs = HashMap::new();
+        for decl in struct_decls {
+            let mut fields = Vec::with_capacity(decl.fields.len());
+            let mut field_llvm: Vec<BasicTypeEnum> = Vec::with_capacity(decl.fields.len());
+            for field in &decl.fields {
+                let zt = parse_ztype(&field.ty, &names)?;
+                field_llvm.push(llvm_type_of(context, &zt, &opaque));
+                fields.push((field.name.clone(), zt));
+            }
+            let ty = opaque[&decl.name];
+            ty.set_body(&field_llvm, false);
+            structs.insert(decl.name.clone(), StructInfo { fields, ty });
+        }
+
+        let mut returns = HashMap::new();
+        for function in &program.functions {
+            let zt = match &function.return_type {
+                Some(t) => parse_ztype(t, &names).unwrap_or(ZType::Int),
+                None => ZType::Int, // Unit-returning → i64 0
+            };
+            returns.insert(function.name.clone(), zt);
+        }
+
+        Ok(Types {
+            context,
+            structs,
+            returns,
+        })
+    }
+
+    fn llvm(&self, zt: &ZType) -> BasicTypeEnum<'ctx> {
+        match zt {
+            ZType::Int => self.context.i64_type().into(),
+            ZType::Struct(name) => self.structs[name].ty.into(),
+        }
+    }
+
+    fn field_index(&self, struct_name: &str, field: &str) -> Result<(u32, ZType), String> {
+        let info = self
+            .structs
+            .get(struct_name)
+            .ok_or_else(|| format!("unknown struct `{struct_name}`"))?;
+        info.fields
+            .iter()
+            .position(|(name, _)| name == field)
+            .map(|i| (i as u32, info.fields[i].1.clone()))
+            .ok_or_else(|| format!("unknown field `{field}` on `{struct_name}`"))
+    }
+}
+
+fn parse_ztype(text: &str, struct_names: &[&str]) -> Result<ZType, String> {
+    match text {
+        "Int" | "Bool" => Ok(ZType::Int),
+        "Unit" => Ok(ZType::Int),
+        name if struct_names.contains(&name) => Ok(ZType::Struct(name.to_string())),
+        other => Err(format!("type `{other}` not in the native subset")),
+    }
+}
+
+fn llvm_type_of<'ctx>(
+    context: &'ctx Context,
+    zt: &ZType,
+    opaque: &HashMap<String, StructType<'ctx>>,
+) -> BasicTypeEnum<'ctx> {
+    match zt {
+        ZType::Int => context.i64_type().into(),
+        ZType::Struct(name) => opaque[name].into(),
+    }
+}
+
+/// JIT-compile `program` and run its no-arg, Int-returning `entry` to an `i64`.
+/// The Stage0 interpreter (`run_mir`) is the differential oracle.
+pub fn jit_run_i64(program: &Program, structs: &[StructDecl], entry: &str) -> Result<i64, String> {
     let context = Context::create();
-    let module = build_module(&context, program)?;
+    let types = Types::build(&context, structs, program)?;
+    let module = build_module(&context, &types, program)?;
     let engine = module
         .create_jit_execution_engine(OptimizationLevel::None)
         .map_err(|e| format!("JIT engine init failed: {e}"))?;
@@ -76,14 +179,18 @@ pub fn jit_run_i64(program: &Program, entry: &str) -> Result<i64, String> {
     }
 }
 
-/// Like [`jit_run_i64`] but the entry takes one `i64` argument, and the module
-/// is run through LLVM's `-O3` pipeline before JIT — i.e. real optimized native
-/// code (mem2reg promotes the local allocas to registers, loops are optimized).
-/// Used by the perf comparison: the runtime `arg` keeps the optimizer from
-/// constant-folding the whole computation away.
-pub fn jit_run_i64_arg(program: &Program, entry: &str, arg: i64) -> Result<i64, String> {
+/// Like [`jit_run_i64`] but the entry takes one `i64` argument and the module is
+/// run through LLVM `-O3` before JIT — real optimized native code. The runtime
+/// `arg` keeps the optimizer from constant-folding the computation away.
+pub fn jit_run_i64_arg(
+    program: &Program,
+    structs: &[StructDecl],
+    entry: &str,
+    arg: i64,
+) -> Result<i64, String> {
     let context = Context::create();
-    let module = build_module(&context, program)?;
+    let types = Types::build(&context, structs, program)?;
+    let module = build_module(&context, &types, program)?;
     optimize_module(&module)?;
     let engine = module
         .create_jit_execution_engine(OptimizationLevel::Aggressive)
@@ -96,16 +203,16 @@ pub fn jit_run_i64_arg(program: &Program, entry: &str, arg: i64) -> Result<i64, 
     }
 }
 
-/// Compile `entry` (one `i64` arg) to optimized native, then time ONLY the call
-/// (JIT/optimization happens before the clock starts). Returns (result, elapsed).
-/// This is the apples-to-apples measurement against a `cc -O2` C loop.
+/// Compile `entry` (one `i64` arg) to optimized native, then time ONLY the call.
 pub fn jit_time_i64_arg(
     program: &Program,
+    structs: &[StructDecl],
     entry: &str,
     arg: i64,
 ) -> Result<(i64, std::time::Duration), String> {
     let context = Context::create();
-    let module = build_module(&context, program)?;
+    let types = Types::build(&context, structs, program)?;
+    let module = build_module(&context, &types, program)?;
     optimize_module(&module)?;
     let engine = module
         .create_jit_execution_engine(OptimizationLevel::Aggressive)
@@ -121,60 +228,68 @@ pub fn jit_time_i64_arg(
     }
 }
 
-/// Build (and verify) an LLVM module from the MIR program: declare all functions
-/// first (so calls resolve regardless of order), then lower each body.
 fn build_module<'ctx>(
     context: &'ctx Context,
+    types: &Types<'ctx>,
     program: &Program,
 ) -> Result<inkwell::module::Module<'ctx>, String> {
     let module = context.create_module("zeta_native");
     let builder = context.create_builder();
-    let i64_type = context.i64_type();
+    let struct_names: Vec<&str> = types.structs.keys().map(|s| s.as_str()).collect();
 
+    // Pass 1: declare every function with its typed signature.
     let mut functions: HashMap<String, FunctionValue> = HashMap::new();
     for function in &program.functions {
-        let param_types = vec![i64_type.into(); function.params.len()];
-        let fn_type = i64_type.fn_type(&param_types, false);
+        let mut param_types = Vec::with_capacity(function.params.len());
+        for param in &function.params {
+            let zt = parse_ztype(&param.ty, &struct_names)?;
+            param_types.push(types.llvm(&zt).into());
+        }
+        let ret = &types.returns[&function.name];
+        let fn_type = types.llvm(ret).fn_type(&param_types, false);
         functions.insert(
             function.name.clone(),
             module.add_function(&function.name, fn_type, None),
         );
     }
 
+    // Pass 2: lower each body.
     for function in &program.functions {
         let llvm_fn = functions[&function.name];
         let entry_bb = context.append_basic_block(llvm_fn, "entry");
         builder.position_at_end(entry_bb);
 
+        // Infer the type of every local so we can pre-allocate typed slots.
+        let mut env: HashMap<String, ZType> = HashMap::new();
+        for param in &function.params {
+            env.insert(param.name.clone(), parse_ztype(&param.ty, &struct_names)?);
+        }
+        infer_locals(&function.body, types, &struct_names, &mut env)?;
+
         let mut lower = FnLower {
             context,
             builder: &builder,
-            i64_type,
+            types,
             functions: &functions,
             llvm_fn,
             entry_bb,
             locals: HashMap::new(),
             loops: Vec::new(),
         };
-        let mut names: Vec<String> = function.params.iter().map(|p| p.name.clone()).collect();
-        collect_local_names(&function.body, &mut names);
-        for name in &names {
-            let slot = lower.entry_alloca(name);
-            lower.locals.insert(name.clone(), slot);
+        for (name, zt) in &env {
+            let slot = lower.entry_alloca(name, types.llvm(zt));
+            lower.locals.insert(name.clone(), (slot, zt.clone()));
         }
         for (index, param) in function.params.iter().enumerate() {
-            let value = llvm_fn
-                .get_nth_param(index as u32)
-                .expect("param exists")
-                .into_int_value();
-            builder
-                .build_store(lower.locals[&param.name], value)
-                .unwrap();
+            let value = llvm_fn.get_nth_param(index as u32).expect("param exists");
+            builder.build_store(lower.locals[&param.name].0, value).unwrap();
         }
 
         let terminated = lower.lower_stmts(&function.body)?;
         if !terminated {
-            builder.build_return(Some(&i64_type.const_zero())).unwrap();
+            let ret = &types.returns[&function.name];
+            let zero = lower.zero_of(ret);
+            builder.build_return(Some(&zero)).unwrap();
         }
     }
 
@@ -184,7 +299,70 @@ fn build_module<'ctx>(
     Ok(module)
 }
 
-/// Run the host-targeted LLVM `-O3` pass pipeline over the module in place.
+/// Lightweight type inference: record the ZType bound to every `let` (and used
+/// in nested blocks), so codegen can pre-allocate correctly typed slots.
+fn infer_locals(
+    stmts: &[MirStmt],
+    types: &Types,
+    struct_names: &[&str],
+    env: &mut HashMap<String, ZType>,
+) -> Result<(), String> {
+    for stmt in stmts {
+        match stmt {
+            MirStmt::Local {
+                name, ty, value, ..
+            } => {
+                let zt = match ty {
+                    Some(t) => parse_ztype(t, struct_names)?,
+                    None => infer_expr_type(value, types, env)?,
+                };
+                env.insert(name.clone(), zt);
+            }
+            MirStmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                infer_locals(then_body, types, struct_names, env)?;
+                infer_locals(else_body, types, struct_names, env)?;
+            }
+            MirStmt::While { body, .. } => infer_locals(body, types, struct_names, env)?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn infer_expr_type(
+    expr: &MirExpr,
+    types: &Types,
+    env: &HashMap<String, ZType>,
+) -> Result<ZType, String> {
+    Ok(match expr {
+        MirExpr::Int(_) | MirExpr::Bool(_) | MirExpr::Binary { .. } | MirExpr::Unary { .. } => {
+            ZType::Int
+        }
+        MirExpr::Load(name) => env
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("type of unknown local `{name}`"))?,
+        MirExpr::StructLiteral { ty, .. } => ZType::Struct(ty.clone()),
+        MirExpr::FieldAccess { base, field } => {
+            let base_ty = infer_expr_type(base, types, env)?;
+            match base_ty {
+                ZType::Struct(name) => types.field_index(&name, field)?.1,
+                ZType::Int => return Err("field access on non-struct".into()),
+            }
+        }
+        MirExpr::Call { callee, .. } => types
+            .returns
+            .get(callee)
+            .cloned()
+            .ok_or_else(|| format!("unknown function `{callee}`"))?,
+        _ => return Err("expression not in the native subset".into()),
+    })
+}
+
 fn optimize_module(module: &inkwell::module::Module) -> Result<(), String> {
     use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine};
 
@@ -211,60 +389,44 @@ fn optimize_module(module: &inkwell::module::Module) -> Result<(), String> {
         .map_err(|e| format!("optimization passes failed: {e}"))
 }
 
-/// Recursively collect the names bound by `let` (MirStmt::Local) anywhere in the
-/// scalar control-flow subset, so they can be pre-allocated in the entry block.
-fn collect_local_names(stmts: &[MirStmt], out: &mut Vec<String>) {
-    for stmt in stmts {
-        match stmt {
-            MirStmt::Local { name, .. } => {
-                if !out.contains(name) {
-                    out.push(name.clone());
-                }
-            }
-            MirStmt::If {
-                then_body,
-                else_body,
-                ..
-            } => {
-                collect_local_names(then_body, out);
-                collect_local_names(else_body, out);
-            }
-            MirStmt::While { body, .. } => collect_local_names(body, out),
-            _ => {}
-        }
-    }
-}
-
 struct FnLower<'a, 'ctx> {
     context: &'ctx Context,
     builder: &'a Builder<'ctx>,
-    i64_type: inkwell::types::IntType<'ctx>,
+    types: &'a Types<'ctx>,
     functions: &'a HashMap<String, FunctionValue<'ctx>>,
     llvm_fn: FunctionValue<'ctx>,
     entry_bb: BasicBlock<'ctx>,
-    locals: HashMap<String, PointerValue<'ctx>>,
-    /// Stack of (continue-target, break-target) for the enclosing loops.
+    /// local name → (alloca slot, type)
+    locals: HashMap<String, (PointerValue<'ctx>, ZType)>,
     loops: Vec<(BasicBlock<'ctx>, BasicBlock<'ctx>)>,
 }
 
 impl<'a, 'ctx> FnLower<'a, 'ctx> {
-    /// Allocate an `i64` slot at the TOP of the entry block (so LLVM's mem2reg
-    /// can promote it to an SSA register — the key to native-quality code).
-    fn entry_alloca(&self, name: &str) -> PointerValue<'ctx> {
+    fn i64t(&self) -> inkwell::types::IntType<'ctx> {
+        self.context.i64_type()
+    }
+
+    fn zero_of(&self, zt: &ZType) -> BasicValueEnum<'ctx> {
+        match zt {
+            ZType::Int => self.i64t().const_zero().into(),
+            ZType::Struct(name) => self.types.structs[name].ty.const_zero().into(),
+        }
+    }
+
+    /// Allocate a slot of `ty` at the TOP of the entry block (mem2reg-friendly).
+    fn entry_alloca(&self, name: &str, ty: BasicTypeEnum<'ctx>) -> PointerValue<'ctx> {
         let saved = self.builder.get_insert_block();
         match self.entry_bb.get_first_instruction() {
             Some(first) => self.builder.position_before(&first),
             None => self.builder.position_at_end(self.entry_bb),
         }
-        let slot = self.builder.build_alloca(self.i64_type, name).unwrap();
+        let slot = self.builder.build_alloca(ty, name).unwrap();
         if let Some(block) = saved {
             self.builder.position_at_end(block);
         }
         slot
     }
 
-    /// Lower a statement list. Returns true if it ended with a terminator
-    /// (return/break/continue) so the caller stops emitting into this block.
     fn lower_stmts(&mut self, stmts: &[MirStmt]) -> Result<bool, String> {
         for stmt in stmts {
             if self.lower_stmt(stmt)? {
@@ -277,32 +439,25 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
     fn lower_stmt(&mut self, stmt: &MirStmt) -> Result<bool, String> {
         match stmt {
             MirStmt::Local { name, value, .. } => {
-                let value = self.lower_expr(value)?;
-                self.builder.build_store(self.locals[name], value).unwrap();
+                let (v, _) = self.lower_expr(value)?;
+                self.builder.build_store(self.locals[name].0, v).unwrap();
                 Ok(false)
             }
-            MirStmt::Store {
-                place: MirPlace::Local(name),
-                value,
-            } => {
-                let value = self.lower_expr(value)?;
-                let slot = *self
-                    .locals
-                    .get(name)
-                    .ok_or_else(|| format!("store to unknown local `{name}`"))?;
-                self.builder.build_store(slot, value).unwrap();
+            MirStmt::Store { place, value } => {
+                let (v, _) = self.lower_expr(value)?;
+                let (slot, _) = self.resolve_place(place)?;
+                self.builder.build_store(slot, v).unwrap();
                 Ok(false)
             }
-            MirStmt::Store { .. } => Err("field/index store not in the scalar subset".into()),
             MirStmt::Return(value) => {
                 match value {
                     Some(expr) => {
-                        let v = self.lower_expr(expr)?;
+                        let (v, _) = self.lower_expr(expr)?;
                         self.builder.build_return(Some(&v)).unwrap();
                     }
                     None => {
                         self.builder
-                            .build_return(Some(&self.i64_type.const_zero()))
+                            .build_return(Some(&self.i64t().const_zero()))
                             .unwrap();
                     }
                 }
@@ -320,7 +475,6 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 self.builder
                     .build_conditional_branch(cond, then_bb, else_bb)
                     .unwrap();
-
                 self.builder.position_at_end(then_bb);
                 if !self.lower_stmts(then_body)? {
                     self.builder.build_unconditional_branch(cont_bb).unwrap();
@@ -333,41 +487,32 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 Ok(false)
             }
             MirStmt::While { condition, body } => {
-                let header_bb = self.context.append_basic_block(self.llvm_fn, "while.head");
+                let head = self.context.append_basic_block(self.llvm_fn, "while.head");
                 let body_bb = self.context.append_basic_block(self.llvm_fn, "while.body");
-                let exit_bb = self.context.append_basic_block(self.llvm_fn, "while.exit");
-                self.builder.build_unconditional_branch(header_bb).unwrap();
-
-                self.builder.position_at_end(header_bb);
+                let exit = self.context.append_basic_block(self.llvm_fn, "while.exit");
+                self.builder.build_unconditional_branch(head).unwrap();
+                self.builder.position_at_end(head);
                 let cond = self.lower_cond(condition)?;
                 self.builder
-                    .build_conditional_branch(cond, body_bb, exit_bb)
+                    .build_conditional_branch(cond, body_bb, exit)
                     .unwrap();
-
-                self.loops.push((header_bb, exit_bb));
+                self.loops.push((head, exit));
                 self.builder.position_at_end(body_bb);
                 if !self.lower_stmts(body)? {
-                    self.builder.build_unconditional_branch(header_bb).unwrap();
+                    self.builder.build_unconditional_branch(head).unwrap();
                 }
                 self.loops.pop();
-
-                self.builder.position_at_end(exit_bb);
+                self.builder.position_at_end(exit);
                 Ok(false)
             }
             MirStmt::Break => {
-                let (_, exit) = *self
-                    .loops
-                    .last()
-                    .ok_or("`break` outside loop in codegen")?;
+                let (_, exit) = *self.loops.last().ok_or("`break` outside loop")?;
                 self.builder.build_unconditional_branch(exit).unwrap();
                 Ok(true)
             }
             MirStmt::Continue => {
-                let (header, _) = *self
-                    .loops
-                    .last()
-                    .ok_or("`continue` outside loop in codegen")?;
-                self.builder.build_unconditional_branch(header).unwrap();
+                let (head, _) = *self.loops.last().ok_or("`continue` outside loop")?;
+                self.builder.build_unconditional_branch(head).unwrap();
                 Ok(true)
             }
             MirStmt::Drop(expr) => {
@@ -377,76 +522,150 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             MirStmt::ForIn { .. }
             | MirStmt::ForRange { .. }
             | MirStmt::ForC { .. }
-            | MirStmt::Match { .. } => {
-                Err("for/match not in the scalar subset".into())
-            }
+            | MirStmt::Match { .. } => Err("for/match not in the native subset".into()),
         }
     }
 
-    /// Lower an expression to an `i64` value (Bool is 0/1).
-    fn lower_expr(&mut self, expr: &MirExpr) -> Result<IntValue<'ctx>, String> {
+    /// Resolve an assignment place to (pointer-to-slot, type).
+    fn resolve_place(&mut self, place: &MirPlace) -> Result<(PointerValue<'ctx>, ZType), String> {
+        match place {
+            MirPlace::Local(name) => {
+                let (slot, zt) = self
+                    .locals
+                    .get(name)
+                    .ok_or_else(|| format!("store to unknown local `{name}`"))?;
+                Ok((*slot, zt.clone()))
+            }
+            MirPlace::Field { base, field } => {
+                let (base_ptr, base_ty) = self.resolve_place(base)?;
+                let ZType::Struct(struct_name) = base_ty else {
+                    return Err("field assignment on non-struct".into());
+                };
+                let (index, field_ty) = self.types.field_index(&struct_name, field)?;
+                let struct_ty = self.types.structs[&struct_name].ty;
+                let field_ptr = self
+                    .builder
+                    .build_struct_gep(struct_ty, base_ptr, index, "fieldptr")
+                    .map_err(|_| "struct GEP failed".to_string())?;
+                Ok((field_ptr, field_ty))
+            }
+            MirPlace::Index { .. } => Err("index assignment not in the native subset".into()),
+        }
+    }
+
+    /// Lower an expression to (value, type).
+    fn lower_expr(&mut self, expr: &MirExpr) -> Result<(BasicValueEnum<'ctx>, ZType), String> {
         match expr {
             MirExpr::Int(text) => {
-                let n: i64 = text
-                    .parse()
-                    .map_err(|_| format!("invalid Int literal `{text}`"))?;
-                Ok(self.i64_type.const_int(n as u64, true))
+                let n: i64 = text.parse().map_err(|_| format!("bad Int `{text}`"))?;
+                Ok((self.i64t().const_int(n as u64, true).into(), ZType::Int))
             }
-            MirExpr::Bool(b) => Ok(self.i64_type.const_int(*b as u64, false)),
+            MirExpr::Bool(b) => Ok((self.i64t().const_int(*b as u64, false).into(), ZType::Int)),
             MirExpr::Load(name) => {
-                let slot = *self
+                let (slot, zt) = self
                     .locals
                     .get(name)
                     .ok_or_else(|| format!("load of unknown local `{name}`"))?;
-                Ok(self
-                    .builder
-                    .build_load(self.i64_type, slot, name)
-                    .unwrap()
-                    .into_int_value())
+                let llvm_ty = self.types.llvm(zt);
+                let value = self.builder.build_load(llvm_ty, *slot, name).unwrap();
+                Ok((value, zt.clone()))
             }
             MirExpr::Unary { op, expr } => {
-                let v = self.lower_expr(expr)?;
-                Ok(match op {
+                let v = self.lower_int(expr)?;
+                let r = match op {
                     UnaryOp::Neg => self.builder.build_int_neg(v, "neg").unwrap(),
                     UnaryOp::BitNot => self.builder.build_not(v, "bitnot").unwrap(),
                     UnaryOp::Not => {
-                        // logical not: (v == 0) ? 1 : 0
-                        let is_zero = self
+                        let z = self
                             .builder
-                            .build_int_compare(IntPredicate::EQ, v, self.i64_type.const_zero(), "isz")
+                            .build_int_compare(IntPredicate::EQ, v, self.i64t().const_zero(), "isz")
                             .unwrap();
-                        self.builder
-                            .build_int_z_extend(is_zero, self.i64_type, "not")
-                            .unwrap()
+                        self.builder.build_int_z_extend(z, self.i64t(), "not").unwrap()
                     }
-                })
+                };
+                Ok((r.into(), ZType::Int))
             }
-            MirExpr::Binary { op, left, right } => self.lower_binary(*op, left, right),
+            MirExpr::Binary { op, left, right } => {
+                Ok((self.lower_binary(*op, left, right)?.into(), ZType::Int))
+            }
             MirExpr::Call { callee, args } => {
                 let function = *self
                     .functions
                     .get(callee)
-                    .ok_or_else(|| format!("call to unsupported/unknown `{callee}`"))?;
+                    .ok_or_else(|| format!("call to unknown `{callee}`"))?;
                 let mut argv = Vec::with_capacity(args.len());
                 for arg in args {
-                    argv.push(self.lower_expr(arg)?.into());
+                    argv.push(self.lower_expr(arg)?.0.into());
                 }
                 let call = self.builder.build_call(function, &argv, "call").unwrap();
-                Ok(call
+                let ret = self
+                    .types
+                    .returns
+                    .get(callee)
+                    .cloned()
+                    .unwrap_or(ZType::Int);
+                let value = call
                     .try_as_basic_value()
                     .basic()
-                    .ok_or_else(|| format!("call to `{callee}` did not return a value"))?
-                    .into_int_value())
+                    .ok_or_else(|| format!("`{callee}` returned no value"))?;
+                Ok((value, ret))
+            }
+            MirExpr::StructLiteral { ty, fields } => {
+                let info = self
+                    .types
+                    .structs
+                    .get(ty)
+                    .ok_or_else(|| format!("unknown struct `{ty}`"))?;
+                let struct_ty = info.ty;
+                // Lower field values in declaration order.
+                let mut current = struct_ty.get_undef();
+                let field_order: Vec<(usize, String)> = info
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (n, _))| (i, n.clone()))
+                    .collect();
+                for (index, field_name) in field_order {
+                    let value_expr = &fields
+                        .iter()
+                        .find(|f| f.name == field_name)
+                        .ok_or_else(|| format!("missing field `{field_name}` in `{ty}` literal"))?
+                        .value;
+                    let (v, _) = self.lower_expr(value_expr)?;
+                    current = self
+                        .builder
+                        .build_insert_value(current, v, index as u32, "ins")
+                        .unwrap()
+                        .into_struct_value();
+                }
+                Ok((current.into(), ZType::Struct(ty.clone())))
+            }
+            MirExpr::FieldAccess { base, field } => {
+                let (base_val, base_ty) = self.lower_expr(base)?;
+                let ZType::Struct(struct_name) = base_ty else {
+                    return Err("field access on non-struct".into());
+                };
+                let (index, field_ty) = self.types.field_index(&struct_name, field)?;
+                let value = self
+                    .builder
+                    .build_extract_value(base_val.into_struct_value(), index, "field")
+                    .unwrap();
+                Ok((value, field_ty))
             }
             MirExpr::String(_)
             | MirExpr::EnumVariant { .. }
-            | MirExpr::StructLiteral { .. }
-            | MirExpr::FieldAccess { .. }
             | MirExpr::ArrayLiteral { .. }
-            | MirExpr::Index { .. } => {
-                Err("aggregate/string expression not in the scalar subset".into())
-            }
+            | MirExpr::Index { .. } => Err("expression not in the native subset".into()),
         }
+    }
+
+    /// Lower an expression that must be an `i64` (Int/Bool).
+    fn lower_int(&mut self, expr: &MirExpr) -> Result<IntValue<'ctx>, String> {
+        let (v, zt) = self.lower_expr(expr)?;
+        if zt != ZType::Int {
+            return Err("expected Int/Bool value".into());
+        }
+        Ok(v.into_int_value())
     }
 
     fn lower_binary(
@@ -455,12 +674,11 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         left: &MirExpr,
         right: &MirExpr,
     ) -> Result<IntValue<'ctx>, String> {
-        // Short-circuiting logical operators need control flow.
         if matches!(op, BinaryOp::And | BinaryOp::Or) {
             return self.lower_logical(op, left, right);
         }
-        let l = self.lower_expr(left)?;
-        let r = self.lower_expr(right)?;
+        let l = self.lower_int(left)?;
+        let r = self.lower_int(right)?;
         let b = self.builder;
         Ok(match op {
             BinaryOp::Add => b.build_int_add(l, r, "add").unwrap(),
@@ -477,86 +695,71 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             BinaryOp::Lte => self.compare(IntPredicate::SLE, l, r),
             BinaryOp::Gt => self.compare(IntPredicate::SGT, l, r),
             BinaryOp::Gte => self.compare(IntPredicate::SGE, l, r),
-            BinaryOp::And | BinaryOp::Or => unreachable!("handled above"),
+            BinaryOp::And | BinaryOp::Or => unreachable!(),
         })
     }
 
     fn compare(&self, pred: IntPredicate, l: IntValue<'ctx>, r: IntValue<'ctx>) -> IntValue<'ctx> {
         let bit = self.builder.build_int_compare(pred, l, r, "cmp").unwrap();
-        self.builder
-            .build_int_z_extend(bit, self.i64_type, "cmp64")
-            .unwrap()
+        self.builder.build_int_z_extend(bit, self.i64t(), "cmp64").unwrap()
     }
 
-    /// Short-circuiting `&&` / `||`, result as 0/1 `i64`. Uses an entry-block
-    /// slot so mem2reg promotes it.
     fn lower_logical(
         &mut self,
         op: BinaryOp,
         left: &MirExpr,
         right: &MirExpr,
     ) -> Result<IntValue<'ctx>, String> {
-        let result = self.entry_alloca("logic");
-        let l = self.lower_expr(left)?;
+        let result = self.entry_alloca("logic", self.i64t().into());
+        let l = self.lower_int(left)?;
         let l_bool = self
             .builder
-            .build_int_compare(IntPredicate::NE, l, self.i64_type.const_zero(), "lb")
+            .build_int_compare(IntPredicate::NE, l, self.i64t().const_zero(), "lb")
             .unwrap();
-
         let rhs_bb = self.context.append_basic_block(self.llvm_fn, "logic.rhs");
         let short_bb = self.context.append_basic_block(self.llvm_fn, "logic.short");
         let cont_bb = self.context.append_basic_block(self.llvm_fn, "logic.cont");
-
         match op {
-            // a && b: if a -> eval b, else short-circuit to 0.
             BinaryOp::And => self
                 .builder
                 .build_conditional_branch(l_bool, rhs_bb, short_bb)
                 .unwrap(),
-            // a || b: if a -> short-circuit to 1, else eval b.
             BinaryOp::Or => self
                 .builder
                 .build_conditional_branch(l_bool, short_bb, rhs_bb)
                 .unwrap(),
             _ => unreachable!(),
         };
-
         self.builder.position_at_end(short_bb);
         let short_value = if matches!(op, BinaryOp::And) {
-            self.i64_type.const_zero()
+            self.i64t().const_zero()
         } else {
-            self.i64_type.const_int(1, false)
+            self.i64t().const_int(1, false)
         };
         self.builder.build_store(result, short_value).unwrap();
         self.builder.build_unconditional_branch(cont_bb).unwrap();
-
         self.builder.position_at_end(rhs_bb);
-        let r = self.lower_expr(right)?;
+        let r = self.lower_int(right)?;
         let r_bool = self
             .builder
-            .build_int_compare(IntPredicate::NE, r, self.i64_type.const_zero(), "rb")
+            .build_int_compare(IntPredicate::NE, r, self.i64t().const_zero(), "rb")
             .unwrap();
-        let r_i64 = self
-            .builder
-            .build_int_z_extend(r_bool, self.i64_type, "rb64")
-            .unwrap();
+        let r_i64 = self.builder.build_int_z_extend(r_bool, self.i64t(), "rb64").unwrap();
         self.builder.build_store(result, r_i64).unwrap();
         self.builder.build_unconditional_branch(cont_bb).unwrap();
-
         self.builder.position_at_end(cont_bb);
         Ok(self
             .builder
-            .build_load(self.i64_type, result, "logic.val")
+            .build_load(self.i64t(), result, "logic.val")
             .unwrap()
             .into_int_value())
     }
 
-    /// Lower a condition expression to an `i1` (compares the i64 value to 0).
     fn lower_cond(&mut self, expr: &MirExpr) -> Result<IntValue<'ctx>, String> {
-        let v = self.lower_expr(expr)?;
+        let v = self.lower_int(expr)?;
         Ok(self
             .builder
-            .build_int_compare(IntPredicate::NE, v, self.i64_type.const_zero(), "tobool")
+            .build_int_compare(IntPredicate::NE, v, self.i64t().const_zero(), "tobool")
             .unwrap())
     }
 }

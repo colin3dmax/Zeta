@@ -58,7 +58,7 @@ fn optimized_native_matches_interpreter() {
         Value::Int(n) => n,
         other => panic!("{other:?}"),
     };
-    let native = zeta::codegen::jit_run_i64_arg(&program, "bench", 1000).unwrap();
+    let native = zeta::codegen::jit_run_i64_arg(&program, &[], "bench", 1000).unwrap();
     assert_eq!(native, oracle, "optimized native bench(1000) must match interpreter");
 }
 
@@ -70,7 +70,7 @@ fn native_vs_c_hot_loop() {
 
     // --- Zeta → LLVM → native (call timed, compilation excluded) ---
     let (native_result, native_dt) =
-        zeta::codegen::jit_time_i64_arg(&program, "bench", N).expect("native bench");
+        zeta::codegen::jit_time_i64_arg(&program, &[], "bench", N).expect("native bench");
 
     // --- hand-written C at cc -O2 ---
     let dir = std::env::temp_dir();
