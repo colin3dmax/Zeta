@@ -64,11 +64,73 @@ pub fn jit_smoke_constant(value: i64) -> i64 {
 /// interpreter produces.
 pub fn jit_run_i64(program: &Program, entry: &str) -> Result<i64, String> {
     let context = Context::create();
+    let module = build_module(&context, program)?;
+    let engine = module
+        .create_jit_execution_engine(OptimizationLevel::None)
+        .map_err(|e| format!("JIT engine init failed: {e}"))?;
+    unsafe {
+        let compiled = engine
+            .get_function::<unsafe extern "C" fn() -> i64>(entry)
+            .map_err(|e| format!("entry `{entry}` not found: {e}"))?;
+        Ok(compiled.call())
+    }
+}
+
+/// Like [`jit_run_i64`] but the entry takes one `i64` argument, and the module
+/// is run through LLVM's `-O3` pipeline before JIT — i.e. real optimized native
+/// code (mem2reg promotes the local allocas to registers, loops are optimized).
+/// Used by the perf comparison: the runtime `arg` keeps the optimizer from
+/// constant-folding the whole computation away.
+pub fn jit_run_i64_arg(program: &Program, entry: &str, arg: i64) -> Result<i64, String> {
+    let context = Context::create();
+    let module = build_module(&context, program)?;
+    optimize_module(&module)?;
+    let engine = module
+        .create_jit_execution_engine(OptimizationLevel::Aggressive)
+        .map_err(|e| format!("JIT engine init failed: {e}"))?;
+    unsafe {
+        let compiled = engine
+            .get_function::<unsafe extern "C" fn(i64) -> i64>(entry)
+            .map_err(|e| format!("entry `{entry}` not found: {e}"))?;
+        Ok(compiled.call(arg))
+    }
+}
+
+/// Compile `entry` (one `i64` arg) to optimized native, then time ONLY the call
+/// (JIT/optimization happens before the clock starts). Returns (result, elapsed).
+/// This is the apples-to-apples measurement against a `cc -O2` C loop.
+pub fn jit_time_i64_arg(
+    program: &Program,
+    entry: &str,
+    arg: i64,
+) -> Result<(i64, std::time::Duration), String> {
+    let context = Context::create();
+    let module = build_module(&context, program)?;
+    optimize_module(&module)?;
+    let engine = module
+        .create_jit_execution_engine(OptimizationLevel::Aggressive)
+        .map_err(|e| format!("JIT engine init failed: {e}"))?;
+    unsafe {
+        let compiled = engine
+            .get_function::<unsafe extern "C" fn(i64) -> i64>(entry)
+            .map_err(|e| format!("entry `{entry}` not found: {e}"))?;
+        let start = std::time::Instant::now();
+        let result = compiled.call(arg);
+        let elapsed = start.elapsed();
+        Ok((result, elapsed))
+    }
+}
+
+/// Build (and verify) an LLVM module from the MIR program: declare all functions
+/// first (so calls resolve regardless of order), then lower each body.
+fn build_module<'ctx>(
+    context: &'ctx Context,
+    program: &Program,
+) -> Result<inkwell::module::Module<'ctx>, String> {
     let module = context.create_module("zeta_native");
     let builder = context.create_builder();
     let i64_type = context.i64_type();
 
-    // Pass 1: declare every function (so calls resolve regardless of order).
     let mut functions: HashMap<String, FunctionValue> = HashMap::new();
     for function in &program.functions {
         let param_types = vec![i64_type.into(); function.params.len()];
@@ -79,14 +141,13 @@ pub fn jit_run_i64(program: &Program, entry: &str) -> Result<i64, String> {
         );
     }
 
-    // Pass 2: lower each body.
     for function in &program.functions {
         let llvm_fn = functions[&function.name];
         let entry_bb = context.append_basic_block(llvm_fn, "entry");
         builder.position_at_end(entry_bb);
 
         let mut lower = FnLower {
-            context: &context,
+            context,
             builder: &builder,
             i64_type,
             functions: &functions,
@@ -95,7 +156,6 @@ pub fn jit_run_i64(program: &Program, entry: &str) -> Result<i64, String> {
             locals: HashMap::new(),
             loops: Vec::new(),
         };
-        // Allocate slots for params + all `let`-bound locals, then seed params.
         let mut names: Vec<String> = function.params.iter().map(|p| p.name.clone()).collect();
         collect_local_names(&function.body, &mut names);
         for name in &names {
@@ -107,31 +167,48 @@ pub fn jit_run_i64(program: &Program, entry: &str) -> Result<i64, String> {
                 .get_nth_param(index as u32)
                 .expect("param exists")
                 .into_int_value();
-            builder.build_store(lower.locals[&param.name], value).unwrap();
+            builder
+                .build_store(lower.locals[&param.name], value)
+                .unwrap();
         }
 
         let terminated = lower.lower_stmts(&function.body)?;
         if !terminated {
-            // Fall-through (e.g. a Unit-returning function): default to 0.
-            builder
-                .build_return(Some(&i64_type.const_zero()))
-                .unwrap();
+            builder.build_return(Some(&i64_type.const_zero())).unwrap();
         }
     }
 
     module
         .verify()
         .map_err(|e| format!("LLVM module verification failed: {e}"))?;
+    Ok(module)
+}
 
-    let engine = module
-        .create_jit_execution_engine(OptimizationLevel::None)
-        .map_err(|e| format!("JIT engine init failed: {e}"))?;
-    unsafe {
-        let compiled = engine
-            .get_function::<unsafe extern "C" fn() -> i64>(entry)
-            .map_err(|e| format!("entry `{entry}` not found: {e}"))?;
-        Ok(compiled.call())
-    }
+/// Run the host-targeted LLVM `-O3` pass pipeline over the module in place.
+fn optimize_module(module: &inkwell::module::Module) -> Result<(), String> {
+    use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine};
+
+    Target::initialize_native(&InitializationConfig::default())
+        .map_err(|e| format!("native target init failed: {e}"))?;
+    let triple = TargetMachine::get_default_triple();
+    let target = Target::from_triple(&triple).map_err(|e| format!("target lookup failed: {e}"))?;
+    let machine = target
+        .create_target_machine(
+            &triple,
+            TargetMachine::get_host_cpu_name().to_str().unwrap_or(""),
+            TargetMachine::get_host_cpu_features().to_str().unwrap_or(""),
+            OptimizationLevel::Aggressive,
+            RelocMode::Default,
+            CodeModel::Default,
+        )
+        .ok_or("could not create host target machine")?;
+    module
+        .run_passes(
+            "default<O3>",
+            &machine,
+            inkwell::passes::PassBuilderOptions::create(),
+        )
+        .map_err(|e| format!("optimization passes failed: {e}"))
 }
 
 /// Recursively collect the names bound by `let` (MirStmt::Local) anywhere in the
