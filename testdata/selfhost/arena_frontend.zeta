@@ -8116,112 +8116,12 @@ fn tcx_global(arena: Arena, mir: Mir) -> Tcx {
   };
 }
 
-// Record local types declared in a block (recursing into if / while bodies);
-// each let's type is its annotation, else the inferred type of its initializer.
-fn tcx_scan_lets(tcx: Tcx, mir: Mir, start: Int, count: Int) -> Tcx {
-  let mut acc: Tcx = tcx;
-  let mut i: Int = 0;
-  while i < count {
-    let s: Int = mir.mblock_list[start + i];
-    let k: Int = mir.ms_kind[s];
-    if k == mir_local_stmt() {
-      let mut ty: String = "Int";
-      if mir.ms_has_type[s] == 1 {
-        ty = mir.ms_type[s];
-      } else {
-        ty = type_of_expr(acc, mir, mir.ms_expr[s]);
-      }
-      acc.loc_name = string_array_push(acc.loc_name, mir.ms_name[s]);
-      acc.loc_type = string_array_push(acc.loc_type, ty);
-    }
-    if k == mir_if_stmt() {
-      acc = tcx_scan_lets(acc, mir, mir.ms_then_start[s], mir.ms_then_count[s]);
-      acc = tcx_scan_lets(acc, mir, mir.ms_else_start[s], mir.ms_else_count[s]);
-    }
-    if k == mir_while_stmt() {
-      acc = tcx_scan_lets(acc, mir, mir.ms_then_start[s], mir.ms_then_count[s]);
-    }
-    if k == mir_match_stmt() {
-      let astart: Int = mir.ms_then_start[s];
-      let acount: Int = mir.ms_then_count[s];
-      let mvty: String = type_of_expr(acc, mir, mir.ms_expr[s]);
-      let mut ai: Int = 0;
-      while ai < acount {
-        let pat: String = mir.marm_pattern[astart + ai];
-        if string_starts_with(pat, "name:") {
-          acc.loc_name = string_array_push(acc.loc_name, pattern_binding(pat));
-          acc.loc_type = string_array_push(acc.loc_type, mvty);
-        }
-        if string_starts_with(pat, "variant:") {
-          let bnd: String = pattern_binding(pat);
-          if string_len(bnd) > 0 {
-            acc.loc_name = string_array_push(acc.loc_name, bnd);
-            acc.loc_type = string_array_push(acc.loc_type,
-              variant_payload_type(acc, pattern_variant_enum(pat), pattern_variant_name(pat)));
-          }
-        }
-        acc = tcx_scan_lets(acc, mir, mir.marm_body_start[astart + ai], mir.marm_body_count[astart + ai]);
-        ai = ai + 1;
-      }
-    }
-    if k == mir_for_range_stmt() {
-      acc.loc_name = string_array_push(acc.loc_name, mir.ms_name[s]);
-      acc.loc_type = string_array_push(acc.loc_type, "Int");
-      acc = tcx_scan_lets(acc, mir, mir.ms_then_start[s], mir.ms_then_count[s]);
-    }
-    if k == mir_for_in_stmt() {
-      acc.loc_name = string_array_push(acc.loc_name, mir.ms_name[s]);
-      acc.loc_type = string_array_push(acc.loc_type,
-        array_elem_type(type_of_expr(acc, mir, mir.ms_expr[s])));
-      acc = tcx_scan_lets(acc, mir, mir.ms_then_start[s], mir.ms_then_count[s]);
-    }
-    if k == mir_for_c_stmt() {
-      let init: Int = mir.ms_init[s];
-      if mir.ms_kind[init] == mir_local_stmt() {
-        let mut ity: String = "Int";
-        if mir.ms_has_type[init] == 1 {
-          ity = mir.ms_type[init];
-        } else {
-          ity = type_of_expr(acc, mir, mir.ms_expr[init]);
-        }
-        acc.loc_name = string_array_push(acc.loc_name, mir.ms_name[init]);
-        acc.loc_type = string_array_push(acc.loc_type, ity);
-      }
-      acc = tcx_scan_lets(acc, mir, mir.ms_then_start[s], mir.ms_then_count[s]);
-    }
-    i = i + 1;
-  }
-  return acc;
-}
-
-// Per-function context: params first, then every let, layered on the globals.
-fn tcx_with_scope(g: Tcx, mir: Mir, fi: Int) -> Tcx {
-  let mut t: Tcx = g;
-  t.loc_name = string_array_empty();
-  t.loc_type = string_array_empty();
-  let pstart: Int = mir.mf_param_start[fi];
-  let pcount: Int = mir.mf_param_count[fi];
-  let mut pi: Int = 0;
-  while pi < pcount {
-    t.loc_name = string_array_push(t.loc_name, mir.mp_name[pstart + pi]);
-    t.loc_type = string_array_push(t.loc_type, mir.mp_type[pstart + pi]);
-    pi = pi + 1;
-  }
-  t = tcx_scan_lets(t, mir, mir.mf_body_start[fi], mir.mf_body_count[fi]);
-  return t;
-}
-
 fn llvm_reg_name(n: Int) -> String {
   return string_concat("%t", int_to_string(n));
 }
 
 fn llvm_label_name(n: Int) -> String {
   return string_concat("b", int_to_string(n));
-}
-
-// The alloca pointer for a local / param: `%<name>.slot`.
-fn llvm_slot_ref(name: String) -> String {
-  return string_concat(string_concat("%", name), ".slot");
 }
 
 fn llvm_arith_op(op: String) -> String {
@@ -10030,79 +9930,6 @@ fn llvm_block(em: Emit, mir: Mir, start: Int, count: Int, brk: Int, cont: Int) -
   e.tcx.loc_slot = saved_slot;
   e.tcx.loc_type = saved_type;
   return e;
-}
-
-fn llvm_name_seen(names: StringArray, name: String) -> Bool {
-  let mut i: Int = 0;
-  while i < names.len {
-    if names[i] == name {
-      return true;
-    }
-    i = i + 1;
-  }
-  return false;
-}
-
-// Collect distinct local names declared anywhere in a block (recursing into
-// if / while bodies) so all allocas can be hoisted to the entry block.
-fn llvm_collect_locals(mir: Mir, start: Int, count: Int, names: StringArray) -> StringArray {
-  let mut acc: StringArray = names;
-  let mut i: Int = 0;
-  while i < count {
-    let s: Int = mir.mblock_list[start + i];
-    let k: Int = mir.ms_kind[s];
-    if k == mir_local_stmt() {
-      if !llvm_name_seen(acc, mir.ms_name[s]) {
-        acc = string_array_push(acc, mir.ms_name[s]);
-      }
-    }
-    if k == mir_if_stmt() {
-      acc = llvm_collect_locals(mir, mir.ms_then_start[s], mir.ms_then_count[s], acc);
-      acc = llvm_collect_locals(mir, mir.ms_else_start[s], mir.ms_else_count[s], acc);
-    }
-    if k == mir_while_stmt() {
-      acc = llvm_collect_locals(mir, mir.ms_then_start[s], mir.ms_then_count[s], acc);
-    }
-    if k == mir_match_stmt() {
-      let astart: Int = mir.ms_then_start[s];
-      let acount: Int = mir.ms_then_count[s];
-      let mut ai: Int = 0;
-      while ai < acount {
-        let pat: String = mir.marm_pattern[astart + ai];
-        let mut bnd: String = "";
-        if string_starts_with(pat, "name:") {
-          bnd = pattern_binding(pat);
-        }
-        if string_starts_with(pat, "variant:") {
-          bnd = pattern_binding(pat);
-        }
-        if string_len(bnd) > 0 {
-          if !llvm_name_seen(acc, bnd) {
-            acc = string_array_push(acc, bnd);
-          }
-        }
-        acc = llvm_collect_locals(mir, mir.marm_body_start[astart + ai], mir.marm_body_count[astart + ai], acc);
-        ai = ai + 1;
-      }
-    }
-    if k == mir_for_range_stmt() || k == mir_for_in_stmt() {
-      if !llvm_name_seen(acc, mir.ms_name[s]) {
-        acc = string_array_push(acc, mir.ms_name[s]);
-      }
-      acc = llvm_collect_locals(mir, mir.ms_then_start[s], mir.ms_then_count[s], acc);
-    }
-    if k == mir_for_c_stmt() {
-      let init: Int = mir.ms_init[s];
-      if mir.ms_kind[init] == mir_local_stmt() {
-        if !llvm_name_seen(acc, mir.ms_name[init]) {
-          acc = string_array_push(acc, mir.ms_name[init]);
-        }
-      }
-      acc = llvm_collect_locals(mir, mir.ms_then_start[s], mir.ms_then_count[s], acc);
-    }
-    i = i + 1;
-  }
-  return acc;
 }
 
 fn llvm_emit_function(mir: Mir, g: Tcx, fi: Int, gcount_in: Int, globals_in: String) -> FnResult {

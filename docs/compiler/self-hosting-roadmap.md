@@ -43,6 +43,7 @@ Zeta 语言**当前**缺以下能力(写编译器会撞墙):
 | **M6** | 用 Zeta 写 **MIR 解释器后端** | M5 | 大 | Zeta 跑程序结果 == Rust 跑 | ✅ |
 | **M7** | **自举闭环**:Zeta 编译器编译自己 | M2–M6 | 中(集成) | fixpoint:Stage1 编译 Stage1 | ✅ |
 | **后端** | MIR→LLVM native(JIT/AOT)+ 自举前端 AOT 成独立 exe | M7 | 大(独立线) | native==解释器差分 + AOT 逐字节 | ✅ |
+| **Stage2** | **Zeta 写 MIR→LLVM-IR 后端**;整前端经它编成 native 并跑通 | 后端 | 大 | 整前端 native 跑逐字节对齐解释器 | ✅ |
 
 ## 3. 里程碑详情
 
@@ -114,9 +115,9 @@ Zeta 语言**当前**缺以下能力(写编译器会撞墙):
 
 **M0–M7 + native 后端全部达成**(2026-06-14)。`arena_frontend.zeta` 是用 Zeta 写的完整前端,经 fixpoint 证明能处理自身源码并逐字对齐 Rust oracle;native 后端进一步把它 AOT 成脱离 Stage0 的独立可执行。三条并行线(自举 / hot-reload / native)的预定目标均已落地,详见 `docs/compiler/handoff.md`。
 
-**已无预定义里程碑。** 真正脱离 Stage0 的剩余只是"工程化收口"与 nice-to-have,均非阻塞:
+**✅ 真正的 Stage2 已达成(2026-06-15)。** `arena_frontend.zeta` 内新增 **Zeta 写的 MIR→LLVM-IR-文本后端**(`compile(src,"llvm")`,见 Stage2 切片 1-8 + capstone),覆盖标量/struct/数组(Int/Bool/String)/string/enum-match/for + 块级作用域。**整个自举前端被这个 Zeta 端 codegen 编成 native 机器码并正确运行,逐字节对齐 Stage0 解释器**(`tests/selfhost_llvm.rs` 的 `frontend_emits_compilable_ir` + `frontend_runs_native_matches_oracle`)。Zeta 编译器自身(非 Rust 侧 `src/codegen.rs`)为它自己的前端产 native 码——这是脱离 Rust codegen 的真正自举。
 
-- **真正的 Stage2(Zeta 编译 Zeta 产 native)**:目前自举链是 Zeta 前端 + Zeta MIR **解释器**;若要 `zetac.zeta` 自身也走 native codegen(而非 Rust 侧的 `src/codegen.rs`),需用 Zeta 重写 MIR→LLVM 后端——独立大工程,当前用 Rust 后端 AOT 已达成"独立二进制"目标,故非必需。
+**剩余只是 nice-to-have,均非阻塞:**
 - **语法边界补全**:Rust parser 仍有不支持的语法(neg/else-if/复杂赋值目标等,见 `rust-parser-unsupported-boundaries` 记忆),补齐可放宽自举语料。
 - **后端广度/性能**:native 已是 C 级(1.04x 同语义);更多 hot-reload 状态类型、call-site patching 把"每帧一跳间接"压到零等,均为边际增强。
 
