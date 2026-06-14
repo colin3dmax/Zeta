@@ -15,8 +15,17 @@ path = "src/main.rs"
 [dependencies]
 nu-ansi-term = { version = "0.50.3", optional = true }
 reedline = { version = "0.48.0", optional = true }
+# Experimental native backend. Optional + behind the `llvm` feature so the
+# default build/test needs no LLVM toolchain. Targets the system LLVM 22
+# (`LLVM_SYS_221_PREFIX=$(brew --prefix llvm)`); see src/codegen.rs.
+# `prefer-dynamic`: link the single libLLVM-22.dylib (which bundles zstd/z3/
+# xml2) instead of LLVM's static component libs — avoids pulling those separate
+# system deps onto the link line (where Intel /usr/local x86_64 copies shadow
+# the arm64 ones).
+inkwell = { version = "0.9.0", optional = true, features = ["llvm22-1-prefer-dynamic"] }
 
 [features]
 default = []
 repl-rich = ["dep:nu-ansi-term", "dep:reedline"]
 nu-ansi-term = ["dep:nu-ansi-term"]
+llvm = ["dep:inkwell"]

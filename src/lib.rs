@@ -1,4 +1,6 @@
 pub mod ast;
+#[cfg(feature = "llvm")]
+pub mod codegen;
 pub mod diagnostic;
 pub mod hir;
 pub mod lexer;
