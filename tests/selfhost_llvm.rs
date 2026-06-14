@@ -959,3 +959,63 @@ fn main() -> Int {\n\
     combined.push_str(appended);
     check(&combined);
 }
+
+/// Measurement (not an assertion): time each phase and compare a native
+/// frontend `compile(prog,"mir-dump")` call to the interpreter doing the same,
+/// to find the real bottleneck before optimizing.
+#[test]
+#[ignore]
+fn bench_native_run() {
+    use std::time::Instant;
+    let mut prog = String::new();
+    for i in 0..50 {
+        prog.push_str(&format!(
+            "fn f{i}(x: Int) -> Int {{ let a: Int = x + {i}; if a > 5 {{ return a * 2; }} return a; }}\n"
+        ));
+    }
+    prog.push_str("fn main() -> Int { return f0(1); }\n");
+
+    let t = Instant::now();
+    let ir = emit_ir(FRONTEND_SOURCE);
+    println!("emit_ir: {:.1}s, ir={} KB", t.elapsed().as_secs_f64(), ir.len() / 1024);
+
+    let k: usize = 200;
+    let dir = std::env::temp_dir().join(format!("zeta_bench_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("f.ll"), &ir).unwrap();
+    let driver = format!(
+        "#include <stdio.h>\n#include <string.h>\n#include <stdlib.h>\nstruct ZStr {{ long len; char* ptr; }};\nstruct ZStr z_compile(struct ZStr, struct ZStr);\nint main(int c, char**v){{ int K=atoi(v[1]); const char* p={prog:?}; const char* m=\"mir-dump\"; struct ZStr s={{(long)strlen(p),(char*)p}}; struct ZStr mo={{(long)strlen(m),(char*)m}}; long acc=0; for(int i=0;i<K;i++){{ struct ZStr r=z_compile(s,mo); acc+=r.len; }} printf(\"%ld\\n\",acc); return 0; }}\n",
+        prog = prog,
+    );
+    std::fs::write(dir.join("d.c"), driver).unwrap();
+    let tc = Instant::now();
+    let exe = dir.join("b");
+    let cc = Command::new(clang_path())
+        .arg("-O2")
+        .arg(dir.join("f.ll"))
+        .arg(dir.join("d.c"))
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .unwrap();
+    assert!(cc.status.success(), "{}", String::from_utf8_lossy(&cc.stderr));
+    println!("clang -O2: {:.1}s", tc.elapsed().as_secs_f64());
+    let tr = Instant::now();
+    let run = Command::new(&exe).arg(k.to_string()).output().unwrap();
+    assert!(run.status.success());
+    let nt = tr.elapsed().as_secs_f64();
+    println!("native: {} calls in {:.2}s = {:.3}ms/call", k, nt, nt * 1000.0 / k as f64);
+
+    let combined = format!(
+        "{FRONTEND_SOURCE}\nfn zz() -> Int {{ let d: String = compile({lit}, \"mir-dump\"); return string_len(d); }}\nfn main() -> Int {{ return zz(); }}\n",
+        lit = zeta_string_literal(&prog),
+    );
+    let ti = Instant::now();
+    let _ = zeta::module_graph::run_sources(&[source_file(
+        "testdata/selfhost/arena_frontend.zeta",
+        &combined,
+    )])
+    .unwrap();
+    println!("interp: 1 call in {:.2}s", ti.elapsed().as_secs_f64());
+    let _ = std::fs::remove_dir_all(&dir);
+}
