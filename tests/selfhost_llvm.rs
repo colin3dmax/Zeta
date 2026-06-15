@@ -897,6 +897,71 @@ fn main() -> Int { return g(true) * 10 + g(false); }";
     assert_eq!(check(src), 35);
 }
 
+// --- Float (P1) back-ported into the self-hosting emitter --------------------
+// `double` constants + fadd/fsub/fmul/fdiv + fcmp; main returns Int (the driver
+// reads z_main as i64), so floats are reduced to an Int via comparison.
+
+#[test]
+fn float_add_compare_emit() {
+    let src = "\
+fn main() -> Int {
+  let x: Float = 1.5 + 2.5;
+  if x > 3.9 { return 1; }
+  return 0;
+}";
+    assert_eq!(check(src), 1);
+}
+
+#[test]
+fn float_arithmetic_chain_emit() {
+    let src = "\
+fn main() -> Int {
+  let x: Float = 3.0;
+  let y: Float = 2.0;
+  let r: Float = x * y - x / y;
+  if r > 4.4 { if r < 4.6 { return 7; } }
+  return 0;
+}";
+    assert_eq!(check(src), 7);
+}
+
+#[test]
+fn float_neg_and_param_emit() {
+    let src = "\
+fn scale(x: Float, k: Float) -> Float { return x * k; }
+fn main() -> Int {
+  let r: Float = scale(1.5, 4.0);
+  let n: Float = -r;
+  if n < 0.0 { if r > 5.9 { if r < 6.1 { return 3; } } }
+  return 0;
+}";
+    assert_eq!(check(src), 3);
+}
+
+#[test]
+fn float_equality_emit() {
+    let src = "\
+fn main() -> Int {
+  let a: Float = 1.0 + 1.0;
+  if a == 2.0 { if a != 3.0 { return 1; } }
+  return 0;
+}";
+    assert_eq!(check(src), 1);
+}
+
+#[test]
+fn float_loop_accumulate_emit() {
+    let src = "\
+fn main() -> Int {
+  let mut acc: Float = 0.0;
+  let mut i: Int = 0;
+  while i < 4 { acc = acc + 0.5; i = i + 1; }
+  if acc > 1.9 { if acc < 2.1 { return 1; } }
+  return 0;
+}";
+    assert_eq!(check(src), 1);
+}
+
 /// Capstone probe: emit LLVM IR for the ENTIRE self-hosting frontend via the
 /// Zeta-side codegen (`compile(frontend, "llvm")`) and assert clang compiles it
 /// to an object. Proves the Zeta emitter covers every construct the frontend

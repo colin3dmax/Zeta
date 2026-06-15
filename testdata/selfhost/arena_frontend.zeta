@@ -8055,6 +8055,9 @@ fn llvm_ty(tcx: Tcx, ty: String) -> String {
   if ty == "Bool" {
     return "i64";
   }
+  if ty == "Float" {
+    return "double";
+  }
   if ty == "String" {
     return "%zstr";
   }
@@ -8076,6 +8079,9 @@ fn type_of_expr(tcx: Tcx, mir: Mir, node: Int) -> String {
   if kind == mir_int_expr() {
     return "Int";
   }
+  if kind == mir_float_expr() {
+    return "Float";
+  }
   if kind == mir_bool_expr() {
     return "Bool";
   }
@@ -8089,11 +8095,19 @@ fn type_of_expr(tcx: Tcx, mir: Mir, node: Int) -> String {
     if mir.me_text[node] == "not" {
       return "Bool";
     }
-    return "Int";
+    // Neg preserves the operand type (Float stays Float).
+    return type_of_expr(tcx, mir, mir.me_a[node]);
   }
   if kind == mir_binary_expr() {
     let op: String = mir.me_text[node];
     if llvm_is_arith(op) {
+      // Arithmetic yields the operand type; Float if either side is Float.
+      if type_of_expr(tcx, mir, mir.me_a[node]) == "Float" {
+        return "Float";
+      }
+      if type_of_expr(tcx, mir, mir.me_b[node]) == "Float" {
+        return "Float";
+      }
       return "Int";
     }
     return "Bool";
@@ -8215,6 +8229,15 @@ fn llvm_is_arith(op: String) -> Bool {
       || op == "bit_and" || op == "bit_or" || op == "bit_xor";
 }
 
+// Float arithmetic opcodes (only +-*/ are valid on Float; mod/bitwise are Int-only).
+fn llvm_farith_op(op: String) -> String {
+  if op == "add" { return "fadd"; }
+  if op == "sub" { return "fsub"; }
+  if op == "mul" { return "fmul"; }
+  if op == "div" { return "fdiv"; }
+  return "fadd";
+}
+
 fn llvm_cmp_pred(op: String) -> String {
   if op == "eq" { return "eq"; }
   if op == "not_eq" { return "ne"; }
@@ -8223,6 +8246,17 @@ fn llvm_cmp_pred(op: String) -> String {
   if op == "gt" { return "sgt"; }
   if op == "gte" { return "sge"; }
   return "eq";
+}
+
+// Ordered float comparison predicates (mirror the Rust backend's O-prefixed fcmp).
+fn llvm_fcmp_pred(op: String) -> String {
+  if op == "eq" { return "oeq"; }
+  if op == "not_eq" { return "one"; }
+  if op == "lt" { return "olt"; }
+  if op == "lte" { return "ole"; }
+  if op == "gt" { return "ogt"; }
+  if op == "gte" { return "oge"; }
+  return "oeq";
 }
 
 fn llvm_is_cmp(op: String) -> Bool {
@@ -8256,6 +8290,11 @@ fn llvm_normalize_bool(em: Emit, vref: String) -> EmitVal {
 fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
   let kind: Int = mir.me_kind[node];
   if kind == mir_int_expr() {
+    return EmitVal { em: em, vref: mir.me_text[node] };
+  }
+  if kind == mir_float_expr() {
+    // The literal text (`1.5`, `2.0`) is a valid LLVM `double` immediate for
+    // exactly-representable values (which the test corpus uses).
     return EmitVal { em: em, vref: mir.me_text[node] };
   }
   if kind == mir_bool_expr() {
@@ -8324,8 +8363,13 @@ fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
       let rn: String = llvm_reg_name(r);
       e.out = string_concat(e.out, "  ");
       e.out = string_concat(e.out, rn);
-      e.out = string_concat(e.out, " = sub i64 0, ");
-      e.out = string_concat(e.out, operand.vref);
+      if type_of_expr(e.tcx, mir, mir.me_a[node]) == "Float" {
+        e.out = string_concat(e.out, " = fneg double ");
+        e.out = string_concat(e.out, operand.vref);
+      } else {
+        e.out = string_concat(e.out, " = sub i64 0, ");
+        e.out = string_concat(e.out, operand.vref);
+      }
       e.out = string_concat(e.out, "\n");
       return EmitVal { em: e, vref: rn };
     }
@@ -8421,6 +8465,8 @@ fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
       }
       return emit_zext_i1(andbit.em, andbit.bit);
     }
+    let operands_float: Bool = type_of_expr(e.tcx, mir, mir.me_a[node]) == "Float"
+        || type_of_expr(e.tcx, mir, mir.me_b[node]) == "Float";
     if llvm_is_arith(op) {
       let r: Int = e.reg;
       e.reg = e.reg + 1;
@@ -8428,8 +8474,13 @@ fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
       e.out = string_concat(e.out, "  ");
       e.out = string_concat(e.out, rn);
       e.out = string_concat(e.out, " = ");
-      e.out = string_concat(e.out, llvm_arith_op(op));
-      e.out = string_concat(e.out, " i64 ");
+      if operands_float {
+        e.out = string_concat(e.out, llvm_farith_op(op));
+        e.out = string_concat(e.out, " double ");
+      } else {
+        e.out = string_concat(e.out, llvm_arith_op(op));
+        e.out = string_concat(e.out, " i64 ");
+      }
       e.out = string_concat(e.out, left.vref);
       e.out = string_concat(e.out, ", ");
       e.out = string_concat(e.out, right.vref);
@@ -8442,9 +8493,15 @@ fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
       let rn: String = llvm_reg_name(r);
       e.out = string_concat(e.out, "  ");
       e.out = string_concat(e.out, rn);
-      e.out = string_concat(e.out, " = icmp ");
-      e.out = string_concat(e.out, llvm_cmp_pred(op));
-      e.out = string_concat(e.out, " i64 ");
+      if operands_float {
+        e.out = string_concat(e.out, " = fcmp ");
+        e.out = string_concat(e.out, llvm_fcmp_pred(op));
+        e.out = string_concat(e.out, " double ");
+      } else {
+        e.out = string_concat(e.out, " = icmp ");
+        e.out = string_concat(e.out, llvm_cmp_pred(op));
+        e.out = string_concat(e.out, " i64 ");
+      }
       e.out = string_concat(e.out, left.vref);
       e.out = string_concat(e.out, ", ");
       e.out = string_concat(e.out, right.vref);
@@ -10205,9 +10262,13 @@ fn llvm_emit_function(mir: Mir, g: Tcx, fi: Int, gcount_in: Int, globals_in: Str
       if retty == "i64" {
         body = string_concat(body, "  ret i64 0\n");
       } else {
-        body = string_concat(body, "  ret ");
-        body = string_concat(body, retty);
-        body = string_concat(body, " zeroinitializer\n");
+        if retty == "double" {
+          body = string_concat(body, "  ret double 0.0\n");
+        } else {
+          body = string_concat(body, "  ret ");
+          body = string_concat(body, retty);
+          body = string_concat(body, " zeroinitializer\n");
+        }
       }
     } else {
       body = string_concat(body, "  ret void\n");
