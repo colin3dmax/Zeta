@@ -99,6 +99,14 @@ fn mir_matches_oracle_on_basic_function() {
 }
 
 #[test]
+fn mir_matches_oracle_on_tuple() {
+    // Tuple (P2) back-ported: tuple literal lowers to `tuple (...)`, `.N` to field.
+    assert_lowering_matches_oracle(
+        "fn f() -> Int { let t = (1, (2, 3)); return t.0 + t.1.0 + t.1.1; }",
+    );
+}
+
+#[test]
 fn mir_matches_oracle_on_float() {
     // Float (P1) back-ported into the self-hosting frontend: lowering + mir-dump
     // ("const Float ...") must match the Rust oracle.

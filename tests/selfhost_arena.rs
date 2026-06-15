@@ -557,3 +557,27 @@ fn arena_matches_oracle_on_float_and_int_distinct() {
         "fn f() -> Int { let a: Float = 0.5; let mut s: Int = 0; for i in 0..3 { s = s + i; } return s; }",
     );
 }
+
+// --- Tuple (P2 feature back-ported into the self-hosting frontend) ----------
+
+#[test]
+fn arena_matches_oracle_on_tuple_literal() {
+    assert_matches_oracle("fn f() -> Int { let t = (10, 20, 30); return t.0 + t.1 + t.2; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_tuple_grouping_distinct() {
+    // `(a)` is grouping (not a 1-tuple); `(a, b)` is a tuple.
+    assert_matches_oracle("fn f() -> Int { let x = (3 + 4) * 2; let t = (1, 2); return x + t.0; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_tuple_nested_index() {
+    // `t.1.0` lexes as a single Float token and must split into two indices.
+    assert_matches_oracle("fn f() -> Int { let t = (1, (2, 3)); return t.0 + t.1.0 + t.1.1; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_tuple_heterogeneous() {
+    assert_matches_oracle("fn f() -> Int { let t = (7, true); if t.1 { return t.0; } return 0; }");
+}

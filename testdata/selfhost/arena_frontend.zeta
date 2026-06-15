@@ -45,6 +45,7 @@ fn array_node() -> Int { return 9; }
 fn struct_lit_node() -> Int { return 10; }
 fn range_node() -> Int { return 11; }
 fn float_node() -> Int { return 12; }
+fn tuple_node() -> Int { return 13; }
 
 // Top-level item kinds (the item list is dumped in source order).
 fn item_import() -> Int { return 0; }
@@ -436,6 +437,20 @@ fn push_field_node(arena: Arena, base: Int, field: String, span_start: Int, span
 fn push_array_node(arena: Arena, elem_start: Int, elem_count: Int, full_start: Int, full_end: Int) -> Arena {
   let mut a: Arena = arena;
   a.node_kind = int_array_push(a.node_kind, array_node());
+  a.node_a = int_array_push(a.node_a, elem_start);
+  a.node_b = int_array_push(a.node_b, elem_count);
+  a.node_text = string_array_push(a.node_text, "");
+  a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
+  a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
+  a.node_full_start = int_array_push(a.node_full_start, full_start);
+  a.node_full_end = int_array_push(a.node_full_end, full_end);
+  return a;
+}
+
+// Tuple literal: like an array, element node indices live in child_list[a..a+n].
+fn push_tuple_node(arena: Arena, elem_start: Int, elem_count: Int, full_start: Int, full_end: Int) -> Arena {
+  let mut a: Arena = arena;
+  a.node_kind = int_array_push(a.node_kind, tuple_node());
   a.node_a = int_array_push(a.node_a, elem_start);
   a.node_b = int_array_push(a.node_b, elem_count);
   a.node_text = string_array_push(a.node_text, "");
@@ -1517,6 +1532,32 @@ fn parse_postfix(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, al
       a = push_index_node(a, node, idx.node,
                           a.node_full_start[node], a.token_start[p - 1] + 1);
       node = new_index;
+    } else if kinds[p + 1] == token_float() {
+      // `t.1.0` lexes as `.` then a single Float token `1.0` — split it into two
+      // consecutive tuple indices (`.1` then `.0`), both carrying the float
+      // token's span (mirrors the Rust parser).
+      p = p + 1;
+      let ftext: String = texts[p];
+      let fstart: Int = a.token_start[p];
+      let fend: Int = fstart + string_len(ftext);
+      p = p + 1;
+      // Find the single `.` and split the digits around it.
+      let mut dotpos: Int = 0;
+      let mut di: Int = 0;
+      while di < string_len(ftext) {
+        if string_byte_at(ftext, di) == 46 {
+          dotpos = di;
+        }
+        di = di + 1;
+      }
+      let first: String = string_byte_slice(ftext, 0, dotpos);
+      let second: String = string_byte_slice(ftext, dotpos + 1, string_len(ftext) - dotpos - 1);
+      let ni1: Int = a.node_kind.len;
+      a = push_field_node(a, node, first, fstart, fend, a.node_full_start[node], fend);
+      node = ni1;
+      let ni2: Int = a.node_kind.len;
+      a = push_field_node(a, node, second, fstart, fend, a.node_full_start[node], fend);
+      node = ni2;
     } else {
       // "." NAME — field access (calls were already absorbed in parse_primary).
       p = p + 1;
@@ -1540,15 +1581,43 @@ fn parse_postfix(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, al
 //          | "(" expr ")"
 fn parse_primary(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, allow_struct: Int) -> ParseResult {
   if kinds[pos] == token_lparen() {
-    // A parenthesized expression keeps the inner node (and its full span)
-    // unchanged — the Rust parser's LParen branch likewise returns the inner
-    // expr without widening its span to the parens.
+    // `(a, b, ...)` is a tuple; `(a)` without a comma is plain grouping and
+    // returns the inner node unchanged (Rust does the same).
     let inner: ParseResult = parse_expr_with(arena, kinds, texts, pos + 1, allow_struct);
+    let mut a: Arena = inner.arena;
     let mut p: Int = inner.pos;
+    if p < kinds.len && kinds[p] == token_comma() {
+      // Tuple: collect element node indices (first one already parsed).
+      let mut elems: IntArray = int_array_push(int_array_empty(), inner.node);
+      while p < kinds.len && kinds[p] == token_comma() {
+        p = p + 1;
+        if p < kinds.len && kinds[p] == token_rparen() {
+          // trailing comma
+        } else {
+          let el: ParseResult = parse_expr_with(a, kinds, texts, p, allow_struct);
+          a = el.arena;
+          p = el.pos;
+          elems = int_array_push(elems, el.node);
+        }
+      }
+      if p < kinds.len && kinds[p] == token_rparen() {
+        p = p + 1;
+      }
+      let start: Int = a.child_list.len;
+      let count: Int = elems.len;
+      let mut i: Int = 0;
+      while i < count {
+        a.child_list = int_array_push(a.child_list, elems[i]);
+        i = i + 1;
+      }
+      let new_index: Int = a.node_kind.len;
+      a = push_tuple_node(a, start, count, a.token_start[pos], a.token_start[p - 1] + 1);
+      return ParseResult { arena: a, node: new_index, pos: p };
+    }
     if p < kinds.len && kinds[p] == token_rparen() {
       p = p + 1;
     }
-    return ParseResult { arena: inner.arena, node: inner.node, pos: p };
+    return ParseResult { arena: a, node: inner.node, pos: p };
   }
   if kinds[pos] == token_lbracket() {
     return parse_array_literal(arena, kinds, texts, pos, allow_struct);
@@ -2136,6 +2205,18 @@ fn dump_expr(out: String, arena: Arena, node: Int, depth: Int) -> String {
   if kind == array_node() {
     let mut next: String = string_concat(out, pad);
     next = string_concat(next, "ArrayLiteral\n");
+    let start: Int = arena.node_a[node];
+    let count: Int = arena.node_b[node];
+    let mut i: Int = 0;
+    while i < count {
+      next = dump_expr(next, arena, arena.child_list[start + i], depth + 1);
+      i = i + 1;
+    }
+    return next;
+  }
+  if kind == tuple_node() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "Tuple\n");
     let start: Int = arena.node_a[node];
     let count: Int = arena.node_b[node];
     let mut i: Int = 0;
@@ -3461,7 +3542,7 @@ fn resolve_expr(state: ResolveState, node: Int) -> ResolveState {
     s = resolve_expr(s, arena.node_a[node]);
     return s;
   }
-  if kind == array_node() {
+  if kind == array_node() || kind == tuple_node() {
     let start: Int = arena.node_a[node];
     let count: Int = arena.node_b[node];
     let mut i: Int = 0;
@@ -4957,6 +5038,7 @@ fn mir_field_expr() -> Int { return 9; }
 fn mir_array_expr() -> Int { return 10; }
 fn mir_index_expr() -> Int { return 11; }
 fn mir_float_expr() -> Int { return 12; }
+fn mir_tuple_expr() -> Int { return 13; }
 
 // MIR place kinds (assignment left-values).
 fn mir_place_local() -> Int { return 0; }
@@ -5262,6 +5344,28 @@ fn lower_expr(arena: Arena, enums: EnumTable, mir: Mir, node: Int) -> MirResult 
     }
     let index: Int = mm.me_kind.len;
     mm = push_mir_expr(mm, mir_array_expr(), cstart, elem_count, "");
+    return MirResult { mir: mm, node: index };
+  }
+  if kind == tuple_node() {
+    let elem_start: Int = arena.node_a[node];
+    let elem_count: Int = arena.node_b[node];
+    let mut mm: Mir = mir;
+    let mut elems: IntArray = int_array_empty();
+    let mut i: Int = 0;
+    while i < elem_count {
+      let r: MirResult = lower_expr(arena, enums, mm, arena.child_list[elem_start + i]);
+      mm = r.mir;
+      elems = int_array_push(elems, r.node);
+      i = i + 1;
+    }
+    let cstart: Int = mm.mchild_list.len;
+    let mut j: Int = 0;
+    while j < elems.len {
+      mm.mchild_list = int_array_push(mm.mchild_list, elems[j]);
+      j = j + 1;
+    }
+    let index: Int = mm.me_kind.len;
+    mm = push_mir_expr(mm, mir_tuple_expr(), cstart, elem_count, "");
     return MirResult { mir: mm, node: index };
   }
   if kind == struct_lit_node() {
@@ -5846,6 +5950,31 @@ fn mir_dump_expr(mir: Mir, node: Int, depth: Int, out: String, next: Int) -> Mir
     o = string_concat(o, " = array [");
     o = string_concat(o, joined);
     o = string_concat(o, "]\n");
+    return MirDumpExpr { out: o, next: n + 1, temp: temp };
+  }
+  if kind == mir_tuple_expr() {
+    let estart: Int = mir.me_a[node];
+    let ecount: Int = mir.me_b[node];
+    let mut o: String = out;
+    let mut n: Int = next;
+    let mut joined: String = "";
+    let mut i: Int = 0;
+    while i < ecount {
+      let r: MirDumpExpr = mir_dump_expr(mir, mir.mchild_list[estart + i], depth, o, n);
+      o = r.out;
+      n = r.next;
+      if i > 0 {
+        joined = string_concat(joined, ", ");
+      }
+      joined = string_concat(joined, r.temp);
+      i = i + 1;
+    }
+    let temp: String = mir_temp_name(n);
+    o = string_concat(o, pad);
+    o = string_concat(o, temp);
+    o = string_concat(o, " = tuple (");
+    o = string_concat(o, joined);
+    o = string_concat(o, ")\n");
     return MirDumpExpr { out: o, next: n + 1, temp: temp };
   }
   // index
