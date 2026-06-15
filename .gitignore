@@ -6,3 +6,6 @@ target/
 dist/
 website/dist/
 website/node_modules/
+
+# self-hosted compiler binary built by examples/build_zetac
+zetac-native
