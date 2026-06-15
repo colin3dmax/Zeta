@@ -962,6 +962,54 @@ fn main() -> Int {
     assert_eq!(check(src), 1);
 }
 
+// --- Tuple (P2) back-ported into the self-hosting emitter --------------------
+// Anonymous struct `{T0, T1}` via insertvalue; `.N` via extractvalue. Tuples
+// stay local (inference, no tuple type annotations); main returns Int.
+
+#[test]
+fn tuple_literal_and_index_emit() {
+    assert_eq!(
+        check("fn main() -> Int { let t = (10, 20, 30); return t.0 + t.1 + t.2; }"),
+        60
+    );
+}
+
+#[test]
+fn tuple_nested_index_emit() {
+    assert_eq!(
+        check("fn main() -> Int { let t = (1, (2, 3)); return t.0 + t.1.0 + t.1.1; }"),
+        6
+    );
+}
+
+#[test]
+fn tuple_heterogeneous_emit() {
+    assert_eq!(
+        check("fn main() -> Int { let t = (7, true); if t.1 { return t.0; } return 0; }"),
+        7
+    );
+}
+
+#[test]
+fn tuple_rebind_emit() {
+    assert_eq!(
+        check("fn main() -> Int { let a = (4, 5); let b = a; return b.0 * b.1; }"),
+        20
+    );
+}
+
+#[test]
+fn tuple_with_float_field_emit() {
+    let src = "\
+fn main() -> Int {
+  let t = (3, 1.5);
+  let s: Float = t.1 + 2.5;
+  if s > 3.9 { return t.0; }
+  return 0;
+}";
+    assert_eq!(check(src), 3);
+}
+
 /// Capstone probe: emit LLVM IR for the ENTIRE self-hosting frontend via the
 /// Zeta-side codegen (`compile(frontend, "llvm")`) and assert clang compiles it
 /// to an object. Proves the Zeta emitter covers every construct the frontend

@@ -8175,9 +8175,96 @@ fn zstr_decode(raw: String) -> String {
   return out;
 }
 
+// A tuple type string has the canonical form `(T0, T1, ...)`.
+fn is_tuple_type(ty: String) -> Bool {
+  return string_len(ty) > 0 && string_byte_at(ty, 0) == 40;
+}
+
+// Strip a leading run of spaces (tuple parts split at ", " carry one).
+fn trim_leading_space(s: String) -> String {
+  let len: Int = string_len(s);
+  let mut i: Int = 0;
+  while i < len && string_byte_at(s, i) == 32 {
+    i = i + 1;
+  }
+  return string_byte_slice(s, i, len - i);
+}
+
+// Number of top-level elements in a tuple type string `(T0, T1, ...)`.
+fn tuple_elem_count(ty: String) -> Int {
+  let inner: String = string_byte_slice(ty, 1, string_len(ty) - 2);
+  let len: Int = string_len(inner);
+  if len == 0 {
+    return 0;
+  }
+  let mut depth: Int = 0;
+  let mut count: Int = 1;
+  let mut i: Int = 0;
+  while i < len {
+    let b: Int = string_byte_at(inner, i);
+    if b == 40 {
+      depth = depth + 1;
+    }
+    if b == 41 {
+      depth = depth - 1;
+    }
+    if b == 44 && depth == 0 {
+      count = count + 1;
+    }
+    i = i + 1;
+  }
+  return count;
+}
+
+// The idx-th element type of a tuple type string (top-level comma split,
+// respecting nested parens).
+fn tuple_elem_type(ty: String, idx: Int) -> String {
+  let inner: String = string_byte_slice(ty, 1, string_len(ty) - 2);
+  let len: Int = string_len(inner);
+  let mut depth: Int = 0;
+  let mut start: Int = 0;
+  let mut cur: Int = 0;
+  let mut i: Int = 0;
+  while i < len {
+    let b: Int = string_byte_at(inner, i);
+    if b == 40 {
+      depth = depth + 1;
+    }
+    if b == 41 {
+      depth = depth - 1;
+    }
+    if b == 44 && depth == 0 {
+      if cur == idx {
+        return trim_leading_space(string_byte_slice(inner, start, i - start));
+      }
+      cur = cur + 1;
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  if cur == idx {
+    return trim_leading_space(string_byte_slice(inner, start, len - start));
+  }
+  return "Int";
+}
+
 // The LLVM type for a Zeta type string. Int / Bool unify as i64; an array is
 // `%zarr`; a struct maps to its named `%Name` type. (String / enum: later.)
 fn llvm_ty(tcx: Tcx, ty: String) -> String {
+  if is_tuple_type(ty) {
+    let count: Int = tuple_elem_count(ty);
+    let mut out: String = "{ ";
+    let mut i: Int = 0;
+    while i < count {
+      if i > 0 {
+        out = string_concat(out, ", ");
+      }
+      out = string_concat(out, llvm_ty(tcx, tuple_elem_type(ty, i)));
+      i = i + 1;
+    }
+    out = string_concat(out, " }");
+    return out;
+  }
   if ty == "Int" {
     return "i64";
   }
@@ -8263,6 +8350,20 @@ fn type_of_expr(tcx: Tcx, mir: Mir, node: Int) -> String {
     }
     return "IntArray";
   }
+  if kind == mir_tuple_expr() {
+    let estart: Int = mir.me_a[node];
+    let ecount: Int = mir.me_b[node];
+    let mut out: String = "(";
+    let mut i: Int = 0;
+    while i < ecount {
+      if i > 0 {
+        out = string_concat(out, ", ");
+      }
+      out = string_concat(out, type_of_expr(tcx, mir, mir.mchild_list[estart + i]));
+      i = i + 1;
+    }
+    return string_concat(out, ")");
+  }
   if kind == mir_index_expr() {
     return array_elem_type(type_of_expr(tcx, mir, mir.me_a[node]));
   }
@@ -8274,6 +8375,9 @@ fn type_of_expr(tcx: Tcx, mir: Mir, node: Int) -> String {
   }
   if kind == mir_field_expr() {
     let bty: String = type_of_expr(tcx, mir, mir.me_a[node]);
+    if is_tuple_type(bty) {
+      return tuple_elem_type(bty, decimal_to_int(mir.me_text[node]));
+    }
     let si: Int = find_struct(tcx, bty);
     if si < tcx.struct_name.len {
       let fidx: Int = struct_field_index(tcx, si, mir.me_text[node]);
@@ -8876,6 +8980,40 @@ fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
     e.out = string_concat(e.out, ", 2\n");
     return EmitVal { em: e, vref: a2 };
   }
+  if kind == mir_tuple_expr() {
+    // Build an anonymous struct value via positional insertvalue.
+    let tty: String = type_of_expr(em.tcx, mir, node);
+    let llty: String = llvm_ty(em.tcx, tty);
+    let estart: Int = mir.me_a[node];
+    let ecount: Int = mir.me_b[node];
+    let mut e: Emit = em;
+    let mut agg: String = "undef";
+    let mut i: Int = 0;
+    while i < ecount {
+      let elemll: String = llvm_ty(e.tcx, type_of_expr(e.tcx, mir, mir.mchild_list[estart + i]));
+      let v: EmitVal = llvm_expr(e, mir, mir.mchild_list[estart + i]);
+      e = v.em;
+      let r: Int = e.reg;
+      e.reg = e.reg + 1;
+      let rn: String = llvm_reg_name(r);
+      e.out = string_concat(e.out, "  ");
+      e.out = string_concat(e.out, rn);
+      e.out = string_concat(e.out, " = insertvalue ");
+      e.out = string_concat(e.out, llty);
+      e.out = string_concat(e.out, " ");
+      e.out = string_concat(e.out, agg);
+      e.out = string_concat(e.out, ", ");
+      e.out = string_concat(e.out, elemll);
+      e.out = string_concat(e.out, " ");
+      e.out = string_concat(e.out, v.vref);
+      e.out = string_concat(e.out, ", ");
+      e.out = string_concat(e.out, int_to_string(i));
+      e.out = string_concat(e.out, "\n");
+      agg = rn;
+      i = i + 1;
+    }
+    return EmitVal { em: e, vref: agg };
+  }
   if kind == mir_struct_expr() {
     let sname: String = mir.me_text[node];
     let si: Int = find_struct(em.tcx, sname);
@@ -8925,6 +9063,26 @@ fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
       e.out = string_concat(e.out, " = extractvalue %zarr ");
       e.out = string_concat(e.out, base.vref);
       e.out = string_concat(e.out, ", 0\n");
+      return EmitVal { em: e, vref: rn };
+    }
+    if is_tuple_type(bty) {
+      // tuple.N → positional extractvalue from the anonymous struct.
+      let llty: String = llvm_ty(em.tcx, bty);
+      let idx: Int = decimal_to_int(mir.me_text[node]);
+      let base: EmitVal = llvm_expr(em, mir, mir.me_a[node]);
+      let mut e: Emit = base.em;
+      let r: Int = e.reg;
+      e.reg = e.reg + 1;
+      let rn: String = llvm_reg_name(r);
+      e.out = string_concat(e.out, "  ");
+      e.out = string_concat(e.out, rn);
+      e.out = string_concat(e.out, " = extractvalue ");
+      e.out = string_concat(e.out, llty);
+      e.out = string_concat(e.out, " ");
+      e.out = string_concat(e.out, base.vref);
+      e.out = string_concat(e.out, ", ");
+      e.out = string_concat(e.out, int_to_string(idx));
+      e.out = string_concat(e.out, "\n");
       return EmitVal { em: e, vref: rn };
     }
     let si: Int = find_struct(em.tcx, bty);
