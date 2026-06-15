@@ -37,7 +37,7 @@ use inkwell::context::Context;
 use inkwell::types::{BasicType, BasicTypeEnum, StructType};
 use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{IntPredicate, OptimizationLevel};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// JIT-compile a function `() -> i64` that returns `value`, run it, return the
 /// result. Proves the inkwell ↔ LLVM 22 toolchain works end-to-end.
@@ -99,6 +99,12 @@ enum ZType {
     /// element types are stored here in order. Like structs, tuple values live
     /// inline (insert_value / extract_value); fields are positional (`.0`, `.1`).
     Tuple(Vec<ZType>),
+    /// A closure (function value), represented at runtime as `{ ptr fn, ptr env }`:
+    /// `fn` points at a lifted top-level function whose first parameter is the
+    /// heap-allocated environment of captured variables, and `env` is that
+    /// environment. The carried `(param types, return type)` give the callee
+    /// signature for indirect calls.
+    Closure(Vec<ZType>, Box<ZType>),
 }
 
 /// Per-struct layout: field name → index (declaration order) and each field's
@@ -179,6 +185,14 @@ impl<'ctx> Types<'ctx> {
         })
     }
 
+    /// Resolve a declared type string to a `ZType`, using this module's known
+    /// struct and enum names.
+    fn parse_ztype(&self, text: &str) -> Result<ZType, String> {
+        let struct_names: Vec<&str> = self.structs.keys().map(|s| s.as_str()).collect();
+        let enum_names: Vec<&str> = self.enums.keys().map(|s| s.as_str()).collect();
+        parse_ztype(text, &struct_names, &enum_names)
+    }
+
     fn llvm(&self, zt: &ZType) -> BasicTypeEnum<'ctx> {
         match zt {
             ZType::Int => self.context.i64_type().into(),
@@ -191,6 +205,7 @@ impl<'ctx> Types<'ctx> {
                     elements.iter().map(|e| self.llvm(e)).collect();
                 self.context.struct_type(&field_types, false).into()
             }
+            ZType::Closure(_, _) => closure_struct_type(self.context).into(),
         }
     }
 
@@ -222,6 +237,14 @@ impl<'ctx> Types<'ctx> {
 }
 
 fn parse_ztype(text: &str, struct_names: &[&str], enum_names: &[&str]) -> Result<ZType, String> {
+    if let Some((params, ret)) = crate::type_syntax::fn_parts(text) {
+        let param_types = params
+            .iter()
+            .map(|p| parse_ztype(p, struct_names, enum_names))
+            .collect::<Result<Vec<_>, _>>()?;
+        let ret_type = parse_ztype(ret, struct_names, enum_names)?;
+        return Ok(ZType::Closure(param_types, Box::new(ret_type)));
+    }
     if let Some(parts) = crate::type_syntax::tuple_parts(text) {
         let elems = parts
             .iter()
@@ -297,6 +320,69 @@ fn array_struct_type(context: &Context) -> StructType {
     )
 }
 
+/// The `{ ptr fn, ptr env }` value type used for all closures.
+fn closure_struct_type(context: &Context) -> StructType {
+    let ptr = context.ptr_type(inkwell::AddressSpace::default());
+    context.struct_type(&[ptr.into(), ptr.into()], false)
+}
+
+/// Collect the free `Load` names of `expr` — names it reads that are not bound by
+/// an enclosing lambda's parameters. Order is first-seen (deterministic). Used to
+/// decide which enclosing locals a lambda must capture into its environment.
+fn collect_free_loads(expr: &MirExpr, bound: &mut HashSet<String>, out: &mut Vec<String>) {
+    match expr {
+        MirExpr::Load(name) => {
+            if !bound.contains(name) && !out.contains(name) {
+                out.push(name.clone());
+            }
+        }
+        MirExpr::Int(_) | MirExpr::Float(_) | MirExpr::String(_) | MirExpr::Bool(_) => {}
+        MirExpr::Binary { left, right, .. } => {
+            collect_free_loads(left, bound, out);
+            collect_free_loads(right, bound, out);
+        }
+        MirExpr::Unary { expr, .. } => collect_free_loads(expr, bound, out),
+        MirExpr::Call { args, .. } => {
+            for arg in args {
+                collect_free_loads(arg, bound, out);
+            }
+        }
+        MirExpr::EnumVariant { payload, .. } => {
+            if let Some(payload) = payload {
+                collect_free_loads(payload, bound, out);
+            }
+        }
+        MirExpr::StructLiteral { fields, .. } => {
+            for field in fields {
+                collect_free_loads(&field.value, bound, out);
+            }
+        }
+        MirExpr::FieldAccess { base, .. } => collect_free_loads(base, bound, out),
+        MirExpr::ArrayLiteral { elements } | MirExpr::Tuple { elements } => {
+            for element in elements {
+                collect_free_loads(element, bound, out);
+            }
+        }
+        MirExpr::Lambda { params, body } => {
+            // A nested lambda's params are bound inside its body; everything else
+            // it reads is also free in this lambda (transitive capture).
+            let added: Vec<String> = params
+                .iter()
+                .map(|p| p.name.clone())
+                .filter(|n| bound.insert(n.clone()))
+                .collect();
+            collect_free_loads(body, bound, out);
+            for name in added {
+                bound.remove(&name);
+            }
+        }
+        MirExpr::Index { base, index } => {
+            collect_free_loads(base, bound, out);
+            collect_free_loads(index, bound, out);
+        }
+    }
+}
+
 /// The `{ i64 tag, i64 p0, ptr p1 }` value type used for all enums. `(p0, p1)` is
 /// a generic payload slot (Int in p0; String/array's `{len, ptr}` split across
 /// p0/p1; a struct payload is heap-boxed with the pointer in p1).
@@ -324,6 +410,7 @@ fn llvm_type_of<'ctx>(
                 .collect();
             context.struct_type(&field_types, false).into()
         }
+        ZType::Closure(_, _) => closure_struct_type(context).into(),
     }
 }
 
@@ -752,6 +839,7 @@ fn build_module<'ctx>(
 
         let mut lower = FnLower {
             context,
+            module: &module,
             builder: &builder,
             types,
             functions: &functions,
@@ -761,6 +849,7 @@ fn build_module<'ctx>(
             snprintf,
             llvm_fn,
             entry_bb,
+            lambda_count: 0,
             locals: HashMap::new(),
             loops: Vec::new(),
         };
@@ -849,6 +938,7 @@ pub fn aot_compile_object(
 
 struct FnLower<'a, 'ctx> {
     context: &'ctx Context,
+    module: &'a inkwell::module::Module<'ctx>,
     builder: &'a Builder<'ctx>,
     types: &'a Types<'ctx>,
     functions: &'a HashMap<String, FunctionValue<'ctx>>,
@@ -858,6 +948,8 @@ struct FnLower<'a, 'ctx> {
     snprintf: FunctionValue<'ctx>,
     llvm_fn: FunctionValue<'ctx>,
     entry_bb: BasicBlock<'ctx>,
+    /// Monotonic counter for naming lambdas lifted out of this function.
+    lambda_count: u32,
     /// local name → (alloca slot, type)
     locals: HashMap<String, (PointerValue<'ctx>, ZType)>,
     /// Enclosing loops as `(continue_target, exit)`. `break` jumps to `exit`;
@@ -880,6 +972,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             ZType::Array(_) | ZType::Str => array_struct_type(self.context).const_zero().into(),
             ZType::Enum(_) => enum_struct_type(self.context).const_zero().into(),
             ZType::Tuple(_) => self.types.llvm(zt).const_zero(),
+            ZType::Closure(_, _) => closure_struct_type(self.context).const_zero().into(),
         }
     }
 
@@ -1450,6 +1543,317 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         }
     }
 
+    /// Infer the `ZType` an expression lowers to, WITHOUT emitting code, given the
+    /// types of the locals in scope. Used to learn a lambda body's return type so
+    /// the lifted function can be created with the right signature. Mirrors the
+    /// type each `lower_expr` arm produces; unsupported forms in a closure body
+    /// error out (the interpreter remains the oracle for those).
+    fn infer_ztype(
+        &self,
+        expr: &MirExpr,
+        local_types: &HashMap<String, ZType>,
+    ) -> Result<ZType, String> {
+        match expr {
+            MirExpr::Int(_) | MirExpr::Bool(_) => Ok(ZType::Int),
+            MirExpr::Float(_) => Ok(ZType::Float),
+            MirExpr::String(_) => Ok(ZType::Str),
+            MirExpr::Load(name) => local_types
+                .get(name)
+                .cloned()
+                .ok_or_else(|| format!("closure body loads unknown local `{name}`")),
+            MirExpr::Unary { op, expr } => {
+                let inner = self.infer_ztype(expr, local_types)?;
+                match op {
+                    UnaryOp::Neg if inner == ZType::Float => Ok(ZType::Float),
+                    _ => Ok(ZType::Int),
+                }
+            }
+            MirExpr::Binary { op, left, right } => match op {
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                    let l = self.infer_ztype(left, local_types)?;
+                    let r = self.infer_ztype(right, local_types)?;
+                    if l == ZType::Float || r == ZType::Float {
+                        Ok(ZType::Float)
+                    } else {
+                        Ok(ZType::Int)
+                    }
+                }
+                // Mod, bitwise, comparisons and logical ops all yield i64.
+                _ => Ok(ZType::Int),
+            },
+            MirExpr::Call { callee, args } => {
+                if let Some(ret) = self.types.returns.get(callee) {
+                    return Ok(ret.clone());
+                }
+                // Indirect call through a closure-typed local: its return type.
+                if let Some(ZType::Closure(_, ret)) = local_types.get(callee) {
+                    return Ok((**ret).clone());
+                }
+                match callee.as_str() {
+                    "string_len" | "string_byte_at" => Ok(ZType::Int),
+                    "string_concat" | "string_byte_slice" | "int_to_string" => Ok(ZType::Str),
+                    "ascii_is_digit" | "ascii_is_alpha" | "ascii_is_alnum"
+                    | "ascii_is_whitespace" => Ok(ZType::Int),
+                    "int_array_empty" | "int_array_push" | "bool_array_empty"
+                    | "bool_array_push" => Ok(ZType::Array(Box::new(ZType::Int))),
+                    "string_array_empty" | "string_array_push" => {
+                        Ok(ZType::Array(Box::new(ZType::Str)))
+                    }
+                    _ => {
+                        let _ = args;
+                        Err(format!(
+                            "call `{callee}` in a closure body is not in the native subset"
+                        ))
+                    }
+                }
+            }
+            MirExpr::Tuple { elements } => {
+                let types = elements
+                    .iter()
+                    .map(|e| self.infer_ztype(e, local_types))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(ZType::Tuple(types))
+            }
+            MirExpr::FieldAccess { base, field } => {
+                let base_ty = self.infer_ztype(base, local_types)?;
+                match base_ty {
+                    ZType::Struct(name) => Ok(self.types.field_index(&name, field)?.1),
+                    ZType::Tuple(elems) => {
+                        let idx: usize = field
+                            .parse()
+                            .map_err(|_| format!("bad tuple index `.{field}`"))?;
+                        elems
+                            .get(idx)
+                            .cloned()
+                            .ok_or_else(|| format!("tuple index `.{field}` out of range"))
+                    }
+                    ZType::Array(_) if field == "len" => Ok(ZType::Int),
+                    other => Err(format!("field `.{field}` on `{other:?}` not supported")),
+                }
+            }
+            MirExpr::Index { base, .. } => {
+                let base_ty = self.infer_ztype(base, local_types)?;
+                match base_ty {
+                    ZType::Array(elem) => Ok(*elem),
+                    other => Err(format!("index of `{other:?}` not supported")),
+                }
+            }
+            MirExpr::Lambda { params, body } => {
+                let mut inner = local_types.clone();
+                let mut ptys = Vec::with_capacity(params.len());
+                for p in params {
+                    let zt = self.types.parse_ztype(&p.ty)?;
+                    inner.insert(p.name.clone(), zt.clone());
+                    ptys.push(zt);
+                }
+                let ret = self.infer_ztype(body, &inner)?;
+                Ok(ZType::Closure(ptys, Box::new(ret)))
+            }
+            MirExpr::StructLiteral { ty, .. } => Ok(ZType::Struct(ty.clone())),
+            MirExpr::EnumVariant { enum_name, .. } => Ok(ZType::Enum(enum_name.clone())),
+            MirExpr::ArrayLiteral { elements } => {
+                let elem = match elements.first() {
+                    Some(e) => self.infer_ztype(e, local_types)?,
+                    None => ZType::Int,
+                };
+                Ok(ZType::Array(Box::new(elem)))
+            }
+        }
+    }
+
+    /// Closure conversion: lift `|params| body` to a top-level LLVM function whose
+    /// first parameter is a heap-allocated environment of captured variables, then
+    /// build the closure value `{ fn_ptr, env_ptr }` at the use site. Captured
+    /// variables are copied into the environment BY VALUE at creation time,
+    /// matching the interpreter's snapshot semantics.
+    fn lower_lambda(
+        &mut self,
+        params: &[crate::ast::Param],
+        body: &MirExpr,
+    ) -> Result<(BasicValueEnum<'ctx>, ZType), String> {
+        let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+
+        // Parameter types from annotations.
+        let param_ztys: Vec<ZType> = params
+            .iter()
+            .map(|p| self.types.parse_ztype(&p.ty))
+            .collect::<Result<_, _>>()?;
+
+        // Free variables that are enclosing locals → captured into the env.
+        let mut bound: HashSet<String> = params.iter().map(|p| p.name.clone()).collect();
+        let mut free = Vec::new();
+        collect_free_loads(body, &mut bound, &mut free);
+        let captures: Vec<(String, ZType, PointerValue<'ctx>)> = free
+            .iter()
+            .filter_map(|name| {
+                self.locals
+                    .get(name)
+                    .map(|(slot, zt)| (name.clone(), zt.clone(), *slot))
+            })
+            .collect();
+
+        // Infer the body's return type (for the lifted function's signature).
+        let mut body_types: HashMap<String, ZType> = HashMap::new();
+        for (name, zt, _) in &captures {
+            body_types.insert(name.clone(), zt.clone());
+        }
+        for (param, zt) in params.iter().zip(&param_ztys) {
+            body_types.insert(param.name.clone(), zt.clone());
+        }
+        let ret_zty = self.infer_ztype(body, &body_types)?;
+
+        // Environment struct: one field per capture, in capture order.
+        let env_field_types: Vec<BasicTypeEnum<'ctx>> =
+            captures.iter().map(|(_, zt, _)| self.types.llvm(zt)).collect();
+        let env_ty = self.context.struct_type(&env_field_types, false);
+
+        // Lifted function signature: (env_ptr, params...) -> ret.
+        let mut fn_param_types: Vec<inkwell::types::BasicMetadataTypeEnum<'ctx>> =
+            vec![ptr_ty.into()];
+        for zt in &param_ztys {
+            fn_param_types.push(self.types.llvm(zt).into());
+        }
+        let fn_type = self.types.llvm(&ret_zty).fn_type(&fn_param_types, false);
+        let name = format!(
+            "__lambda_{}_{}",
+            self.llvm_fn.get_name().to_str().unwrap_or("fn"),
+            self.lambda_count
+        );
+        self.lambda_count += 1;
+        let lifted = self.module.add_function(&name, fn_type, None);
+
+        // Lower the body into the lifted function, then restore the outer builder.
+        let saved_block = self.builder.get_insert_block();
+        let lifted_entry = self.context.append_basic_block(lifted, "entry");
+        self.builder.position_at_end(lifted_entry);
+        {
+            let mut inner = FnLower {
+                context: self.context,
+                module: self.module,
+                builder: self.builder,
+                types: self.types,
+                functions: self.functions,
+                malloc: self.malloc,
+                memcpy: self.memcpy,
+                memcmp: self.memcmp,
+                snprintf: self.snprintf,
+                llvm_fn: lifted,
+                entry_bb: lifted_entry,
+                lambda_count: 0,
+                locals: HashMap::new(),
+                loops: Vec::new(),
+            };
+            let env_ptr = lifted
+                .get_nth_param(0)
+                .expect("env param exists")
+                .into_pointer_value();
+            for (index, (cap_name, cap_ty, _)) in captures.iter().enumerate() {
+                let llvm_ty = inner.types.llvm(cap_ty);
+                let field_ptr = inner
+                    .builder
+                    .build_struct_gep(env_ty, env_ptr, index as u32, "cap")
+                    .map_err(|_| "env GEP failed".to_string())?;
+                let val = inner.builder.build_load(llvm_ty, field_ptr, cap_name).unwrap();
+                let slot = inner.entry_alloca(cap_name, llvm_ty);
+                inner.builder.build_store(slot, val).unwrap();
+                inner.locals.insert(cap_name.clone(), (slot, cap_ty.clone()));
+            }
+            for (index, (param, zt)) in params.iter().zip(&param_ztys).enumerate() {
+                let llvm_ty = inner.types.llvm(zt);
+                let slot = inner.entry_alloca(&param.name, llvm_ty);
+                let value = lifted
+                    .get_nth_param((index + 1) as u32)
+                    .expect("lambda param exists");
+                inner.builder.build_store(slot, value).unwrap();
+                inner.locals.insert(param.name.clone(), (slot, zt.clone()));
+            }
+            let (rv, _) = inner.lower_expr(body)?;
+            inner.builder.build_return(Some(&rv)).unwrap();
+        }
+        if let Some(block) = saved_block {
+            self.builder.position_at_end(block);
+        }
+
+        // Allocate the environment and copy captured values into it by value.
+        let env_size = env_ty
+            .size_of()
+            .ok_or_else(|| "env type has no size".to_string())?;
+        let env_mem = self.malloc_bytes(env_size);
+        for (index, (cap_name, cap_ty, slot)) in captures.iter().enumerate() {
+            let llvm_ty = self.types.llvm(cap_ty);
+            let val = self.builder.build_load(llvm_ty, *slot, cap_name).unwrap();
+            let field_ptr = self
+                .builder
+                .build_struct_gep(env_ty, env_mem, index as u32, "capst")
+                .map_err(|_| "env store GEP failed".to_string())?;
+            self.builder.build_store(field_ptr, val).unwrap();
+        }
+
+        // Build the closure value { fn_ptr, env_ptr }.
+        let clo_ty = closure_struct_type(self.context);
+        let fn_ptr = lifted.as_global_value().as_pointer_value();
+        let clo = self
+            .builder
+            .build_insert_value(clo_ty.get_undef(), fn_ptr, 0, "clo_fn")
+            .unwrap();
+        let clo = self
+            .builder
+            .build_insert_value(clo, env_mem, 1, "clo_env")
+            .unwrap()
+            .into_struct_value();
+        Ok((clo.into(), ZType::Closure(param_ztys, Box::new(ret_zty))))
+    }
+
+    /// Call a closure held in local `slot`: load `{ fn_ptr, env_ptr }`, then invoke
+    /// `fn_ptr(env_ptr, args...)` with the signature rebuilt from the closure type.
+    fn lower_indirect_call(
+        &mut self,
+        slot: PointerValue<'ctx>,
+        param_ztys: &[ZType],
+        ret_zty: &ZType,
+        args: &[MirExpr],
+    ) -> Result<(BasicValueEnum<'ctx>, ZType), String> {
+        let clo_ty = closure_struct_type(self.context);
+        let clo = self
+            .builder
+            .build_load(clo_ty, slot, "clo")
+            .unwrap()
+            .into_struct_value();
+        let fn_ptr = self
+            .builder
+            .build_extract_value(clo, 0, "clo_fn")
+            .unwrap()
+            .into_pointer_value();
+        let env_ptr = self
+            .builder
+            .build_extract_value(clo, 1, "clo_env")
+            .unwrap()
+            .into_pointer_value();
+
+        let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+        let mut fn_param_types: Vec<inkwell::types::BasicMetadataTypeEnum<'ctx>> =
+            vec![ptr_ty.into()];
+        for zt in param_ztys {
+            fn_param_types.push(self.types.llvm(zt).into());
+        }
+        let fn_type = self.types.llvm(ret_zty).fn_type(&fn_param_types, false);
+
+        let mut argv: Vec<inkwell::values::BasicMetadataValueEnum<'ctx>> = vec![env_ptr.into()];
+        for arg in args {
+            let (v, vt) = self.lower_expr(arg)?;
+            argv.push(self.bind_owned(arg, v, &vt).into());
+        }
+        let call = self
+            .builder
+            .build_indirect_call(fn_type, fn_ptr, &argv, "iclo")
+            .unwrap();
+        let value = call
+            .try_as_basic_value()
+            .basic()
+            .ok_or_else(|| "closure call returned no value".to_string())?;
+        Ok((value, ret_zty.clone()))
+    }
+
     /// Lower an expression to (value, type).
     fn lower_expr(&mut self, expr: &MirExpr) -> Result<(BasicValueEnum<'ctx>, ZType), String> {
         match expr {
@@ -1496,27 +1900,32 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 if let Some(result) = self.lower_builtin(callee, args)? {
                     return Ok(result);
                 }
-                let function = *self
-                    .functions
-                    .get(callee)
-                    .ok_or_else(|| format!("call to unknown `{callee}`"))?;
-                let mut argv = Vec::with_capacity(args.len());
-                for arg in args {
-                    let (v, vt) = self.lower_expr(arg)?;
-                    argv.push(self.bind_owned(arg, v, &vt).into());
+                if let Some(function) = self.functions.get(callee).copied() {
+                    let mut argv = Vec::with_capacity(args.len());
+                    for arg in args {
+                        let (v, vt) = self.lower_expr(arg)?;
+                        argv.push(self.bind_owned(arg, v, &vt).into());
+                    }
+                    let call = self.builder.build_call(function, &argv, "call").unwrap();
+                    let ret = self
+                        .types
+                        .returns
+                        .get(callee)
+                        .cloned()
+                        .unwrap_or(ZType::Int);
+                    let value = call
+                        .try_as_basic_value()
+                        .basic()
+                        .ok_or_else(|| format!("`{callee}` returned no value"))?;
+                    return Ok((value, ret));
                 }
-                let call = self.builder.build_call(function, &argv, "call").unwrap();
-                let ret = self
-                    .types
-                    .returns
-                    .get(callee)
-                    .cloned()
-                    .unwrap_or(ZType::Int);
-                let value = call
-                    .try_as_basic_value()
-                    .basic()
-                    .ok_or_else(|| format!("`{callee}` returned no value"))?;
-                Ok((value, ret))
+                // Indirect call: `callee` is a local holding a closure value.
+                if let Some((slot, ZType::Closure(param_ztys, ret_zty))) =
+                    self.locals.get(callee).cloned()
+                {
+                    return self.lower_indirect_call(slot, &param_ztys, &ret_zty, args);
+                }
+                Err(format!("call to unknown `{callee}`"))
             }
             MirExpr::StructLiteral { ty, fields } => {
                 let info = self
@@ -1567,12 +1976,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 }
                 Ok((current.into(), tuple_ty))
             }
-            MirExpr::Lambda { .. } => {
-                // Closures need closure conversion (lift to a top-level fn + heap
-                // env); that is a later native slice. The interpreter is the
-                // oracle for closures until then.
-                Err("closures are not yet in the native subset".into())
-            }
+            MirExpr::Lambda { params, body } => self.lower_lambda(params, body),
             MirExpr::FieldAccess { base, field } => {
                 let (base_val, base_ty) = self.lower_expr(base)?;
                 match base_ty {
