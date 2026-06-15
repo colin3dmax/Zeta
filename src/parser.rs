@@ -688,8 +688,32 @@ impl Parser {
             }
 
             if self.consume_symbol(Symbol::Dot).is_some() {
-                let (field, field_span) =
-                    self.expect_ident_span("expected field name after `.`")?;
+                // A numeric field (`t.0`) is a tuple index; otherwise a name.
+                // `t.1.0` lexes as a single Float `1.0`, so split it into two
+                // consecutive indices (matching how Rust parses tuple chains).
+                if let TokenKind::Float(value) = self.peek_kind() {
+                    let value = value.clone();
+                    let field_span = self.peek().span;
+                    self.pos += 1;
+                    for part in value.split('.') {
+                        let span = Span::new(expr.span().start, field_span.end);
+                        expr = Expr::FieldAccess {
+                            base: Box::new(expr),
+                            field: part.to_string(),
+                            field_span,
+                            span,
+                        };
+                    }
+                    continue;
+                }
+                let (field, field_span) = if let TokenKind::Int(n) = self.peek_kind() {
+                    let n = n.clone();
+                    let span = self.peek().span;
+                    self.pos += 1;
+                    (n, span)
+                } else {
+                    self.expect_ident_span("expected field name after `.`")?
+                };
                 let span = Span::new(expr.span().start, field_span.end);
                 expr = Expr::FieldAccess {
                     base: Box::new(expr),
@@ -794,10 +818,28 @@ impl Parser {
                 Ok(Expr::Bool { value: false, span })
             }
             TokenKind::Symbol(Symbol::LParen) => {
+                let start = self.peek().span.start;
                 self.pos += 1;
-                let expr = self.parse_expr()?;
-                self.expect_symbol(Symbol::RParen, "expected `)` after expression")?;
-                Ok(expr)
+                let first = self.parse_expr()?;
+                if self.consume_symbol(Symbol::Comma).is_some() {
+                    // `(a, b, ...)` is a tuple; a trailing comma `(a,)` is a 1-tuple.
+                    let mut elements = vec![first];
+                    while !self.check_symbol(Symbol::RParen) {
+                        elements.push(self.parse_expr()?);
+                        if self.consume_symbol(Symbol::Comma).is_none() {
+                            break;
+                        }
+                    }
+                    self.expect_symbol(Symbol::RParen, "expected `)` after tuple")?;
+                    let end = self.previous_span().end;
+                    Ok(Expr::Tuple {
+                        elements,
+                        span: Span::new(start, end),
+                    })
+                } else {
+                    self.expect_symbol(Symbol::RParen, "expected `)` after expression")?;
+                    Ok(first)
+                }
             }
             TokenKind::Symbol(Symbol::LBracket) => self.parse_array_literal(),
             _ => Err(self.error_here("PARSE_EXPECTED_EXPR", "expected expression")),

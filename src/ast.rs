@@ -211,6 +211,10 @@ pub enum Expr {
         elements: Vec<Expr>,
         span: Span,
     },
+    Tuple {
+        elements: Vec<Expr>,
+        span: Span,
+    },
     Index {
         base: Box<Expr>,
         index: Box<Expr>,
@@ -506,6 +510,7 @@ impl Expr {
             | Expr::StructLiteral { span, .. }
             | Expr::FieldAccess { span, .. }
             | Expr::ArrayLiteral { span, .. }
+            | Expr::Tuple { span, .. }
             | Expr::Index { span, .. }
             | Expr::Range { span, .. } => *span,
         }
@@ -549,6 +554,12 @@ impl Expr {
             }
             Expr::ArrayLiteral { elements, .. } => {
                 out.push_str(&format!("{pad}ArrayLiteral\n"));
+                for element in elements {
+                    element.dump(indent + 1, out);
+                }
+            }
+            Expr::Tuple { elements, .. } => {
+                out.push_str(&format!("{pad}Tuple\n"));
                 for element in elements {
                     element.dump(indent + 1, out);
                 }

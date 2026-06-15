@@ -579,7 +579,7 @@ fn check_expr(
                 diagnostics,
             );
         }
-        Expr::ArrayLiteral { elements, .. } => {
+        Expr::ArrayLiteral { elements, .. } | Expr::Tuple { elements, .. } => {
             for element in elements {
                 check_expr(
                     element,

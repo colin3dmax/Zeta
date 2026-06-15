@@ -10,6 +10,7 @@ enum Type {
     String,
     Bool,
     Array(Box<Type>),
+    Tuple(Vec<Type>),
     Range,
     Named(String),
     Unit,
@@ -769,6 +770,7 @@ fn check_match_exhaustiveness(
         | Type::Float
         | Type::String
         | Type::Array(_)
+        | Type::Tuple(_)
         | Type::Range
         | Type::Unit
         | Type::Error => {}
@@ -1143,6 +1145,17 @@ fn infer_expr(
                 Type::Array(Box::new(element_type))
             }
         }
+        Expr::Tuple { elements, .. } => {
+            let types: Vec<Type> = elements
+                .iter()
+                .map(|element| infer_expr(element, locals, functions, structs, enums, diagnostics))
+                .collect();
+            if types.iter().any(|t| matches!(t, Type::Error)) {
+                Type::Error
+            } else {
+                Type::Tuple(types)
+            }
+        }
         Expr::Index { base, index, .. } => {
             let base_type = infer_expr(base, locals, functions, structs, enums, diagnostics);
             let index_type = infer_expr(index, locals, functions, structs, enums, diagnostics);
@@ -1233,6 +1246,22 @@ fn infer_expr(
                     *field_span,
                 ));
                 return Type::Error;
+            }
+            if let Type::Tuple(elements) = &base_type {
+                match field.parse::<usize>() {
+                    Ok(index) if index < elements.len() => return elements[index].clone(),
+                    _ => {
+                        diagnostics.push(Diagnostic::new(
+                            "TYPE_TUPLE_INDEX",
+                            format!(
+                                "tuple index `.{field}` is out of range for a {}-element tuple",
+                                elements.len()
+                            ),
+                            *field_span,
+                        ));
+                        return Type::Error;
+                    }
+                }
             }
             let Type::Named(struct_name) = base_type else {
                 diagnostics.push(Diagnostic::new(
@@ -1477,6 +1506,10 @@ impl Type {
                 Type::Bool => "BoolArray".to_string(),
                 other => format!("{}Array", other.display()),
             },
+            Type::Tuple(elements) => {
+                let inner: Vec<String> = elements.iter().map(|e| e.display()).collect();
+                format!("({})", inner.join(", "))
+            }
             Type::Range => "Range".to_string(),
             Type::Named(name) => name.clone(),
             Type::Unit => "Unit".to_string(),

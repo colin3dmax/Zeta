@@ -149,6 +149,9 @@ pub enum MirExpr {
     ArrayLiteral {
         elements: Vec<MirExpr>,
     },
+    Tuple {
+        elements: Vec<MirExpr>,
+    },
     Index {
         base: Box<MirExpr>,
         index: Box<MirExpr>,
@@ -509,6 +512,12 @@ fn lower_expr(
                 .map(|element| lower_expr(element, enum_variants))
                 .collect(),
         },
+        Expr::Tuple { elements, .. } => MirExpr::Tuple {
+            elements: elements
+                .iter()
+                .map(|element| lower_expr(element, enum_variants))
+                .collect(),
+        },
         Expr::Index { base, index, .. } => MirExpr::Index {
             base: Box::new(lower_expr(base, enum_variants)),
             index: Box::new(lower_expr(index, enum_variants)),
@@ -809,6 +818,18 @@ impl DumpCtx {
                 ));
                 temp
             }
+            MirExpr::Tuple { elements } => {
+                let mut element_temps = Vec::new();
+                for element in elements {
+                    element_temps.push(self.dump_expr(element, indent, out));
+                }
+                let temp = self.temp();
+                out.push_str(&format!(
+                    "{pad}{temp} = tuple ({})\n",
+                    element_temps.join(", ")
+                ));
+                temp
+            }
             MirExpr::Index { base, index } => {
                 let base_temp = self.dump_expr(base, indent, out);
                 let index_temp = self.dump_expr(index, indent, out);
@@ -880,6 +901,7 @@ pub fn unary_op_text(op: UnaryOp) -> &'static str {
 enum MirType {
     Named(String),
     Array(Box<MirType>),
+    Tuple(Vec<MirType>),
     Unit,
     Unknown,
 }
@@ -900,6 +922,10 @@ impl MirType {
                 Self::Named(name) => format!("{name}Array"),
                 other => format!("{}Array", other.display()),
             },
+            Self::Tuple(elements) => {
+                let inner: Vec<String> = elements.iter().map(|e| e.display()).collect();
+                format!("({})", inner.join(", "))
+            }
             Self::Unit => "Unit".to_string(),
             Self::Unknown => "<unknown>".to_string(),
         }
@@ -1334,7 +1360,29 @@ impl<'a> MirVerifier<'a> {
                 if matches!(base_ty, MirType::Array(_)) && field == "len" {
                     return MirType::named("Int");
                 }
+                if let MirType::Tuple(elements) = &base_ty {
+                    match field.parse::<usize>() {
+                        Ok(index) if index < elements.len() => return elements[index].clone(),
+                        _ => {
+                            self.error(
+                                "MIR_TUPLE_INDEX",
+                                format!(
+                                    "tuple index `.{field}` out of range for {}-element tuple",
+                                    elements.len()
+                                ),
+                            );
+                            return MirType::Unknown;
+                        }
+                    }
+                }
                 MirType::Unknown
+            }
+            MirExpr::Tuple { elements } => {
+                let types: Vec<MirType> = elements
+                    .iter()
+                    .map(|element| self.verify_expr(element, locals))
+                    .collect();
+                MirType::Tuple(types)
             }
             MirExpr::ArrayLiteral { elements } => {
                 let Some((first, rest)) = elements.split_first() else {

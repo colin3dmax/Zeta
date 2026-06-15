@@ -232,6 +232,12 @@ fn dump_expr(expr: &Expr, indent: usize, out: &mut String) {
                 dump_expr(element, indent + 1, out);
             }
         }
+        Expr::Tuple { elements, .. } => {
+            out.push_str(&format!("{pad}tuple\n"));
+            for element in elements {
+                dump_expr(element, indent + 1, out);
+            }
+        }
         Expr::Index { base, index, .. } => {
             out.push_str(&format!("{pad}index\n"));
             dump_expr(base, indent + 1, out);

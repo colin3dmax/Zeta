@@ -37,6 +37,9 @@ pub enum Value {
         payload: Option<Box<Value>>,
     },
     Array(Rc<Vec<Value>>),
+    // Tuples are fixed-arity, immutable aggregates; like arrays they share
+    // contents behind `Rc` so cloning the Value is O(1).
+    Tuple(Rc<Vec<Value>>),
     Unit,
 }
 
@@ -470,7 +473,7 @@ fn live_expr(
             live
         }
         MirExpr::FieldAccess { base, .. } => live_expr(base, live, mark, movable),
-        MirExpr::ArrayLiteral { elements } => {
+        MirExpr::ArrayLiteral { elements } | MirExpr::Tuple { elements } => {
             for element in elements.iter().rev() {
                 live = live_expr(element, live, mark, movable);
             }
@@ -538,7 +541,7 @@ fn collect_expr_names(expr: &MirExpr, out: &mut LiveSet) {
             }
         }
         MirExpr::FieldAccess { base, .. } => collect_expr_names(base, out),
-        MirExpr::ArrayLiteral { elements } => {
+        MirExpr::ArrayLiteral { elements } | MirExpr::Tuple { elements } => {
             for element in elements {
                 collect_expr_names(element, out);
             }
@@ -1190,6 +1193,9 @@ impl MirRuntime {
                         format!("unknown field `{field}` on array; only `len` is supported"),
                     ));
                 }
+                if let Value::Tuple(values) = &value {
+                    return tuple_field(values, field);
+                }
                 let Value::Struct { ty, fields } = value else {
                     return Err(runtime_error(
                         "RUNTIME_FIELD_BASE",
@@ -1209,6 +1215,13 @@ impl MirRuntime {
                     values.push(self.eval_expr(element, locals)?);
                 }
                 Ok(Value::Array(Rc::new(values)))
+            }
+            MirExpr::Tuple { elements } => {
+                let mut values = Vec::with_capacity(elements.len());
+                for element in elements {
+                    values.push(self.eval_expr(element, locals)?);
+                }
+                Ok(Value::Tuple(Rc::new(values)))
             }
             MirExpr::Index { base, index } => {
                 let base = self.eval_expr(base, locals)?;
@@ -1677,6 +1690,9 @@ impl Runtime {
                         format!("unknown field `{field}` on array; only `len` is supported"),
                     ));
                 }
+                if let Value::Tuple(values) = &value {
+                    return tuple_field(values, field);
+                }
                 let Value::Struct { ty, fields } = value else {
                     return Err(runtime_error(
                         "RUNTIME_FIELD_BASE",
@@ -1695,6 +1711,11 @@ impl Runtime {
                 .map(|element| self.eval_expr(element, locals))
                 .collect::<Result<Vec<_>, _>>()
                 .map(|elements| Value::Array(Rc::new(elements))),
+            Expr::Tuple { elements, .. } => elements
+                .iter()
+                .map(|element| self.eval_expr(element, locals))
+                .collect::<Result<Vec<_>, _>>()
+                .map(|elements| Value::Tuple(Rc::new(elements))),
             Expr::Index { base, index, .. } => {
                 let base = self.eval_expr(base, locals)?;
                 let index = self.eval_expr(index, locals)?;
@@ -1915,6 +1936,19 @@ fn expect_bool(value: Value, code: &'static str) -> Result<bool, Diagnostic> {
         return Err(runtime_error(code, "operand must evaluate to Bool"));
     };
     Ok(value)
+}
+
+fn tuple_field(values: &[Value], field: &str) -> Result<Value, Diagnostic> {
+    match field.parse::<usize>() {
+        Ok(index) if index < values.len() => Ok(values[index].clone()),
+        _ => Err(runtime_error(
+            "RUNTIME_TUPLE_INDEX",
+            format!(
+                "tuple index `.{field}` out of range for {}-element tuple",
+                values.len()
+            ),
+        )),
+    }
 }
 
 fn index_array_value(base: Value, index: Value) -> Result<Value, Diagnostic> {
@@ -2453,6 +2487,14 @@ impl fmt::Display for Value {
                     .collect::<Vec<_>>()
                     .join(", ");
                 write!(f, "[{values}]")
+            }
+            Value::Tuple(values) => {
+                let values = values
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "({values})")
             }
             Value::Unit => write!(f, "()"),
         }

@@ -517,7 +517,7 @@ fn rewrite_expr(
                 );
             }
         }
-        MirExpr::ArrayLiteral { elements } => {
+        MirExpr::ArrayLiteral { elements } | MirExpr::Tuple { elements } => {
             for element in elements {
                 rewrite_expr(
                     element,
