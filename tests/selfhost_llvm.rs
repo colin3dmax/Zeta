@@ -1132,3 +1132,13 @@ fn bench_native_run() {
     println!("interp: 1 call in {:.2}s", ti.elapsed().as_secs_f64());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn generic_over_int_emit_probe() {
+    // Generic-over-Int may work via the i64 fallback even before real
+    // monomorphization (T defaults to i64; Int is i64).
+    assert_eq!(
+        check("fn id<T>(x: T) -> T { return x; } fn main() -> Int { return id(40) + id(2); }"),
+        42
+    );
+}
