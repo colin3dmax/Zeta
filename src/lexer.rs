@@ -10,6 +10,7 @@ pub struct Token {
 pub enum TokenKind {
     Ident(String),
     Int(String),
+    Float(String),
     String(String),
     Keyword(Keyword),
     Symbol(Symbol),
@@ -169,16 +170,21 @@ impl<'a> Lexer<'a> {
         while matches!(self.peek_char(), Some(c) if c.is_ascii_digit()) {
             self.bump_char();
         }
-        if self.peek_char() == Some('.') && self.peek_next_char() != Some('.') {
+        // A `.` followed by a digit makes this a Float literal; `1..2` (range)
+        // is excluded by the `..` lookahead. Require at least one fractional
+        // digit so `x.field` on an int-typed temp never lexes as a float.
+        if self.peek_char() == Some('.')
+            && self.peek_next_char() != Some('.')
+            && matches!(self.peek_next_char(), Some(c) if c.is_ascii_digit())
+        {
             self.bump_char();
             while matches!(self.peek_char(), Some(c) if c.is_ascii_digit()) {
                 self.bump_char();
             }
-            self.diagnostics.push(Diagnostic::new(
-                "LEX_FLOAT_UNSUPPORTED",
-                "floating-point literals are not supported in Stage 0; use Int arithmetic for now",
-                Span::new(start, self.pos),
-            ));
+            self.tokens.push(Token {
+                kind: TokenKind::Float(self.source[start..self.pos].to_string()),
+                span: Span::new(start, self.pos),
+            });
             return;
         }
         self.tokens.push(Token {

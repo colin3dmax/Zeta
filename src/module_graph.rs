@@ -555,7 +555,11 @@ fn rewrite_expr(
                 );
             }
         }
-        MirExpr::Load(_) | MirExpr::Int(_) | MirExpr::String(_) | MirExpr::Bool(_) => {}
+        MirExpr::Load(_)
+        | MirExpr::Int(_)
+        | MirExpr::Float(_)
+        | MirExpr::String(_)
+        | MirExpr::Bool(_) => {}
     }
 }
 

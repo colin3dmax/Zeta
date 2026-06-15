@@ -11,9 +11,12 @@ use std::rc::Rc;
 // still aborts instead of hanging forever.
 const LOOP_LIMIT: usize = 1_000_000_000;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+// `Eq` is intentionally omitted: `Value::Float(f64)` is only `PartialEq`. Float
+// equality follows IEEE-754 (NaN != NaN); the corpus never relies on NaN.
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Int(i64),
+    Float(f64),
     String(String),
     Bool(bool),
     // `fields`/array contents live behind `Rc` so cloning a Value (which the
@@ -441,7 +444,7 @@ fn live_expr(
             live.insert(name.clone());
             live
         }
-        MirExpr::Int(_) | MirExpr::String(_) | MirExpr::Bool(_) => live,
+        MirExpr::Int(_) | MirExpr::Float(_) | MirExpr::String(_) | MirExpr::Bool(_) => live,
         MirExpr::Binary { left, right, .. } => {
             // Eval order is left then right; process right first so left sees
             // right's uses. (`&&`/`||` may skip the right at runtime — treating
@@ -513,7 +516,7 @@ fn collect_expr_names(expr: &MirExpr, out: &mut LiveSet) {
         MirExpr::Load(name) => {
             out.insert(name.clone());
         }
-        MirExpr::Int(_) | MirExpr::String(_) | MirExpr::Bool(_) => {}
+        MirExpr::Int(_) | MirExpr::Float(_) | MirExpr::String(_) | MirExpr::Bool(_) => {}
         MirExpr::Binary { left, right, .. } => {
             collect_expr_names(left, out);
             collect_expr_names(right, out);
@@ -1082,6 +1085,12 @@ impl MirRuntime {
                     format!("invalid Int literal `{value}`"),
                 )
             }),
+            MirExpr::Float(value) => value.parse::<f64>().map(Value::Float).map_err(|_| {
+                runtime_error(
+                    "RUNTIME_FLOAT_PARSE",
+                    format!("invalid Float literal `{value}`"),
+                )
+            }),
             MirExpr::String(value) => Ok(Value::String(value.clone())),
             MirExpr::Bool(value) => Ok(Value::Bool(*value)),
             MirExpr::Binary { op, left, right } => self.eval_binary_expr(*op, left, right, locals),
@@ -1557,6 +1566,12 @@ impl Runtime {
                     format!("invalid Int literal `{value}`"),
                 )
             }),
+            Expr::Float { value, .. } => value.parse::<f64>().map(Value::Float).map_err(|_| {
+                runtime_error(
+                    "RUNTIME_FLOAT_PARSE",
+                    format!("invalid Float literal `{value}`"),
+                )
+            }),
             Expr::String { value, .. } => Ok(Value::String(value.clone())),
             Expr::Bool { value, .. } => Ok(Value::Bool(*value)),
             Expr::Binary {
@@ -1756,14 +1771,8 @@ fn eval_binary(op: BinaryOp, left: Value, right: Value) -> Result<Value, Diagnos
         | BinaryOp::Mod
         | BinaryOp::BitAnd
         | BinaryOp::BitOr
-        | BinaryOp::BitXor => {
-            let (Value::Int(left), Value::Int(right)) = (left, right) else {
-                return Err(runtime_error(
-                    "RUNTIME_BINARY_OPERAND",
-                    "binary arithmetic operands must evaluate to Int",
-                ));
-            };
-            match op {
+        | BinaryOp::BitXor => match (left, right) {
+            (Value::Int(left), Value::Int(right)) => match op {
                 BinaryOp::Add => Ok(Value::Int(left + right)),
                 BinaryOp::Sub => Ok(Value::Int(left - right)),
                 BinaryOp::Mul => Ok(Value::Int(left * right)),
@@ -1785,22 +1794,44 @@ fn eval_binary(op: BinaryOp, left: Value, right: Value) -> Result<Value, Diagnos
                     }
                 }
                 _ => unreachable!(),
-            }
-        }
-        BinaryOp::Lt | BinaryOp::Lte | BinaryOp::Gt | BinaryOp::Gte => {
-            let (Value::Int(left), Value::Int(right)) = (left, right) else {
-                return Err(runtime_error(
+            },
+            // Float arithmetic follows IEEE-754 (div by zero → inf/NaN, no
+            // trap). Mod / bitwise are Int-only (rejected by typecheck).
+            (Value::Float(left), Value::Float(right)) => match op {
+                BinaryOp::Add => Ok(Value::Float(left + right)),
+                BinaryOp::Sub => Ok(Value::Float(left - right)),
+                BinaryOp::Mul => Ok(Value::Float(left * right)),
+                BinaryOp::Div => Ok(Value::Float(left / right)),
+                _ => Err(runtime_error(
                     "RUNTIME_BINARY_OPERAND",
-                    "binary ordering operands must evaluate to Int",
-                ));
+                    "modulo / bitwise operators are not defined on Float",
+                )),
+            },
+            _ => Err(runtime_error(
+                "RUNTIME_BINARY_OPERAND",
+                "binary arithmetic operands must both be Int or both be Float",
+            )),
+        },
+        BinaryOp::Lt | BinaryOp::Lte | BinaryOp::Gt | BinaryOp::Gte => {
+            let order = match (left, right) {
+                (Value::Int(left), Value::Int(right)) => left.partial_cmp(&right),
+                (Value::Float(left), Value::Float(right)) => left.partial_cmp(&right),
+                _ => {
+                    return Err(runtime_error(
+                        "RUNTIME_BINARY_OPERAND",
+                        "binary ordering operands must both be Int or both be Float",
+                    ))
+                }
             };
-            match op {
-                BinaryOp::Lt => Ok(Value::Bool(left < right)),
-                BinaryOp::Lte => Ok(Value::Bool(left <= right)),
-                BinaryOp::Gt => Ok(Value::Bool(left > right)),
-                BinaryOp::Gte => Ok(Value::Bool(left >= right)),
+            let lt = order == Some(std::cmp::Ordering::Less);
+            let gt = order == Some(std::cmp::Ordering::Greater);
+            Ok(Value::Bool(match op {
+                BinaryOp::Lt => lt,
+                BinaryOp::Lte => !gt && order.is_some(),
+                BinaryOp::Gt => gt,
+                BinaryOp::Gte => !lt && order.is_some(),
                 _ => unreachable!(),
-            }
+            }))
         }
     }
 }
@@ -1864,7 +1895,10 @@ fn write_through_path(
 fn eval_unary(op: UnaryOp, value: Value) -> Result<Value, Diagnostic> {
     match op {
         UnaryOp::Not => Ok(Value::Bool(!expect_bool(value, "RUNTIME_UNARY_OPERAND")?)),
-        UnaryOp::Neg => Ok(Value::Int(-expect_int(value, "RUNTIME_UNARY_OPERAND")?)),
+        UnaryOp::Neg => match value {
+            Value::Float(f) => Ok(Value::Float(-f)),
+            other => Ok(Value::Int(-expect_int(other, "RUNTIME_UNARY_OPERAND")?)),
+        },
         UnaryOp::BitNot => Ok(Value::Int(!expect_int(value, "RUNTIME_UNARY_OPERAND")?)),
     }
 }
@@ -2382,6 +2416,15 @@ impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Value::Int(value) => write!(f, "{value}"),
+            // Always show a decimal point so a Float is unambiguous (1.0, not 1).
+            Value::Float(value) => {
+                let s = format!("{value}");
+                if s.contains('.') || s.contains('e') || s.contains("inf") || s.contains("NaN") {
+                    write!(f, "{s}")
+                } else {
+                    write!(f, "{s}.0")
+                }
+            }
             Value::String(value) => write!(f, "{value}"),
             Value::Bool(value) => write!(f, "{value}"),
             Value::Struct { ty, fields } => {

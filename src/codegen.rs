@@ -1427,6 +1427,10 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let n: i64 = text.parse().map_err(|_| format!("bad Int `{text}`"))?;
                 Ok((self.i64t().const_int(n as u64, true).into(), ZType::Int))
             }
+            // Float is supported in the Stage0 interpreter (the semantic
+            // reference); native f64 codegen is Phase 1b (it needs the scalar
+            // path to carry f64 alongside i64). Reject here until then.
+            MirExpr::Float(_) => Err("Float is not yet in the native subset (Phase 1b)".into()),
             MirExpr::Bool(b) => Ok((self.i64t().const_int(*b as u64, false).into(), ZType::Int)),
             MirExpr::Load(name) => {
                 let (slot, zt) = self

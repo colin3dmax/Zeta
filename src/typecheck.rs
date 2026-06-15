@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Type {
     Int,
+    Float,
     String,
     Bool,
     Array(Box<Type>),
@@ -216,7 +217,7 @@ fn validate_type_name(
 fn is_builtin_type_name(name: &str) -> bool {
     matches!(
         name,
-        "Int" | "String" | "Bool" | "Unit" | "IntArray" | "StringArray" | "BoolArray"
+        "Int" | "Float" | "String" | "Bool" | "Unit" | "IntArray" | "StringArray" | "BoolArray"
     )
 }
 
@@ -764,7 +765,13 @@ fn check_match_exhaustiveness(
                 ));
             }
         }
-        Type::Int | Type::String | Type::Array(_) | Type::Range | Type::Unit | Type::Error => {}
+        Type::Int
+        | Type::Float
+        | Type::String
+        | Type::Array(_)
+        | Type::Range
+        | Type::Unit
+        | Type::Error => {}
     }
 }
 
@@ -862,6 +869,7 @@ fn infer_expr(
             .map(|binding| binding.ty.clone())
             .unwrap_or(Type::Error),
         Expr::Int { .. } => Type::Int,
+        Expr::Float { .. } => Type::Float,
         Expr::String { .. } => Type::String,
         Expr::Bool { .. } => Type::Bool,
         Expr::Binary {
@@ -870,14 +878,31 @@ fn infer_expr(
             let left_type = infer_expr(left, locals, functions, structs, enums, diagnostics);
             let right_type = infer_expr(right, locals, functions, structs, enums, diagnostics);
             match op {
-                BinaryOp::Add
-                | BinaryOp::Sub
-                | BinaryOp::Mul
-                | BinaryOp::Div
-                | BinaryOp::Mod
-                | BinaryOp::BitAnd
-                | BinaryOp::BitOr
-                | BinaryOp::BitXor => {
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                    // Numeric: Int or Float (operands must match); result is the
+                    // operand type. (Mod / bitwise stay Int-only below.)
+                    let numeric = if left_type == Type::Float {
+                        Type::Float
+                    } else {
+                        Type::Int
+                    };
+                    expect_type(
+                        &left_type,
+                        &numeric,
+                        "TYPE_BINARY_OPERAND",
+                        left.span(),
+                        diagnostics,
+                    );
+                    expect_type(
+                        &right_type,
+                        &numeric,
+                        "TYPE_BINARY_OPERAND",
+                        right.span(),
+                        diagnostics,
+                    );
+                    numeric
+                }
+                BinaryOp::Mod | BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor => {
                     expect_type(
                         &left_type,
                         &Type::Int,
@@ -922,16 +947,21 @@ fn infer_expr(
                     Type::Bool
                 }
                 BinaryOp::Lt | BinaryOp::Lte | BinaryOp::Gt | BinaryOp::Gte => {
+                    let numeric = if left_type == Type::Float {
+                        Type::Float
+                    } else {
+                        Type::Int
+                    };
                     expect_type(
                         &left_type,
-                        &Type::Int,
+                        &numeric,
                         "TYPE_ORDERING_OPERAND",
                         left.span(),
                         diagnostics,
                     );
                     expect_type(
                         &right_type,
-                        &Type::Int,
+                        &numeric,
                         "TYPE_ORDERING_OPERAND",
                         right.span(),
                         diagnostics,
@@ -953,7 +983,22 @@ fn infer_expr(
                     );
                     Type::Bool
                 }
-                UnaryOp::Neg | UnaryOp::BitNot => {
+                UnaryOp::Neg => {
+                    let numeric = if expr_type == Type::Float {
+                        Type::Float
+                    } else {
+                        Type::Int
+                    };
+                    expect_type(
+                        &expr_type,
+                        &numeric,
+                        "TYPE_UNARY_OPERAND",
+                        expr.span(),
+                        diagnostics,
+                    );
+                    numeric
+                }
+                UnaryOp::BitNot => {
                     expect_type(
                         &expr_type,
                         &Type::Int,
@@ -1376,6 +1421,7 @@ fn enum_types(module: &Module) -> HashMap<String, EnumType> {
 fn parse_type(name: &str) -> Type {
     match name {
         "Int" => Type::Int,
+        "Float" => Type::Float,
         "String" => Type::String,
         "Bool" => Type::Bool,
         "IntArray" => Type::Array(Box::new(Type::Int)),
@@ -1422,6 +1468,7 @@ impl Type {
     fn display(&self) -> String {
         match self {
             Type::Int => "Int".to_string(),
+            Type::Float => "Float".to_string(),
             Type::String => "String".to_string(),
             Type::Bool => "Bool".to_string(),
             Type::Array(element) => match element.as_ref() {

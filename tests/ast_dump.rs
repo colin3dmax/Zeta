@@ -324,7 +324,8 @@ fn repl_parses_interactive_lines() {
 }
 
 #[test]
-fn repl_reports_unsupported_float_literal() {
+fn repl_accepts_float_literal() {
+    // Float literals are now supported (Phase 1); the old rejection is gone.
     let binary = env!("CARGO_BIN_EXE_zeta");
     let mut child = std::process::Command::new(binary)
         .arg("repl")
@@ -338,15 +339,14 @@ fn repl_reports_unsupported_float_literal() {
         use std::io::Write;
         let stdin = child.stdin.as_mut().expect("stdin should be piped");
         stdin
-            .write_all(b"1./3\n:quit\n")
+            .write_all(b"2.5\n:quit\n")
             .expect("repl input should write");
     }
 
     let output = child.wait_with_output().expect("repl should exit");
     assert!(output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
-    assert!(stderr.contains("LEX_FLOAT_UNSUPPORTED"));
-    assert!(!stderr.contains("PARSE_EXPECTED_ITEM"));
+    assert!(!stderr.contains("LEX_FLOAT_UNSUPPORTED"));
 }
 
 #[test]

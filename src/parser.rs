@@ -771,6 +771,12 @@ impl Parser {
                 self.pos += 1;
                 Ok(Expr::Int { value, span })
             }
+            TokenKind::Float(value) => {
+                let value = value.clone();
+                let span = self.peek().span;
+                self.pos += 1;
+                Ok(Expr::Float { value, span })
+            }
             TokenKind::String(value) => {
                 let value = value.clone();
                 let span = self.peek().span;

@@ -117,6 +117,7 @@ pub enum MirPattern {
 pub enum MirExpr {
     Load(String),
     Int(String),
+    Float(String),
     String(String),
     Bool(bool),
     Binary {
@@ -434,6 +435,7 @@ fn lower_expr(
     match expr {
         Expr::Name { name, .. } => MirExpr::Load(name.clone()),
         Expr::Int { value, .. } => MirExpr::Int(value.clone()),
+        Expr::Float { value, .. } => MirExpr::Float(value.clone()),
         Expr::String { value, .. } => MirExpr::String(value.clone()),
         Expr::Bool { value, .. } => MirExpr::Bool(*value),
         Expr::Binary {
@@ -710,6 +712,11 @@ impl DumpCtx {
             MirExpr::Int(value) => {
                 let temp = self.temp();
                 out.push_str(&format!("{pad}{temp} = const Int {value}\n"));
+                temp
+            }
+            MirExpr::Float(value) => {
+                let temp = self.temp();
+                out.push_str(&format!("{pad}{temp} = const Float {value}\n"));
                 temp
             }
             MirExpr::String(value) => {
@@ -1249,6 +1256,7 @@ impl<'a> MirVerifier<'a> {
                 MirType::Unknown
             }),
             MirExpr::Int(_) => MirType::named("Int"),
+            MirExpr::Float(_) => MirType::named("Float"),
             MirExpr::String(_) => MirType::named("String"),
             MirExpr::Bool(_) => MirType::named("Bool"),
             MirExpr::Binary { op, left, right } => self.verify_binary(*op, left, right, locals),
@@ -1259,8 +1267,13 @@ impl<'a> MirVerifier<'a> {
                 }
                 UnaryOp::Neg => {
                     let ty = self.verify_expr(expr, locals);
-                    self.expect_named(&ty, "Int", "MIR_UNARY_TYPE", "neg operand");
-                    MirType::named("Int")
+                    let numeric = if matches!(&ty, MirType::Named(n) if n == "Float") {
+                        "Float"
+                    } else {
+                        "Int"
+                    };
+                    self.expect_named(&ty, numeric, "MIR_UNARY_TYPE", "neg operand");
+                    MirType::named(numeric)
                 }
                 UnaryOp::BitNot => {
                     let ty = self.verify_expr(expr, locals);
@@ -1377,14 +1390,18 @@ impl<'a> MirVerifier<'a> {
         let left_ty = self.verify_expr(left, locals);
         let right_ty = self.verify_expr(right, locals);
         match op {
-            BinaryOp::Add
-            | BinaryOp::Sub
-            | BinaryOp::Mul
-            | BinaryOp::Div
-            | BinaryOp::Mod
-            | BinaryOp::BitAnd
-            | BinaryOp::BitOr
-            | BinaryOp::BitXor => {
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                // Numeric: Int or Float (operands must match the left's type).
+                let numeric = if matches!(&left_ty, MirType::Named(n) if n == "Float") {
+                    "Float"
+                } else {
+                    "Int"
+                };
+                self.expect_named(&left_ty, numeric, "MIR_BINARY_TYPE", "left operand");
+                self.expect_named(&right_ty, numeric, "MIR_BINARY_TYPE", "right operand");
+                MirType::named(numeric)
+            }
+            BinaryOp::Mod | BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor => {
                 self.expect_named(&left_ty, "Int", "MIR_BINARY_TYPE", "left operand");
                 self.expect_named(&right_ty, "Int", "MIR_BINARY_TYPE", "right operand");
                 MirType::named("Int")
@@ -1395,8 +1412,13 @@ impl<'a> MirVerifier<'a> {
                 MirType::named("Bool")
             }
             BinaryOp::Lt | BinaryOp::Lte | BinaryOp::Gt | BinaryOp::Gte => {
-                self.expect_named(&left_ty, "Int", "MIR_BINARY_TYPE", "left operand");
-                self.expect_named(&right_ty, "Int", "MIR_BINARY_TYPE", "right operand");
+                let numeric = if matches!(&left_ty, MirType::Named(n) if n == "Float") {
+                    "Float"
+                } else {
+                    "Int"
+                };
+                self.expect_named(&left_ty, numeric, "MIR_BINARY_TYPE", "left operand");
+                self.expect_named(&right_ty, numeric, "MIR_BINARY_TYPE", "right operand");
                 MirType::named("Bool")
             }
             BinaryOp::Eq | BinaryOp::NotEq => {

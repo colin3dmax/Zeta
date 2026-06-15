@@ -637,7 +637,7 @@ fn check_expr(
                 diagnostics,
             );
         }
-        Expr::Int { .. } | Expr::String { .. } | Expr::Bool { .. } => {}
+        Expr::Int { .. } | Expr::Float { .. } | Expr::String { .. } | Expr::Bool { .. } => {}
     }
 }
 

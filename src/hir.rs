@@ -195,6 +195,7 @@ fn dump_expr(expr: &Expr, indent: usize, out: &mut String) {
     match expr {
         Expr::Name { name, .. } => out.push_str(&format!("{pad}local {name}\n")),
         Expr::Int { value, .. } => out.push_str(&format!("{pad}const Int {value}\n")),
+        Expr::Float { value, .. } => out.push_str(&format!("{pad}const Float {value}\n")),
         Expr::String { value, .. } => out.push_str(&format!("{pad}const String {value:?}\n")),
         Expr::Bool { value, .. } => out.push_str(&format!("{pad}const Bool {value}\n")),
         Expr::Binary {

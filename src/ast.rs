@@ -166,6 +166,10 @@ pub enum Expr {
         value: String,
         span: Span,
     },
+    Float {
+        value: String,
+        span: Span,
+    },
     String {
         value: String,
         span: Span,
@@ -493,6 +497,7 @@ impl Expr {
         match self {
             Expr::Name { span, .. }
             | Expr::Int { span, .. }
+            | Expr::Float { span, .. }
             | Expr::String { span, .. }
             | Expr::Bool { span, .. }
             | Expr::Binary { span, .. }
@@ -511,6 +516,7 @@ impl Expr {
         match self {
             Expr::Name { name, .. } => out.push_str(&format!("{pad}Name {name}\n")),
             Expr::Int { value, .. } => out.push_str(&format!("{pad}Int {value}\n")),
+            Expr::Float { value, .. } => out.push_str(&format!("{pad}Float {value}\n")),
             Expr::String { value, .. } => out.push_str(&format!("{pad}String {value:?}\n")),
             Expr::Bool { value, .. } => out.push_str(&format!("{pad}Bool {value}\n")),
             Expr::Binary {
