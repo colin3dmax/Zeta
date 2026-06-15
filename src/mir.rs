@@ -23,6 +23,10 @@ pub struct MirEnumVariant {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MirFunction {
     pub name: String,
+    /// Generic type parameters (empty for non-generic). The verifier treats a
+    /// `Named(P)` for any `P` here as compatible with everything; native
+    /// monomorphization specializes these away before codegen.
+    pub type_params: Vec<String>,
     pub params: Vec<Param>,
     pub return_type: Option<String>,
     pub body: Vec<MirStmt>,
@@ -281,6 +285,7 @@ fn lower_function(
 ) -> MirFunction {
     MirFunction {
         name: function.name.clone(),
+        type_params: function.type_params.clone(),
         params: function.params.clone(),
         return_type: function.return_type.clone(),
         body: function
@@ -975,6 +980,10 @@ struct MirVerifier<'a> {
     program: &'a Program,
     functions: HashMap<&'a str, &'a MirFunction>,
     enums: HashMap<&'a str, HashMap<&'a str, Option<&'a str>>>,
+    /// Union of every function's generic type parameters. A `Named(p)` for any
+    /// `p` here is treated as a wildcard during type checking (generics are
+    /// monomorphized away before native codegen).
+    type_params: HashSet<String>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -986,6 +995,11 @@ impl<'a> MirVerifier<'a> {
                 .functions
                 .iter()
                 .map(|function| (function.name.as_str(), function))
+                .collect(),
+            type_params: program
+                .functions
+                .iter()
+                .flat_map(|function| function.type_params.iter().cloned())
                 .collect(),
             enums: program
                 .enums
@@ -1788,10 +1802,43 @@ impl<'a> MirVerifier<'a> {
         code: &'static str,
         message: impl Into<String>,
     ) {
-        if actual.is_unknown() || expected.is_unknown() || actual == expected {
+        if self.compatible(actual, expected) {
             return;
         }
         self.error(code, message);
+    }
+
+    /// Structural type compatibility where `Unknown` and any generic type
+    /// parameter act as wildcards (matching anything), recursing through
+    /// array/tuple/function types.
+    fn compatible(&self, a: &MirType, b: &MirType) -> bool {
+        if a.is_unknown() || b.is_unknown() {
+            return true;
+        }
+        if let MirType::Named(n) = a {
+            if self.type_params.contains(n) {
+                return true;
+            }
+        }
+        if let MirType::Named(n) = b {
+            if self.type_params.contains(n) {
+                return true;
+            }
+        }
+        match (a, b) {
+            (MirType::Named(x), MirType::Named(y)) => x == y,
+            (MirType::Array(x), MirType::Array(y)) => self.compatible(x, y),
+            (MirType::Tuple(xs), MirType::Tuple(ys)) => {
+                xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| self.compatible(x, y))
+            }
+            (MirType::Fn(xp, xr), MirType::Fn(yp, yr)) => {
+                xp.len() == yp.len()
+                    && xp.iter().zip(yp).all(|(x, y)| self.compatible(x, y))
+                    && self.compatible(xr, yr)
+            }
+            (MirType::Unit, MirType::Unit) => true,
+            _ => false,
+        }
     }
 
     fn error(&mut self, code: &'static str, message: impl Into<String>) {

@@ -66,6 +66,10 @@ pub struct Function {
     pub reloadable: bool,
     pub name: String,
     pub name_span: Span,
+    /// Generic type parameters declared as `fn name<T, U>(...)`. Empty for a
+    /// non-generic function. Within the body these names act as opaque types;
+    /// call sites infer them from argument types and monomorphize for native.
+    pub type_params: Vec<String>,
     pub params: Vec<Param>,
     pub return_type: Option<String>,
     pub return_type_span: Option<Span>,

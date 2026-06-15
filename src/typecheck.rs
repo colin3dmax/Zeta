@@ -102,7 +102,7 @@ fn validate_declared_types(
         match item {
             Item::Struct(decl) => {
                 for field in &decl.fields {
-                    validate_type_name(&field.ty, field.ty_span, structs, enums, diagnostics);
+                    validate_type_name(&field.ty, field.ty_span, structs, enums, &[], diagnostics);
                 }
             }
             Item::Enum(decl) => {
@@ -113,6 +113,7 @@ fn validate_declared_types(
                             variant.payload_type_span.unwrap_or(variant.name_span),
                             structs,
                             enums,
+                            &[],
                             diagnostics,
                         );
                     }
@@ -120,7 +121,14 @@ fn validate_declared_types(
             }
             Item::Function(function) => {
                 for param in &function.params {
-                    validate_type_name(&param.ty, param.ty_span, structs, enums, diagnostics);
+                    validate_type_name(
+                        &param.ty,
+                        param.ty_span,
+                        structs,
+                        enums,
+                        &function.type_params,
+                        diagnostics,
+                    );
                 }
                 if let Some(return_type) = &function.return_type {
                     validate_type_name(
@@ -128,10 +136,11 @@ fn validate_declared_types(
                         function.return_type_span.unwrap_or(function.name_span),
                         structs,
                         enums,
+                        &function.type_params,
                         diagnostics,
                     );
                 }
-                validate_stmt_types(&function.body, structs, enums, diagnostics);
+                validate_stmt_types(&function.body, structs, enums, &function.type_params, diagnostics);
             }
             Item::ModuleDecl { .. } | Item::Import { .. } => {}
         }
@@ -142,6 +151,7 @@ fn validate_stmt_types(
     stmts: &[Stmt],
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
+    type_params: &[String],
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     for stmt in stmts {
@@ -155,6 +165,7 @@ fn validate_stmt_types(
                 ty_span.expect("typed let should carry a type span"),
                 structs,
                 enums,
+                type_params,
                 diagnostics,
             ),
             Stmt::If {
@@ -162,11 +173,15 @@ fn validate_stmt_types(
                 else_body,
                 ..
             } => {
-                validate_stmt_types(then_body, structs, enums, diagnostics);
-                validate_stmt_types(else_body, structs, enums, diagnostics);
+                validate_stmt_types(then_body, structs, enums, type_params, diagnostics);
+                validate_stmt_types(else_body, structs, enums, type_params, diagnostics);
             }
-            Stmt::While { body, .. } => validate_stmt_types(body, structs, enums, diagnostics),
-            Stmt::ForIn { body, .. } => validate_stmt_types(body, structs, enums, diagnostics),
+            Stmt::While { body, .. } => {
+                validate_stmt_types(body, structs, enums, type_params, diagnostics)
+            }
+            Stmt::ForIn { body, .. } => {
+                validate_stmt_types(body, structs, enums, type_params, diagnostics)
+            }
             Stmt::ForC {
                 init, step, body, ..
             } => {
@@ -174,19 +189,21 @@ fn validate_stmt_types(
                     std::slice::from_ref(init.as_ref()),
                     structs,
                     enums,
+                    type_params,
                     diagnostics,
                 );
                 validate_stmt_types(
                     std::slice::from_ref(step.as_ref()),
                     structs,
                     enums,
+                    type_params,
                     diagnostics,
                 );
-                validate_stmt_types(body, structs, enums, diagnostics);
+                validate_stmt_types(body, structs, enums, type_params, diagnostics);
             }
             Stmt::Match { arms, .. } => {
                 for arm in arms {
-                    validate_stmt_types(&arm.body, structs, enums, diagnostics);
+                    validate_stmt_types(&arm.body, structs, enums, type_params, diagnostics);
                 }
             }
             Stmt::Let { ty: None, .. }
@@ -204,22 +221,27 @@ fn validate_type_name(
     span: Span,
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
+    type_params: &[String],
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     if let Some((params, ret)) = crate::type_syntax::fn_parts(name) {
         for part in params {
-            validate_type_name(part, span, structs, enums, diagnostics);
+            validate_type_name(part, span, structs, enums, type_params, diagnostics);
         }
-        validate_type_name(ret, span, structs, enums, diagnostics);
+        validate_type_name(ret, span, structs, enums, type_params, diagnostics);
         return;
     }
     if let Some(parts) = crate::type_syntax::tuple_parts(name) {
         for part in parts {
-            validate_type_name(part, span, structs, enums, diagnostics);
+            validate_type_name(part, span, structs, enums, type_params, diagnostics);
         }
         return;
     }
-    if is_builtin_type_name(name) || structs.contains_key(name) || enums.contains_key(name) {
+    if is_builtin_type_name(name)
+        || structs.contains_key(name)
+        || enums.contains_key(name)
+        || type_params.iter().any(|p| p == name)
+    {
         return;
     }
     diagnostics.push(Diagnostic::new(
@@ -242,6 +264,7 @@ fn external_function_signature(
     enums: &HashMap<String, EnumType>,
 ) -> FunctionSignature {
     FunctionSignature {
+        type_params: Vec::new(),
         params: function
             .params
             .iter()
@@ -366,7 +389,7 @@ fn check_function(
         locals.insert(
             param.name.clone(),
             Binding {
-                ty: parse_declared_type(&param.ty, structs, enums),
+                ty: parse_type_with_params(&param.ty, structs, enums, &function.type_params),
                 mutable: false,
             },
         );
@@ -374,7 +397,7 @@ fn check_function(
     let return_type = function
         .return_type
         .as_deref()
-        .map(|ty| parse_declared_type(ty, structs, enums))
+        .map(|ty| parse_type_with_params(ty, structs, enums, &function.type_params))
         .unwrap_or(Type::Unit);
     check_stmts(
         &function.body,
@@ -1086,17 +1109,32 @@ fn infer_expr(
                 ));
                 return signature.return_type.clone();
             }
+            // For a generic function, infer the type parameters by unifying each
+            // declared (generic) param type against the concrete argument type,
+            // then substitute into the return type.
+            let mut subst: HashMap<String, Type> = HashMap::new();
             for (arg, expected) in args.iter().zip(&signature.params) {
                 let found = infer_expr(arg, locals, functions, structs, enums, diagnostics);
-                expect_type(
-                    &found,
-                    expected,
-                    "TYPE_CALL_ARGUMENT",
-                    arg.span(),
-                    diagnostics,
-                );
+                if matches!(found, Type::Error) {
+                    continue;
+                }
+                if signature.type_params.is_empty() {
+                    expect_type(&found, expected, "TYPE_CALL_ARGUMENT", arg.span(), diagnostics);
+                } else if !unify_generic(expected, &found, &signature.type_params, &mut subst) {
+                    expect_type(
+                        &found,
+                        &substitute_generic(expected, &subst),
+                        "TYPE_CALL_ARGUMENT",
+                        arg.span(),
+                        diagnostics,
+                    );
+                }
             }
-            signature.return_type.clone()
+            if signature.type_params.is_empty() {
+                signature.return_type.clone()
+            } else {
+                substitute_generic(&signature.return_type, &subst)
+            }
         }
         Expr::Lambda { params, body, .. } => {
             // Infer the body with the lambda's typed params added to the
@@ -1441,8 +1479,94 @@ fn infer_enum_variant_call(
 
 #[derive(Debug, Clone)]
 struct FunctionSignature {
+    /// Generic type parameters (empty for a non-generic function). When present,
+    /// `params`/`return_type` may contain `Type::Named(P)` for each `P` here.
+    type_params: Vec<String>,
     params: Vec<Type>,
     return_type: Type,
+}
+
+/// Like [`parse_declared_type`] but treats any name in `type_params` as an opaque
+/// generic type `Type::Named(name)` (recursing through tuple/function types).
+fn parse_type_with_params(
+    name: &str,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    type_params: &[String],
+) -> Type {
+    if let Some((params, ret)) = crate::type_syntax::fn_parts(name) {
+        return Type::Fn(
+            params
+                .iter()
+                .map(|p| parse_type_with_params(p, structs, enums, type_params))
+                .collect(),
+            Box::new(parse_type_with_params(ret, structs, enums, type_params)),
+        );
+    }
+    if let Some(parts) = crate::type_syntax::tuple_parts(name) {
+        return Type::Tuple(
+            parts
+                .iter()
+                .map(|p| parse_type_with_params(p, structs, enums, type_params))
+                .collect(),
+        );
+    }
+    if type_params.iter().any(|p| p == name) {
+        return Type::Named(name.to_string());
+    }
+    parse_declared_type(name, structs, enums)
+}
+
+/// Bind generic type parameters by structurally unifying a (possibly generic)
+/// declared type against a concrete argument type. Records `P -> concrete` into
+/// `subst`. Returns false on a structural mismatch.
+fn unify_generic(declared: &Type, actual: &Type, type_params: &[String], subst: &mut HashMap<String, Type>) -> bool {
+    if let Type::Named(name) = declared {
+        if type_params.iter().any(|p| p == name) {
+            return match subst.get(name) {
+                Some(bound) => bound == actual,
+                None => {
+                    subst.insert(name.clone(), actual.clone());
+                    true
+                }
+            };
+        }
+    }
+    match (declared, actual) {
+        (Type::Array(d), Type::Array(a)) => unify_generic(d, a, type_params, subst),
+        (Type::Tuple(ds), Type::Tuple(as_)) => {
+            ds.len() == as_.len()
+                && ds
+                    .iter()
+                    .zip(as_)
+                    .all(|(d, a)| unify_generic(d, a, type_params, subst))
+        }
+        (Type::Fn(dp, dr), Type::Fn(ap, ar)) => {
+            dp.len() == ap.len()
+                && dp
+                    .iter()
+                    .zip(ap)
+                    .all(|(d, a)| unify_generic(d, a, type_params, subst))
+                && unify_generic(dr, ar, type_params, subst)
+        }
+        _ => declared == actual,
+    }
+}
+
+/// Substitute bound generic parameters into a type.
+fn substitute_generic(ty: &Type, subst: &HashMap<String, Type>) -> Type {
+    match ty {
+        Type::Named(name) => subst.get(name).cloned().unwrap_or_else(|| ty.clone()),
+        Type::Array(inner) => Type::Array(Box::new(substitute_generic(inner, subst))),
+        Type::Tuple(elems) => {
+            Type::Tuple(elems.iter().map(|e| substitute_generic(e, subst)).collect())
+        }
+        Type::Fn(params, ret) => Type::Fn(
+            params.iter().map(|p| substitute_generic(p, subst)).collect(),
+            Box::new(substitute_generic(ret, subst)),
+        ),
+        _ => ty.clone(),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1473,15 +1597,25 @@ fn function_signatures(
             Item::Function(function) => Some((
                 function.name.clone(),
                 FunctionSignature {
+                    type_params: function.type_params.clone(),
                     params: function
                         .params
                         .iter()
-                        .map(|param| parse_declared_type(&param.ty, structs, enums))
+                        .map(|param| {
+                            parse_type_with_params(
+                                &param.ty,
+                                structs,
+                                enums,
+                                &function.type_params,
+                            )
+                        })
                         .collect(),
                     return_type: function
                         .return_type
                         .as_deref()
-                        .map(|ty| parse_declared_type(ty, structs, enums))
+                        .map(|ty| {
+                            parse_type_with_params(ty, structs, enums, &function.type_params)
+                        })
                         .unwrap_or(Type::Unit),
                 },
             )),

@@ -152,6 +152,7 @@ impl Parser {
 
     fn parse_function(&mut self, exported: bool, reloadable: bool) -> Result<Function, Diagnostic> {
         let (name, name_span) = self.expect_ident_span("expected function name")?;
+        let type_params = self.parse_type_params()?;
         self.expect_symbol(Symbol::LParen, "expected `(` after function name")?;
         let params = self.parse_params()?;
         self.expect_symbol(Symbol::RParen, "expected `)` after parameters")?;
@@ -168,11 +169,30 @@ impl Parser {
             reloadable,
             name,
             name_span,
+            type_params,
             params,
             return_type,
             return_type_span,
             body,
         })
+    }
+
+    /// Parse optional generic type parameters `<T, U>` after a function name.
+    /// Returns an empty list when no `<` follows.
+    fn parse_type_params(&mut self) -> Result<Vec<String>, Diagnostic> {
+        if self.consume_symbol(Symbol::Lt).is_none() {
+            return Ok(Vec::new());
+        }
+        let mut params = Vec::new();
+        loop {
+            let (name, _) = self.expect_ident_span("expected type parameter name")?;
+            params.push(name);
+            if self.consume_symbol(Symbol::Comma).is_none() {
+                break;
+            }
+        }
+        self.expect_symbol(Symbol::Gt, "expected `>` after type parameters")?;
+        Ok(params)
     }
 
     fn parse_params(&mut self) -> Result<Vec<Param>, Diagnostic> {
