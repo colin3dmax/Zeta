@@ -95,6 +95,10 @@ enum ZType {
     /// interpreter's by-name enum value is never observed directly, so this layout
     /// need not match.
     Enum(String),
+    /// A tuple, represented as an LLVM anonymous struct `{T0, T1, ...}` whose
+    /// element types are stored here in order. Like structs, tuple values live
+    /// inline (insert_value / extract_value); fields are positional (`.0`, `.1`).
+    Tuple(Vec<ZType>),
 }
 
 /// Per-struct layout: field name → index (declaration order) and each field's
@@ -182,6 +186,11 @@ impl<'ctx> Types<'ctx> {
             ZType::Struct(name) => self.structs[name].ty.into(),
             ZType::Array(_) | ZType::Str => array_struct_type(self.context).into(),
             ZType::Enum(_) => enum_struct_type(self.context).into(),
+            ZType::Tuple(elements) => {
+                let field_types: Vec<BasicTypeEnum<'ctx>> =
+                    elements.iter().map(|e| self.llvm(e)).collect();
+                self.context.struct_type(&field_types, false).into()
+            }
         }
     }
 
@@ -301,6 +310,13 @@ fn llvm_type_of<'ctx>(
         ZType::Struct(name) => opaque[name].into(),
         ZType::Array(_) | ZType::Str => array_struct_type(context).into(),
         ZType::Enum(_) => enum_struct_type(context).into(),
+        ZType::Tuple(elements) => {
+            let field_types: Vec<BasicTypeEnum<'ctx>> = elements
+                .iter()
+                .map(|e| llvm_type_of(context, e, opaque))
+                .collect();
+            context.struct_type(&field_types, false).into()
+        }
     }
 }
 
@@ -856,6 +872,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             ZType::Struct(name) => self.types.structs[name].ty.const_zero().into(),
             ZType::Array(_) | ZType::Str => array_struct_type(self.context).const_zero().into(),
             ZType::Enum(_) => enum_struct_type(self.context).const_zero().into(),
+            ZType::Tuple(_) => self.types.llvm(zt).const_zero(),
         }
     }
 
@@ -1524,6 +1541,25 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 }
                 Ok((current.into(), ZType::Struct(ty.clone())))
             }
+            MirExpr::Tuple { elements } => {
+                // Lower elements, learn each type, then build an anonymous struct.
+                let mut values = Vec::with_capacity(elements.len());
+                for element in elements {
+                    values.push(self.lower_expr(element)?);
+                }
+                let elem_types: Vec<ZType> = values.iter().map(|(_, t)| t.clone()).collect();
+                let tuple_ty = ZType::Tuple(elem_types);
+                let struct_ty = self.types.llvm(&tuple_ty).into_struct_type();
+                let mut current = struct_ty.get_undef();
+                for (index, (v, _)) in values.into_iter().enumerate() {
+                    current = self
+                        .builder
+                        .build_insert_value(current, v, index as u32, "tup")
+                        .unwrap()
+                        .into_struct_value();
+                }
+                Ok((current.into(), tuple_ty))
+            }
             MirExpr::FieldAccess { base, field } => {
                 let (base_val, base_ty) = self.lower_expr(base)?;
                 match base_ty {
@@ -1532,6 +1568,20 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                         let value = self
                             .builder
                             .build_extract_value(base_val.into_struct_value(), index, "field")
+                            .unwrap();
+                        Ok((value, field_ty))
+                    }
+                    ZType::Tuple(elem_types) => {
+                        let index: usize = field
+                            .parse()
+                            .map_err(|_| format!("invalid tuple index `.{field}`"))?;
+                        let field_ty = elem_types
+                            .get(index)
+                            .ok_or_else(|| format!("tuple index `.{field}` out of range"))?
+                            .clone();
+                        let value = self
+                            .builder
+                            .build_extract_value(base_val.into_struct_value(), index as u32, "tup")
                             .unwrap();
                         Ok((value, field_ty))
                     }
