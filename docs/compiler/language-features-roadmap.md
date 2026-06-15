@@ -17,7 +17,7 @@
 | 阶段 | 特性 | 规模 | 理由 |
 |---|---|---|---|
 | **P1** | **Float**(f64 标量) | 中 | **✅ 完成**(1a 语言层 11 用例 + 1b native codegen 6 用例,差分对齐解释器) |
-| **P2** | **Tuple**(`(a,b)`/`t.0`) | 中 | **✅ 完成**(2a 语言层 9 用例 + 2b native codegen 6 用例;类型推断,暂无 tuple 注解) |
+| **P2** | **Tuple**(`(a,b)`/`t.0`) | 中 | **✅ 完成**(2a 语言层 + 2b native + 2c 类型注解跨函数边界;含 src/type_syntax.rs) |
 | **P3** | **Closure**(`\|x\| e` + 捕获) | 大 | 一等函数;需捕获分析 + 闭包转换(fn ptr + env) |
 | **P4** | **Generics**(`<T>` 参数多态) | 大 | 复用;需单态化(monomorphization) |
 
