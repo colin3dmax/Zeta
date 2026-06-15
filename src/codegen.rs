@@ -30,13 +30,14 @@
 //! (`{len,ptr}`) elements all work.
 
 use crate::ast::{BinaryOp, StructDecl, UnaryOp};
-use crate::mir::{MirExpr, MirPattern, MirPlace, MirStmt, Program};
+use crate::mir::{MirExpr, MirFunction, MirPattern, MirPlace, MirStmt, Program};
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::types::{BasicType, BasicTypeEnum, StructType};
 use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{IntPredicate, OptimizationLevel};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 /// JIT-compile a function `() -> i64` that returns `value`, run it, return the
@@ -324,6 +325,62 @@ fn array_struct_type(context: &Context) -> StructType {
 fn closure_struct_type(context: &Context) -> StructType {
     let ptr = context.ptr_type(inkwell::AddressSpace::default());
     context.struct_type(&[ptr.into(), ptr.into()], false)
+}
+
+/// Unify a generic parameter type STRING against a concrete `ZType`, binding any
+/// type parameters it names into `subst` (recursing through tuple/function types).
+fn unify_ztype(
+    generic_str: &str,
+    concrete: &ZType,
+    type_params: &[String],
+    subst: &mut HashMap<String, ZType>,
+) {
+    if type_params.iter().any(|p| p == generic_str) {
+        subst.insert(generic_str.to_string(), concrete.clone());
+        return;
+    }
+    if let Some(parts) = crate::type_syntax::tuple_parts(generic_str) {
+        if let ZType::Tuple(elems) = concrete {
+            for (p, c) in parts.iter().zip(elems) {
+                unify_ztype(p, c, type_params, subst);
+            }
+        }
+        return;
+    }
+    if let Some((params, ret)) = crate::type_syntax::fn_parts(generic_str) {
+        if let ZType::Closure(cparams, cret) = concrete {
+            for (p, c) in params.iter().zip(cparams) {
+                unify_ztype(p, c, type_params, subst);
+            }
+            unify_ztype(ret, cret, type_params, subst);
+        }
+    }
+}
+
+/// A deterministic, collision-resistant mangle of a `ZType` for instance naming.
+fn zty_mangle(zt: &ZType) -> String {
+    match zt {
+        ZType::Int => "Int".to_string(),
+        ZType::Float => "Float".to_string(),
+        ZType::Str => "Str".to_string(),
+        ZType::Struct(name) => format!("S{}", name),
+        ZType::Enum(name) => format!("E{}", name),
+        ZType::Array(elem) => format!("Arr{}", zty_mangle(elem)),
+        ZType::Tuple(elems) => {
+            let inner: Vec<String> = elems.iter().map(zty_mangle).collect();
+            format!("Tup{}_{}e", inner.len(), inner.join("_"))
+        }
+        ZType::Closure(params, ret) => {
+            let inner: Vec<String> = params.iter().map(zty_mangle).collect();
+            format!("Fn{}_{}_r{}", inner.len(), inner.join("_"), zty_mangle(ret))
+        }
+    }
+}
+
+/// Mangled name for a monomorphized instance, e.g. `id$Int`, `pair$Int_Bool`.
+fn mangle_instance(callee: &str, arg_ztys: &[ZType]) -> String {
+    let parts: Vec<String> = arg_ztys.iter().map(zty_mangle).collect();
+    format!("{callee}${}", parts.join("_"))
 }
 
 /// Collect the free `Load` names of `expr` — names it reads that are not bound by
@@ -815,9 +872,22 @@ fn build_module<'ctx>(
         None,
     );
 
-    // Pass 1: declare every function with its typed signature.
+    // Generic functions can't be lowered as-is (LLVM is statically typed); they
+    // are kept aside and monomorphized on demand at each call site.
+    let generics: HashMap<String, &MirFunction> = program
+        .functions
+        .iter()
+        .filter(|f| !f.type_params.is_empty())
+        .map(|f| (f.name.clone(), f))
+        .collect();
+    let specialized: RefCell<HashMap<String, FunctionValue>> = RefCell::new(HashMap::new());
+
+    // Pass 1: declare every concrete function with its typed signature.
     let mut functions: HashMap<String, FunctionValue> = HashMap::new();
     for function in &program.functions {
+        if !function.type_params.is_empty() {
+            continue;
+        }
         let mut param_types = Vec::with_capacity(function.params.len());
         for param in &function.params {
             let zt = parse_ztype(&param.ty, &struct_names, &enum_names)?;
@@ -831,8 +901,11 @@ fn build_module<'ctx>(
         );
     }
 
-    // Pass 2: lower each body.
+    // Pass 2: lower each concrete body.
     for function in &program.functions {
+        if !function.type_params.is_empty() {
+            continue;
+        }
         let llvm_fn = functions[&function.name];
         let entry_bb = context.append_basic_block(llvm_fn, "entry");
         builder.position_at_end(entry_bb);
@@ -843,6 +916,8 @@ fn build_module<'ctx>(
             builder: &builder,
             types,
             functions: &functions,
+            generics: &generics,
+            specialized: &specialized,
             malloc,
             memcpy,
             memcmp,
@@ -942,6 +1017,13 @@ struct FnLower<'a, 'ctx> {
     builder: &'a Builder<'ctx>,
     types: &'a Types<'ctx>,
     functions: &'a HashMap<String, FunctionValue<'ctx>>,
+    /// Generic function bodies, by name (excluded from the concrete passes).
+    /// Calls to these are monomorphized on demand at the call site.
+    generics: &'a HashMap<String, &'a MirFunction>,
+    /// Cache of monomorphized instances: mangled name → lifted LLVM function.
+    /// Shared (RefCell) across all `FnLower`s so each (generic, type args) pair
+    /// is generated once and reused.
+    specialized: &'a RefCell<HashMap<String, FunctionValue<'ctx>>>,
     malloc: FunctionValue<'ctx>,
     memcpy: FunctionValue<'ctx>,
     memcmp: FunctionValue<'ctx>,
@@ -1733,6 +1815,8 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 builder: self.builder,
                 types: self.types,
                 functions: self.functions,
+                generics: self.generics,
+                specialized: self.specialized,
                 malloc: self.malloc,
                 memcpy: self.memcpy,
                 memcmp: self.memcmp,
@@ -1854,6 +1938,145 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         Ok((value, ret_zty.clone()))
     }
 
+    /// Monomorphize a call to a generic function: lower the arguments (their
+    /// ZTypes ARE the concrete parameter types), derive the type-parameter
+    /// substitution to resolve the return type, generate (or reuse) the
+    /// specialized instance, and call it.
+    fn lower_generic_call(
+        &mut self,
+        callee: &str,
+        args: &[MirExpr],
+    ) -> Result<(BasicValueEnum<'ctx>, ZType), String> {
+        let generic = *self
+            .generics
+            .get(callee)
+            .ok_or_else(|| format!("unknown generic `{callee}`"))?;
+        if generic.params.len() != args.len() {
+            return Err(format!("generic `{callee}` arity mismatch"));
+        }
+        let mut argv: Vec<inkwell::values::BasicMetadataValueEnum<'ctx>> =
+            Vec::with_capacity(args.len());
+        let mut arg_ztys = Vec::with_capacity(args.len());
+        for arg in args {
+            let (v, vt) = self.lower_expr(arg)?;
+            let v = self.bind_owned(arg, v, &vt);
+            argv.push(v.into());
+            arg_ztys.push(vt);
+        }
+        let mut subst: HashMap<String, ZType> = HashMap::new();
+        for (param, arg_zty) in generic.params.iter().zip(&arg_ztys) {
+            unify_ztype(&param.ty, arg_zty, &generic.type_params, &mut subst);
+        }
+        let ret_zty = match &generic.return_type {
+            Some(t) => self.resolve_generic_ztype(t, &subst)?,
+            None => ZType::Int,
+        };
+        let mangled = mangle_instance(callee, &arg_ztys);
+        let function = self.get_or_build_specialization(&mangled, generic, &arg_ztys, &ret_zty)?;
+        let call = self.builder.build_call(function, &argv, "gcall").unwrap();
+        let value = call
+            .try_as_basic_value()
+            .basic()
+            .ok_or_else(|| format!("`{callee}` returned no value"))?;
+        Ok((value, ret_zty))
+    }
+
+    /// Resolve a (possibly generic) declared type string to a concrete `ZType`,
+    /// substituting bound type parameters.
+    fn resolve_generic_ztype(
+        &self,
+        ty_str: &str,
+        subst: &HashMap<String, ZType>,
+    ) -> Result<ZType, String> {
+        if let Some((params, ret)) = crate::type_syntax::fn_parts(ty_str) {
+            let ps = params
+                .iter()
+                .map(|p| self.resolve_generic_ztype(p, subst))
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(ZType::Closure(
+                ps,
+                Box::new(self.resolve_generic_ztype(ret, subst)?),
+            ));
+        }
+        if let Some(parts) = crate::type_syntax::tuple_parts(ty_str) {
+            let es = parts
+                .iter()
+                .map(|p| self.resolve_generic_ztype(p, subst))
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(ZType::Tuple(es));
+        }
+        if let Some(zt) = subst.get(ty_str) {
+            return Ok(zt.clone());
+        }
+        self.types.parse_ztype(ty_str)
+    }
+
+    /// Get or generate the monomorphized instance `mangled` of `generic` with the
+    /// given concrete parameter / return types. Inserted into the shared cache
+    /// before its body is lowered so self-recursive generics terminate.
+    fn get_or_build_specialization(
+        &self,
+        mangled: &str,
+        generic: &MirFunction,
+        param_ztys: &[ZType],
+        ret_zty: &ZType,
+    ) -> Result<FunctionValue<'ctx>, String> {
+        if let Some(func) = self.specialized.borrow().get(mangled) {
+            return Ok(*func);
+        }
+        let mut fn_param_types: Vec<inkwell::types::BasicMetadataTypeEnum<'ctx>> =
+            Vec::with_capacity(param_ztys.len());
+        for zt in param_ztys {
+            fn_param_types.push(self.types.llvm(zt).into());
+        }
+        let fn_type = self.types.llvm(ret_zty).fn_type(&fn_param_types, false);
+        let func = self.module.add_function(mangled, fn_type, None);
+        self.specialized
+            .borrow_mut()
+            .insert(mangled.to_string(), func);
+
+        let saved_block = self.builder.get_insert_block();
+        let entry = self.context.append_basic_block(func, "entry");
+        self.builder.position_at_end(entry);
+        {
+            let mut inner = FnLower {
+                context: self.context,
+                module: self.module,
+                builder: self.builder,
+                types: self.types,
+                functions: self.functions,
+                generics: self.generics,
+                specialized: self.specialized,
+                malloc: self.malloc,
+                memcpy: self.memcpy,
+                memcmp: self.memcmp,
+                snprintf: self.snprintf,
+                llvm_fn: func,
+                entry_bb: entry,
+                lambda_count: 0,
+                locals: HashMap::new(),
+                loops: Vec::new(),
+            };
+            for (index, (param, zt)) in generic.params.iter().zip(param_ztys).enumerate() {
+                let slot = inner.entry_alloca(&param.name, inner.types.llvm(zt));
+                let value = func.get_nth_param(index as u32).expect("param exists");
+                inner.builder.build_store(slot, value).unwrap();
+                inner.locals.insert(param.name.clone(), (slot, zt.clone()));
+            }
+            let terminated = inner
+                .lower_stmts(&generic.body)
+                .map_err(|e| format!("in `{mangled}`: {e}"))?;
+            if !terminated {
+                let zero = inner.zero_of(ret_zty);
+                inner.builder.build_return(Some(&zero)).unwrap();
+            }
+        }
+        if let Some(block) = saved_block {
+            self.builder.position_at_end(block);
+        }
+        Ok(func)
+    }
+
     /// Lower an expression to (value, type).
     fn lower_expr(&mut self, expr: &MirExpr) -> Result<(BasicValueEnum<'ctx>, ZType), String> {
         match expr {
@@ -1918,6 +2141,11 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                         .basic()
                         .ok_or_else(|| format!("`{callee}` returned no value"))?;
                     return Ok((value, ret));
+                }
+                // Generic call: monomorphize `callee` for the concrete argument
+                // types at this site, then call the specialized instance.
+                if self.generics.contains_key(callee) {
+                    return self.lower_generic_call(callee, args);
                 }
                 // Indirect call: `callee` is a local holding a closure value.
                 if let Some((slot, ZType::Closure(param_ztys, ret_zty))) =
