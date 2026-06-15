@@ -195,6 +195,11 @@ pub enum Expr {
         args: Vec<Expr>,
         span: Span,
     },
+    Lambda {
+        params: Vec<Param>,
+        body: Box<Expr>,
+        span: Span,
+    },
     StructLiteral {
         ty: String,
         ty_span: Span,
@@ -507,6 +512,7 @@ impl Expr {
             | Expr::Binary { span, .. }
             | Expr::Unary { span, .. }
             | Expr::Call { span, .. }
+            | Expr::Lambda { span, .. }
             | Expr::StructLiteral { span, .. }
             | Expr::FieldAccess { span, .. }
             | Expr::ArrayLiteral { span, .. }
@@ -540,6 +546,14 @@ impl Expr {
                 for arg in args {
                     arg.dump(indent + 1, out);
                 }
+            }
+            Expr::Lambda { params, body, .. } => {
+                let names: Vec<String> = params
+                    .iter()
+                    .map(|p| format!("{}: {}", p.name, p.ty))
+                    .collect();
+                out.push_str(&format!("{pad}Lambda |{}|\n", names.join(", ")));
+                body.dump(indent + 1, out);
             }
             Expr::StructLiteral { ty, fields, .. } => {
                 out.push_str(&format!("{pad}StructLiteral type={ty}\n"));

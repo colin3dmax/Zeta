@@ -215,6 +215,14 @@ fn dump_expr(expr: &Expr, indent: usize, out: &mut String) {
                 dump_expr(arg, indent + 1, out);
             }
         }
+        Expr::Lambda { params, body, .. } => {
+            let names: Vec<String> = params
+                .iter()
+                .map(|p| format!("{}: {}", p.name, p.ty))
+                .collect();
+            out.push_str(&format!("{pad}lambda |{}|\n", names.join(", ")));
+            dump_expr(body, indent + 1, out);
+        }
         Expr::StructLiteral { ty, fields, .. } => {
             out.push_str(&format!("{pad}struct_literal {ty}\n"));
             for field in fields {

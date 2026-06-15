@@ -266,10 +266,15 @@ fn resolve_call_qualified_path_is_unknown_function() {
 }
 
 #[test]
-fn resolve_call_local_variable_as_callee_is_unknown_function() {
-    // A local used as a callee is still an unknown function (locals are not
-    // consulted for the call set), so `g` is reported.
-    assert_matches_oracle("fn f() -> Int { let g: Int = 0; return g(); }");
+fn resolve_call_local_variable_as_callee_is_allowed() {
+    // Since closures (P3), a local used as a callee is an indirect call and is
+    // NOT a resolve error — the Rust resolver consults locals for the call set.
+    // (Whether the local is actually callable is a typecheck concern,
+    // TYPE_CALL_NOT_CALLABLE.) This intentionally diverges from the self-hosted
+    // frontend, which predates closures, so it is asserted against the Rust
+    // resolver directly rather than via the parity oracle.
+    let report = oracle_report("fn f() -> Int { let g: Int = 0; return g(); }");
+    assert_eq!(report.trim_end(), "", "unexpected resolver diagnostics:\n{report}");
 }
 
 #[test]

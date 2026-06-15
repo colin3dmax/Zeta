@@ -152,6 +152,10 @@ pub enum MirExpr {
     Tuple {
         elements: Vec<MirExpr>,
     },
+    Lambda {
+        params: Vec<Param>,
+        body: Box<MirExpr>,
+    },
     Index {
         base: Box<MirExpr>,
         index: Box<MirExpr>,
@@ -518,6 +522,10 @@ fn lower_expr(
                 .map(|element| lower_expr(element, enum_variants))
                 .collect(),
         },
+        Expr::Lambda { params, body, .. } => MirExpr::Lambda {
+            params: params.clone(),
+            body: Box::new(lower_expr(body, enum_variants)),
+        },
         Expr::Index { base, index, .. } => MirExpr::Index {
             base: Box::new(lower_expr(base, enum_variants)),
             index: Box::new(lower_expr(index, enum_variants)),
@@ -830,6 +838,13 @@ impl DumpCtx {
                 ));
                 temp
             }
+            MirExpr::Lambda { params, body } => {
+                let names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+                let temp = self.temp();
+                out.push_str(&format!("{pad}{temp} = lambda |{}|\n", names.join(", ")));
+                self.dump_expr(body, indent + 1, out);
+                temp
+            }
             MirExpr::Index { base, index } => {
                 let base_temp = self.dump_expr(base, indent, out);
                 let index_temp = self.dump_expr(index, indent, out);
@@ -902,6 +917,7 @@ enum MirType {
     Named(String),
     Array(Box<MirType>),
     Tuple(Vec<MirType>),
+    Fn(Vec<MirType>, Box<MirType>),
     Unit,
     Unknown,
 }
@@ -926,6 +942,10 @@ impl MirType {
                 let inner: Vec<String> = elements.iter().map(|e| e.display()).collect();
                 format!("({})", inner.join(", "))
             }
+            Self::Fn(params, ret) => {
+                let inner: Vec<String> = params.iter().map(|p| p.display()).collect();
+                format!("fn({}) -> {}", inner.join(", "), ret.display())
+            }
             Self::Unit => "Unit".to_string(),
             Self::Unknown => "<unknown>".to_string(),
         }
@@ -933,6 +953,12 @@ impl MirType {
 }
 
 fn parse_mir_type(name: &str) -> MirType {
+    if let Some((params, ret)) = crate::type_syntax::fn_parts(name) {
+        return MirType::Fn(
+            params.iter().map(|p| parse_mir_type(p)).collect(),
+            Box::new(parse_mir_type(ret)),
+        );
+    }
     if let Some(parts) = crate::type_syntax::tuple_parts(name) {
         return MirType::Tuple(parts.iter().map(|p| parse_mir_type(p)).collect());
     }
@@ -1387,6 +1413,18 @@ impl<'a> MirVerifier<'a> {
                     .collect();
                 MirType::Tuple(types)
             }
+            MirExpr::Lambda { params, body } => {
+                // Verify the body with the lambda's params added to the scope.
+                let mut body_locals = locals.clone();
+                let mut param_types = Vec::with_capacity(params.len());
+                for param in params {
+                    let ty = parse_mir_type(&param.ty);
+                    body_locals.insert(param.name.clone(), ty.clone());
+                    param_types.push(ty);
+                }
+                let ret = self.verify_expr(body, &body_locals);
+                MirType::Fn(param_types, Box::new(ret))
+            }
             MirExpr::ArrayLiteral { elements } => {
                 let Some((first, rest)) = elements.split_first() else {
                     self.error("MIR_ARRAY_EMPTY", "empty MIR arrays need an element type");
@@ -1498,6 +1536,33 @@ impl<'a> MirVerifier<'a> {
             return return_type;
         }
         let Some(function) = self.functions.get(callee).copied() else {
+            // Indirect call through a local of function type.
+            if let Some(MirType::Fn(params, ret)) = locals.get(callee).cloned() {
+                if params.len() != args.len() {
+                    self.error(
+                        "MIR_CALL_ARITY",
+                        format!(
+                            "closure `{callee}` expects {} arguments, found {}",
+                            params.len(),
+                            args.len()
+                        ),
+                    );
+                }
+                for (param_ty, arg) in params.iter().zip(args) {
+                    let arg_ty = self.verify_expr(arg, locals);
+                    self.expect_type(
+                        &arg_ty,
+                        param_ty,
+                        "MIR_CALL_TYPE",
+                        format!(
+                            "argument for `{callee}` expects `{}`, found `{}`",
+                            param_ty.display(),
+                            arg_ty.display()
+                        ),
+                    );
+                }
+                return *ret;
+            }
             self.error(
                 "MIR_UNKNOWN_FUNCTION",
                 format!("call target `{callee}` is not defined"),

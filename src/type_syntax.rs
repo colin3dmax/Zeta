@@ -38,3 +38,56 @@ pub fn tuple_parts(name: &str) -> Option<Vec<&str>> {
         None
     }
 }
+
+/// Split a comma-separated type list at the top level (respecting nested parens),
+/// returning the trimmed element strings. An empty/blank input yields `vec![]`.
+pub fn split_top_level(inner: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    for (i, c) in inner.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(inner[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    let last = inner[start..].trim();
+    if !last.is_empty() {
+        parts.push(last);
+    }
+    parts
+}
+
+/// If `name` is a function type string `fn(P0, P1, ...) -> R`, return its
+/// parameter type strings and return type string. Returns `None` otherwise.
+pub fn fn_parts(name: &str) -> Option<(Vec<&str>, &str)> {
+    let rest = name.trim().strip_prefix("fn")?.trim_start();
+    let rest = rest.strip_prefix('(')?;
+    // Find the matching `)` for the parameter list at depth 0.
+    let mut depth = 0i32;
+    let mut close = None;
+    for (i, c) in rest.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' if depth == 0 => {
+                close = Some(i);
+                break;
+            }
+            ')' => depth -= 1,
+            _ => {}
+        }
+    }
+    let close = close?;
+    let params = split_top_level(rest[..close].trim());
+    let after = rest[close + 1..].trim();
+    let ret = after.strip_prefix("->")?.trim();
+    if ret.is_empty() {
+        return None;
+    }
+    Some((params, ret))
+}

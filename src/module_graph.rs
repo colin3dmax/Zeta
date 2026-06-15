@@ -528,6 +528,15 @@ fn rewrite_expr(
                 );
             }
         }
+        MirExpr::Lambda { body, .. } => {
+            rewrite_expr(
+                body,
+                current_module,
+                imported_targets,
+                local_functions,
+                is_main_module,
+            );
+        }
         MirExpr::Index { base, index } => {
             rewrite_expr(
                 base,

@@ -1567,6 +1567,12 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 }
                 Ok((current.into(), tuple_ty))
             }
+            MirExpr::Lambda { .. } => {
+                // Closures need closure conversion (lift to a top-level fn + heap
+                // env); that is a later native slice. The interpreter is the
+                // oracle for closures until then.
+                Err("closures are not yet in the native subset".into())
+            }
             MirExpr::FieldAccess { base, field } => {
                 let (base_val, base_ty) = self.lower_expr(base)?;
                 match base_ty {

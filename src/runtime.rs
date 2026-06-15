@@ -40,7 +40,25 @@ pub enum Value {
     // Tuples are fixed-arity, immutable aggregates; like arrays they share
     // contents behind `Rc` so cloning the Value is O(1).
     Tuple(Rc<Vec<Value>>),
+    // A closure: a function value carrying the variables it captured (by value,
+    // snapshotted at creation — matching Zeta's value semantics) alongside its
+    // parameter names and body. The body is either MIR or AST depending on which
+    // interpreter created it; a given run only ever produces one kind.
+    Closure(Rc<Closure>),
     Unit,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Closure {
+    params: Vec<String>,
+    captured: HashMap<String, Value>,
+    body: ClosureBody,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum ClosureBody {
+    Mir(MirExpr),
+    Ast(Expr),
 }
 
 /// 赋值左值展平后的一步:字段名或已求值的数组下标。
@@ -479,6 +497,17 @@ fn live_expr(
             }
             live
         }
+        MirExpr::Lambda { body, .. } => {
+            // The closure captures its free variables by value at creation time,
+            // so every name the body references is used here. Keep them live (and
+            // never movable: the capture clones them, leaving the originals).
+            let mut names = LiveSet::new();
+            collect_expr_names(body, &mut names);
+            for name in names {
+                live.insert(name);
+            }
+            live
+        }
         MirExpr::Index { base, index } => {
             // Eval order base then index; process index first.
             let live = live_expr(index, live, mark, movable);
@@ -546,6 +575,7 @@ fn collect_expr_names(expr: &MirExpr, out: &mut LiveSet) {
                 collect_expr_names(element, out);
             }
         }
+        MirExpr::Lambda { body, .. } => collect_expr_names(body, out),
         MirExpr::Index { base, index } => {
             collect_expr_names(base, out);
             collect_expr_names(index, out);
@@ -1064,6 +1094,33 @@ impl MirRuntime {
         }
     }
 
+    /// Apply a closure: bind args over the captured environment and evaluate the
+    /// (expression) body. The body is MIR because a MIR run only mints MIR-bodied
+    /// closures.
+    fn apply_closure(&mut self, closure: &Closure, args: Vec<Value>) -> Result<Value, Diagnostic> {
+        if closure.params.len() != args.len() {
+            return Err(runtime_error(
+                "RUNTIME_CALL_ARITY",
+                format!(
+                    "closure expects {} arguments, found {}",
+                    closure.params.len(),
+                    args.len()
+                ),
+            ));
+        }
+        let ClosureBody::Mir(body) = &closure.body else {
+            return Err(runtime_error(
+                "RUNTIME_CLOSURE_BODY",
+                "closure body is not MIR in the MIR interpreter",
+            ));
+        };
+        let mut call_locals = closure.captured.clone();
+        for (name, value) in closure.params.iter().zip(args) {
+            call_locals.insert(name.clone(), value);
+        }
+        self.eval_expr(body, &mut call_locals)
+    }
+
     fn eval_expr(
         &mut self,
         expr: &MirExpr,
@@ -1110,6 +1167,14 @@ impl MirRuntime {
                     return eval_std_builtin(callee, arg_values);
                 }
                 let Some(function) = self.functions.get(callee).cloned() else {
+                    // Indirect call: `callee` may name a local closure value.
+                    if let Some(Value::Closure(closure)) = locals.get(callee).cloned() {
+                        let mut arg_values = Vec::with_capacity(args.len());
+                        for arg in args {
+                            arg_values.push(self.eval_expr(arg, locals)?);
+                        }
+                        return self.apply_closure(&closure, arg_values);
+                    }
                     return Err(runtime_error(
                         "RUNTIME_UNKNOWN_FUNCTION",
                         format!("unknown function `{callee}`"),
@@ -1222,6 +1287,16 @@ impl MirRuntime {
                     values.push(self.eval_expr(element, locals)?);
                 }
                 Ok(Value::Tuple(Rc::new(values)))
+            }
+            MirExpr::Lambda { params, body } => {
+                // Capture the current environment by value (cloning is O(1) via
+                // Rc on the heavy payloads). The snapshot freezes the captured
+                // variables' values at creation time — Zeta's value semantics.
+                Ok(Value::Closure(Rc::new(Closure {
+                    params: params.iter().map(|p| p.name.clone()).collect(),
+                    captured: locals.clone(),
+                    body: ClosureBody::Mir((**body).clone()),
+                })))
             }
             MirExpr::Index { base, index } => {
                 let base = self.eval_expr(base, locals)?;
@@ -1564,6 +1639,32 @@ impl Runtime {
         }
     }
 
+    /// Apply a closure (AST interpreter): the body is AST since an AST run only
+    /// mints AST-bodied closures.
+    fn apply_closure(&mut self, closure: &Closure, args: Vec<Value>) -> Result<Value, Diagnostic> {
+        if closure.params.len() != args.len() {
+            return Err(runtime_error(
+                "RUNTIME_CALL_ARITY",
+                format!(
+                    "closure expects {} arguments, found {}",
+                    closure.params.len(),
+                    args.len()
+                ),
+            ));
+        }
+        let ClosureBody::Ast(body) = &closure.body else {
+            return Err(runtime_error(
+                "RUNTIME_CLOSURE_BODY",
+                "closure body is not AST in the AST interpreter",
+            ));
+        };
+        let mut call_locals = closure.captured.clone();
+        for (name, value) in closure.params.iter().zip(args) {
+            call_locals.insert(name.clone(), value);
+        }
+        self.eval_expr(body, &call_locals)
+    }
+
     fn eval_expr(
         &mut self,
         expr: &Expr,
@@ -1619,6 +1720,14 @@ impl Runtime {
                     }
                 }
                 let Some(function) = self.functions.get(callee).cloned() else {
+                    // Indirect call: `callee` may name a local closure value.
+                    if let Some(Value::Closure(closure)) = locals.get(callee).cloned() {
+                        let mut arg_values = Vec::with_capacity(args.len());
+                        for arg in args {
+                            arg_values.push(self.eval_expr(arg, locals)?);
+                        }
+                        return self.apply_closure(&closure, arg_values);
+                    }
                     return Err(runtime_error(
                         "RUNTIME_UNKNOWN_FUNCTION",
                         format!("unknown function `{callee}`"),
@@ -1716,6 +1825,13 @@ impl Runtime {
                 .map(|element| self.eval_expr(element, locals))
                 .collect::<Result<Vec<_>, _>>()
                 .map(|elements| Value::Tuple(Rc::new(elements))),
+            Expr::Lambda { params, body, .. } => {
+                Ok(Value::Closure(Rc::new(Closure {
+                    params: params.iter().map(|p| p.name.clone()).collect(),
+                    captured: locals.clone(),
+                    body: ClosureBody::Ast((**body).clone()),
+                })))
+            }
             Expr::Index { base, index, .. } => {
                 let base = self.eval_expr(base, locals)?;
                 let index = self.eval_expr(index, locals)?;
@@ -2495,6 +2611,9 @@ impl fmt::Display for Value {
                     .collect::<Vec<_>>()
                     .join(", ");
                 write!(f, "({values})")
+            }
+            Value::Closure(closure) => {
+                write!(f, "<closure |{}|>", closure.params.join(", "))
             }
             Value::Unit => write!(f, "()"),
         }

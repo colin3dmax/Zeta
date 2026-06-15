@@ -523,7 +523,12 @@ fn check_expr(
             args,
             ..
         } => {
-            if !functions.contains(callee) && !is_enum_variant_call(callee, enum_variants) {
+            // A callee that names a local binding is an indirect call through a
+            // closure value, which is resolved like any other name reference.
+            if !functions.contains(callee)
+                && !is_enum_variant_call(callee, enum_variants)
+                && !locals.contains_key(callee)
+            {
                 if ambiguous_external_functions.contains(callee) {
                     diagnostics.push(Diagnostic::new(
                         "RESOLVE_AMBIGUOUS_FUNCTION",
@@ -592,6 +597,24 @@ fn check_expr(
                     diagnostics,
                 );
             }
+        }
+        Expr::Lambda { params, body, .. } => {
+            // The body sees the enclosing scope plus the lambda's own params
+            // (captures resolve against the outer locals, which stay visible).
+            let mut body_locals = locals.clone();
+            for param in params {
+                body_locals.insert(param.name.clone(), Binding { mutable: false });
+            }
+            check_expr(
+                body,
+                &mut body_locals,
+                functions,
+                top_level_names,
+                enum_variants,
+                ambiguous_external_functions,
+                function_name,
+                diagnostics,
+            );
         }
         Expr::Index { base, index, .. } => {
             check_expr(

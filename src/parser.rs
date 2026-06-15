@@ -842,8 +842,54 @@ impl Parser {
                 }
             }
             TokenKind::Symbol(Symbol::LBracket) => self.parse_array_literal(),
+            // A `|` (or `||` for zero params) at expression position begins a
+            // lambda `|x: Int, y: Int| body`. Binary-or never starts an
+            // expression, so this is unambiguous.
+            TokenKind::Symbol(Symbol::Pipe) | TokenKind::Symbol(Symbol::OrOr) => {
+                self.parse_lambda()
+            }
             _ => Err(self.error_here("PARSE_EXPECTED_EXPR", "expected expression")),
         }
+    }
+
+    fn parse_lambda(&mut self) -> Result<Expr, Diagnostic> {
+        let start = self.peek().span.start;
+        // `||` lexes as a single OrOr token: that's an empty parameter list.
+        if self.consume_symbol(Symbol::OrOr).is_some() {
+            let body = self.parse_expr()?;
+            let end = body.span().end;
+            return Ok(Expr::Lambda {
+                params: Vec::new(),
+                body: Box::new(body),
+                span: Span::new(start, end),
+            });
+        }
+        self.expect_symbol(Symbol::Pipe, "expected `|` to begin a lambda")?;
+        let mut params = Vec::new();
+        if !self.check_symbol(Symbol::Pipe) {
+            loop {
+                let (name, name_span) = self.expect_ident_span("expected lambda parameter name")?;
+                self.expect_symbol(Symbol::Colon, "expected `:` after lambda parameter name")?;
+                let (ty, ty_span) = self.parse_type_annotation("expected lambda parameter type")?;
+                params.push(Param {
+                    name,
+                    name_span,
+                    ty,
+                    ty_span,
+                });
+                if self.consume_symbol(Symbol::Comma).is_none() {
+                    break;
+                }
+            }
+        }
+        self.expect_symbol(Symbol::Pipe, "expected `|` after lambda parameters")?;
+        let body = self.parse_expr()?;
+        let end = body.span().end;
+        Ok(Expr::Lambda {
+            params,
+            body: Box::new(body),
+            span: Span::new(start, end),
+        })
     }
 
     fn parse_array_literal(&mut self) -> Result<Expr, Diagnostic> {
@@ -922,6 +968,27 @@ impl Parser {
         &mut self,
         message: &'static str,
     ) -> Result<(String, Span), Diagnostic> {
+        if self.check_keyword(Keyword::Fn) {
+            let start = self.peek().span.start;
+            self.pos += 1;
+            self.expect_symbol(Symbol::LParen, "expected `(` after `fn` in function type")?;
+            let mut params = Vec::new();
+            if !self.check_symbol(Symbol::RParen) {
+                loop {
+                    let (ty, _) = self.parse_type_annotation("expected parameter type")?;
+                    params.push(ty);
+                    if self.consume_symbol(Symbol::Comma).is_none() {
+                        break;
+                    }
+                }
+            }
+            self.expect_symbol(Symbol::RParen, "expected `)` after function-type parameters")?;
+            self.expect_symbol(Symbol::Arrow, "expected `->` in function type")?;
+            let (ret, _) = self.parse_type_annotation("expected function return type")?;
+            let end = self.previous_span().end;
+            let canonical = format!("fn({}) -> {ret}", params.join(", "));
+            return Ok((canonical, Span::new(start, end)));
+        }
         if self.check_symbol(Symbol::LParen) {
             let start = self.peek().span.start;
             self.pos += 1;

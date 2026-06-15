@@ -11,6 +11,7 @@ enum Type {
     Bool,
     Array(Box<Type>),
     Tuple(Vec<Type>),
+    Fn(Vec<Type>, Box<Type>),
     Range,
     Named(String),
     Unit,
@@ -205,6 +206,13 @@ fn validate_type_name(
     enums: &HashMap<String, EnumType>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    if let Some((params, ret)) = crate::type_syntax::fn_parts(name) {
+        for part in params {
+            validate_type_name(part, span, structs, enums, diagnostics);
+        }
+        validate_type_name(ret, span, structs, enums, diagnostics);
+        return;
+    }
     if let Some(parts) = crate::type_syntax::tuple_parts(name) {
         for part in parts {
             validate_type_name(part, span, structs, enums, diagnostics);
@@ -777,6 +785,7 @@ fn check_match_exhaustiveness(
         | Type::String
         | Type::Array(_)
         | Type::Tuple(_)
+        | Type::Fn(_, _)
         | Type::Range
         | Type::Unit
         | Type::Error => {}
@@ -1041,6 +1050,28 @@ fn infer_expr(
                 }
             }
             let Some(signature) = functions.get(callee) else {
+                // Indirect call: the callee may name a local of function type.
+                if let Some(binding) = locals.get(callee) {
+                    if let Type::Fn(params, ret) = binding.ty.clone() {
+                        return infer_indirect_call(
+                            callee,
+                            &params,
+                            &ret,
+                            *callee_span,
+                            args,
+                            locals,
+                            functions,
+                            structs,
+                            enums,
+                            diagnostics,
+                        );
+                    }
+                    diagnostics.push(Diagnostic::new(
+                        "TYPE_CALL_NOT_CALLABLE",
+                        format!("`{callee}` is not a function value"),
+                        *callee_span,
+                    ));
+                }
                 return Type::Error;
             };
             if args.len() != signature.params.len() {
@@ -1066,6 +1097,25 @@ fn infer_expr(
                 );
             }
             signature.return_type.clone()
+        }
+        Expr::Lambda { params, body, .. } => {
+            // Infer the body with the lambda's typed params added to the
+            // enclosing scope (captures resolve against the outer locals).
+            let mut body_locals = locals.clone();
+            let mut param_types = Vec::with_capacity(params.len());
+            for param in params {
+                let ty = parse_type(&param.ty);
+                body_locals.insert(
+                    param.name.clone(),
+                    Binding {
+                        ty: ty.clone(),
+                        mutable: false,
+                    },
+                );
+                param_types.push(ty);
+            }
+            let ret = infer_expr(body, &body_locals, functions, structs, enums, diagnostics);
+            Type::Fn(param_types, Box::new(ret))
         }
         Expr::StructLiteral {
             ty,
@@ -1298,6 +1348,38 @@ fn infer_expr(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
+fn infer_indirect_call(
+    callee: &str,
+    params: &[Type],
+    ret: &Type,
+    callee_span: Span,
+    args: &[Expr],
+    locals: &HashMap<String, Binding>,
+    functions: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Type {
+    if args.len() != params.len() {
+        diagnostics.push(Diagnostic::new(
+            "TYPE_CALL_ARITY",
+            format!(
+                "closure `{callee}` expects {} arguments, found {}",
+                params.len(),
+                args.len()
+            ),
+            callee_span,
+        ));
+        return ret.clone();
+    }
+    for (arg, expected) in args.iter().zip(params) {
+        let found = infer_expr(arg, locals, functions, structs, enums, diagnostics);
+        expect_type(&found, expected, "TYPE_CALL_ARGUMENT", arg.span(), diagnostics);
+    }
+    ret.clone()
+}
+
 fn infer_enum_variant_call(
     enum_name: &str,
     variant: &str,
@@ -1454,6 +1536,12 @@ fn enum_types(module: &Module) -> HashMap<String, EnumType> {
 }
 
 fn parse_type(name: &str) -> Type {
+    if let Some((params, ret)) = crate::type_syntax::fn_parts(name) {
+        return Type::Fn(
+            params.iter().map(|p| parse_type(p)).collect(),
+            Box::new(parse_type(ret)),
+        );
+    }
     if let Some(parts) = crate::type_syntax::tuple_parts(name) {
         return Type::Tuple(parts.iter().map(|p| parse_type(p)).collect());
     }
@@ -1475,6 +1563,15 @@ fn parse_declared_type(
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
 ) -> Type {
+    if let Some((params, ret)) = crate::type_syntax::fn_parts(name) {
+        return Type::Fn(
+            params
+                .iter()
+                .map(|p| parse_declared_type(p, structs, enums))
+                .collect(),
+            Box::new(parse_declared_type(ret, structs, enums)),
+        );
+    }
     if let Some(parts) = crate::type_syntax::tuple_parts(name) {
         return Type::Tuple(
             parts
@@ -1526,6 +1623,10 @@ impl Type {
             Type::Tuple(elements) => {
                 let inner: Vec<String> = elements.iter().map(|e| e.display()).collect();
                 format!("({})", inner.join(", "))
+            }
+            Type::Fn(params, ret) => {
+                let inner: Vec<String> = params.iter().map(|p| p.display()).collect();
+                format!("fn({}) -> {}", inner.join(", "), ret.display())
             }
             Type::Range => "Range".to_string(),
             Type::Named(name) => name.clone(),
