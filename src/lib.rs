@@ -12,6 +12,7 @@ pub mod repl;
 pub mod resolver;
 pub mod runtime;
 pub mod std_api;
+pub mod type_syntax;
 pub mod typecheck;
 pub mod wasm;
 

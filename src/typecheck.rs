@@ -205,6 +205,12 @@ fn validate_type_name(
     enums: &HashMap<String, EnumType>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    if let Some(parts) = crate::type_syntax::tuple_parts(name) {
+        for part in parts {
+            validate_type_name(part, span, structs, enums, diagnostics);
+        }
+        return;
+    }
     if is_builtin_type_name(name) || structs.contains_key(name) || enums.contains_key(name) {
         return;
     }
@@ -1448,6 +1454,9 @@ fn enum_types(module: &Module) -> HashMap<String, EnumType> {
 }
 
 fn parse_type(name: &str) -> Type {
+    if let Some(parts) = crate::type_syntax::tuple_parts(name) {
+        return Type::Tuple(parts.iter().map(|p| parse_type(p)).collect());
+    }
     match name {
         "Int" => Type::Int,
         "Float" => Type::Float,
@@ -1466,6 +1475,14 @@ fn parse_declared_type(
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
 ) -> Type {
+    if let Some(parts) = crate::type_syntax::tuple_parts(name) {
+        return Type::Tuple(
+            parts
+                .iter()
+                .map(|p| parse_declared_type(p, structs, enums))
+                .collect(),
+        );
+    }
     if is_builtin_type_name(name) || structs.contains_key(name) || enums.contains_key(name) {
         parse_type(name)
     } else {

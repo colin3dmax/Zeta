@@ -99,6 +99,59 @@ fn main() -> Int {
 }
 
 #[test]
+fn tuple_param_annotation() {
+    // A tuple type annotation `(Int, Int)` lets a tuple cross a function boundary.
+    let src = "\
+fn sum(p: (Int, Int)) -> Int { return p.0 + p.1; }
+fn main() -> Int {
+  let t = (8, 9);
+  return sum(t);
+}";
+    assert_eq!(run(src), Value::Int(17));
+}
+
+#[test]
+fn tuple_return_annotation() {
+    let src = "\
+fn pair(a: Int, b: Int) -> (Int, Int) { return (a, b); }
+fn main() -> Int {
+  let t: (Int, Int) = pair(3, 4);
+  return t.0 * t.1;
+}";
+    assert_eq!(run(src), Value::Int(12));
+}
+
+#[test]
+fn tuple_nested_annotation() {
+    let src = "\
+fn f(p: (Int, (Int, Int))) -> Int { return p.0 + p.1.0 + p.1.1; }
+fn main() -> Int {
+  return f((1, (2, 3)));
+}";
+    assert_eq!(run(src), Value::Int(6));
+}
+
+#[test]
+fn grouped_type_annotation_is_not_a_tuple() {
+    // `(Int)` with no comma is just grouping and behaves like a plain `Int`.
+    let src = "\
+fn main() -> Int {
+  let x: (Int) = 5;
+  return x;
+}";
+    assert_eq!(run(src), Value::Int(5));
+}
+
+#[test]
+fn tuple_annotation_mismatch_rejected() {
+    // Returning a 2-tuple where a 3-tuple is declared is a type error.
+    let src = "\
+fn f() -> (Int, Int, Int) { return (1, 2); }
+fn main() -> Int { return 0; }";
+    assert!(!check_err(src).is_empty());
+}
+
+#[test]
 fn ast_dump_shows_tuple() {
     let dump = zeta::dump_ast("fn main() -> Int { let t = (1, 2); return t.0; }")
         .expect("dump should succeed");

@@ -79,6 +79,26 @@ fn main() -> Int {
 }
 
 #[test]
+fn tuple_param_and_return() {
+    // Tuple crosses a function boundary via type annotations on param and return.
+    let src = "\
+fn swap(p: (Int, Int)) -> (Int, Int) { return (p.1, p.0); }
+fn main() -> Int {
+  let t = swap((3, 8));
+  return t.0 * 10 + t.1;
+}";
+    assert_eq!(check(src), 83);
+}
+
+#[test]
+fn tuple_nested_param() {
+    let src = "\
+fn f(p: (Int, (Int, Int))) -> Int { return p.0 + p.1.0 + p.1.1; }
+fn main() -> Int { return f((1, (2, 3))); }";
+    assert_eq!(check(src), 6);
+}
+
+#[test]
 fn tuple_in_loop() {
     // Rebuild a tuple each iteration and read its fields back.
     let src = "\

@@ -156,7 +156,7 @@ impl Parser {
         let params = self.parse_params()?;
         self.expect_symbol(Symbol::RParen, "expected `)` after parameters")?;
         let (return_type, return_type_span) = if self.consume_symbol(Symbol::Arrow).is_some() {
-            let (ty, ty_span) = self.expect_ident_span("expected return type after `->`")?;
+            let (ty, ty_span) = self.parse_type_annotation("expected return type after `->`")?;
             (Some(ty), Some(ty_span))
         } else {
             (None, None)
@@ -183,7 +183,7 @@ impl Parser {
         loop {
             let (name, name_span) = self.expect_ident_span("expected parameter name")?;
             self.expect_symbol(Symbol::Colon, "expected `:` after parameter name")?;
-            let (ty, ty_span) = self.expect_ident_span("expected parameter type")?;
+            let (ty, ty_span) = self.parse_type_annotation("expected parameter type")?;
             params.push(Param {
                 name,
                 name_span,
@@ -222,7 +222,7 @@ impl Parser {
             let mutable = self.consume_keyword(Keyword::Mut).is_some();
             let (name, name_span) = self.expect_ident_span("expected local name")?;
             let (ty, ty_span) = if self.consume_symbol(Symbol::Colon).is_some() {
-                let (ty, ty_span) = self.expect_ident_span("expected local type")?;
+                let (ty, ty_span) = self.parse_type_annotation("expected local type")?;
                 (Some(ty), Some(ty_span))
             } else {
                 (None, None)
@@ -912,6 +912,44 @@ impl Parser {
             }
             _ => Err(self.error_here("PARSE_EXPECTED_IDENT", message)),
         }
+    }
+
+    /// Parse a type annotation into its canonical type *string*. A leading `(`
+    /// introduces a tuple type `(T0, T1, ...)`; a single parenthesized type
+    /// `(T)` (no comma) is just grouping and collapses to `T`. Everything else
+    /// is a plain identifier (`Int`, `IntArray`, a struct/enum name).
+    fn parse_type_annotation(
+        &mut self,
+        message: &'static str,
+    ) -> Result<(String, Span), Diagnostic> {
+        if self.check_symbol(Symbol::LParen) {
+            let start = self.peek().span.start;
+            self.pos += 1;
+            let mut parts = Vec::new();
+            let mut saw_comma = false;
+            if !self.check_symbol(Symbol::RParen) {
+                loop {
+                    let (ty, _) = self.parse_type_annotation("expected type")?;
+                    parts.push(ty);
+                    if self.consume_symbol(Symbol::Comma).is_some() {
+                        saw_comma = true;
+                        if self.check_symbol(Symbol::RParen) {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+            self.expect_symbol(Symbol::RParen, "expected `)` after tuple type")?;
+            let end = self.previous_span().end;
+            let span = Span::new(start, end);
+            if parts.len() == 1 && !saw_comma {
+                return Ok((parts.pop().unwrap(), span));
+            }
+            return Ok((format!("({})", parts.join(", ")), span));
+        }
+        self.expect_ident_span(message)
     }
 
     fn expect_symbol(&mut self, symbol: Symbol, message: &'static str) -> Result<(), Diagnostic> {

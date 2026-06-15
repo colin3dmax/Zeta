@@ -933,6 +933,9 @@ impl MirType {
 }
 
 fn parse_mir_type(name: &str) -> MirType {
+    if let Some(parts) = crate::type_syntax::tuple_parts(name) {
+        return MirType::Tuple(parts.iter().map(|p| parse_mir_type(p)).collect());
+    }
     match name {
         "IntArray" => MirType::Array(Box::new(MirType::named("Int"))),
         "StringArray" => MirType::Array(Box::new(MirType::named("String"))),

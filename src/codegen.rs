@@ -222,6 +222,13 @@ impl<'ctx> Types<'ctx> {
 }
 
 fn parse_ztype(text: &str, struct_names: &[&str], enum_names: &[&str]) -> Result<ZType, String> {
+    if let Some(parts) = crate::type_syntax::tuple_parts(text) {
+        let elems = parts
+            .iter()
+            .map(|p| parse_ztype(p, struct_names, enum_names))
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(ZType::Tuple(elems));
+    }
     match text {
         "Int" | "Bool" => Ok(ZType::Int),
         "Float" => Ok(ZType::Float),
