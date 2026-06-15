@@ -44,6 +44,7 @@ fn field_node() -> Int { return 8; }
 fn array_node() -> Int { return 9; }
 fn struct_lit_node() -> Int { return 10; }
 fn range_node() -> Int { return 11; }
+fn float_node() -> Int { return 12; }
 
 // Top-level item kinds (the item list is dumped in source order).
 fn item_import() -> Int { return 0; }
@@ -289,6 +290,19 @@ struct BlockResult {
 fn push_int_node(arena: Arena, text: String, full_start: Int, full_end: Int) -> Arena {
   let mut a: Arena = arena;
   a.node_kind = int_array_push(a.node_kind, int_node());
+  a.node_a = int_array_push(a.node_a, 0);
+  a.node_b = int_array_push(a.node_b, 0);
+  a.node_text = string_array_push(a.node_text, text);
+  a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
+  a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
+  a.node_full_start = int_array_push(a.node_full_start, full_start);
+  a.node_full_end = int_array_push(a.node_full_end, full_end);
+  return a;
+}
+
+fn push_float_node(arena: Arena, text: String, full_start: Int, full_end: Int) -> Arena {
+  let mut a: Arena = arena;
+  a.node_kind = int_array_push(a.node_kind, float_node());
   a.node_a = int_array_push(a.node_a, 0);
   a.node_b = int_array_push(a.node_b, 0);
   a.node_text = string_array_push(a.node_text, text);
@@ -1545,6 +1559,12 @@ fn parse_primary(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, al
                                  arena.token_start[pos] + string_len(texts[pos]));
     return ParseResult { arena: a, node: index, pos: pos + 1 };
   }
+  if kinds[pos] == token_float() {
+    let index: Int = arena.node_kind.len;
+    let a: Arena = push_float_node(arena, texts[pos], arena.token_start[pos],
+                                   arena.token_start[pos] + string_len(texts[pos]));
+    return ParseResult { arena: a, node: index, pos: pos + 1 };
+  }
   if kinds[pos] == token_string() {
     // The raw token text keeps its quotes, so its length equals the Rust
     // lexer's String token span length.
@@ -2043,6 +2063,13 @@ fn dump_expr(out: String, arena: Arena, node: Int, depth: Int) -> String {
     next = string_concat(next, "\n");
     return next;
   }
+  if kind == float_node() {
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "Float ");
+    next = string_concat(next, arena.node_text[node]);
+    next = string_concat(next, "\n");
+    return next;
+  }
   if kind == name_node() {
     let mut next: String = string_concat(out, pad);
     next = string_concat(next, "Name ");
@@ -2239,7 +2266,21 @@ fn lex_kinds(source: String) -> IntArray {
       while index < len && ascii_is_digit(string_byte_at(source, index)) {
         index = index + 1;
       }
-      kinds = int_array_push(kinds, token_int());
+      // A `.` followed by a digit (and not `..`) makes this a Float literal.
+      let mut is_float: Bool = false;
+      if index + 1 < len && string_byte_at(source, index) == 46
+          && ascii_is_digit(string_byte_at(source, index + 1)) {
+        is_float = true;
+        index = index + 1;
+        while index < len && ascii_is_digit(string_byte_at(source, index)) {
+          index = index + 1;
+        }
+      }
+      if is_float {
+        kinds = int_array_push(kinds, token_float());
+      } else {
+        kinds = int_array_push(kinds, token_int());
+      }
       handled = true;
     }
     if !handled && byte == 34 {
@@ -2297,6 +2338,13 @@ fn lex_texts(source: String) -> StringArray {
       index = index + 1;
       while index < len && ascii_is_digit(string_byte_at(source, index)) {
         index = index + 1;
+      }
+      if index + 1 < len && string_byte_at(source, index) == 46
+          && ascii_is_digit(string_byte_at(source, index + 1)) {
+        index = index + 1;
+        while index < len && ascii_is_digit(string_byte_at(source, index)) {
+          index = index + 1;
+        }
       }
       texts = string_array_push(texts, string_byte_slice(source, start, index - start));
       handled = true;
@@ -2361,6 +2409,13 @@ fn lex_starts(source: String) -> IntArray {
       index = index + 1;
       while index < len && ascii_is_digit(string_byte_at(source, index)) {
         index = index + 1;
+      }
+      if index + 1 < len && string_byte_at(source, index) == 46
+          && ascii_is_digit(string_byte_at(source, index + 1)) {
+        index = index + 1;
+        while index < len && ascii_is_digit(string_byte_at(source, index)) {
+          index = index + 1;
+        }
       }
       starts = int_array_push(starts, start);
       handled = true;
@@ -2619,6 +2674,7 @@ fn token_eof() -> Int { return 0; }
 fn token_ident() -> Int { return 1; }
 fn token_int() -> Int { return 2; }
 fn token_string() -> Int { return 3; }
+fn token_float() -> Int { return 4; }
 fn token_module() -> Int { return 10; }
 fn token_import() -> Int { return 11; }
 fn token_export() -> Int { return 12; }
@@ -3362,7 +3418,7 @@ fn resolve_expr(state: ResolveState, node: Int) -> ResolveState {
     }
     return s;
   }
-  if kind == int_node() || kind == bool_node() || kind == string_node() {
+  if kind == int_node() || kind == float_node() || kind == bool_node() || kind == string_node() {
     return s;
   }
   if kind == unary_node() {
@@ -4439,6 +4495,9 @@ fn tc_infer(state: TcState, node: Int) -> InferResult {
   if kind == int_node() {
     return InferResult { st: s, ty: "Int" };
   }
+  if kind == float_node() {
+    return InferResult { st: s, ty: "Float" };
+  }
   if kind == string_node() {
     return InferResult { st: s, ty: "String" };
   }
@@ -4897,6 +4956,7 @@ fn mir_struct_expr() -> Int { return 8; }
 fn mir_field_expr() -> Int { return 9; }
 fn mir_array_expr() -> Int { return 10; }
 fn mir_index_expr() -> Int { return 11; }
+fn mir_float_expr() -> Int { return 12; }
 
 // MIR place kinds (assignment left-values).
 fn mir_place_local() -> Int { return 0; }
@@ -5086,6 +5146,11 @@ fn lower_expr(arena: Arena, enums: EnumTable, mir: Mir, node: Int) -> MirResult 
   if kind == int_node() {
     let index: Int = mir.me_kind.len;
     let m: Mir = push_mir_expr(mir, mir_int_expr(), 0 - 1, 0 - 1, arena.node_text[node]);
+    return MirResult { mir: m, node: index };
+  }
+  if kind == float_node() {
+    let index: Int = mir.me_kind.len;
+    let m: Mir = push_mir_expr(mir, mir_float_expr(), 0 - 1, 0 - 1, arena.node_text[node]);
     return MirResult { mir: m, node: index };
   }
   if kind == string_node() {
@@ -5610,6 +5675,15 @@ fn mir_dump_expr(mir: Mir, node: Int, depth: Int, out: String, next: Int) -> Mir
     let mut o: String = string_concat(out, pad);
     o = string_concat(o, temp);
     o = string_concat(o, " = const Int ");
+    o = string_concat(o, mir.me_text[node]);
+    o = string_concat(o, "\n");
+    return MirDumpExpr { out: o, next: next + 1, temp: temp };
+  }
+  if kind == mir_float_expr() {
+    let temp: String = mir_temp_name(next);
+    let mut o: String = string_concat(out, pad);
+    o = string_concat(o, temp);
+    o = string_concat(o, " = const Float ");
     o = string_concat(o, mir.me_text[node]);
     o = string_concat(o, "\n");
     return MirDumpExpr { out: o, next: next + 1, temp: temp };

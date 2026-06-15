@@ -99,6 +99,15 @@ fn mir_matches_oracle_on_basic_function() {
 }
 
 #[test]
+fn mir_matches_oracle_on_float() {
+    // Float (P1) back-ported into the self-hosting frontend: lowering + mir-dump
+    // ("const Float ...") must match the Rust oracle.
+    assert_lowering_matches_oracle(
+        "fn f() -> Float { let x: Float = 1.5; let y: Float = 2.0; return x * y - x / y; }",
+    );
+}
+
+#[test]
 fn mir_matches_oracle_on_enum_variant_probe() {
     assert_probe("testdata/selfhost_mir/mir_enum_variants.zeta");
 }

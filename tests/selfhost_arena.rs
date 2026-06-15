@@ -535,3 +535,25 @@ fn arena_matches_oracle_on_final_kitchen_sink() {
         "fn f(n: Int) -> Int { let mut s: Int = 0; for i in 0..n { s += i; } for x in [1,2,3] { s = s + x; } for (let mut j: Int = 0; j < n; j += 1) { if j == 2 { continue; } s.acc[j] = j; } match s { 0 -> { return 0; }, _ -> { match n { 1 -> { break; }, _ -> { return s; } } } } return s; }",
     );
 }
+
+// --- Float (P1 feature back-ported into the self-hosting frontend) ----------
+
+#[test]
+fn arena_matches_oracle_on_float_literal() {
+    assert_matches_oracle("fn f() -> Float { let x: Float = 1.5; return x; }");
+}
+
+#[test]
+fn arena_matches_oracle_on_float_arithmetic() {
+    assert_matches_oracle(
+        "fn f() -> Float { let x: Float = 3.0; let y: Float = 2.0; return x * y - x / y; }",
+    );
+}
+
+#[test]
+fn arena_matches_oracle_on_float_and_int_distinct() {
+    // A float `1..2`-style disambiguation guard: `1.5` is a float, `0..3` is a range.
+    assert_matches_oracle(
+        "fn f() -> Int { let a: Float = 0.5; let mut s: Int = 0; for i in 0..3 { s = s + i; } return s; }",
+    );
+}
