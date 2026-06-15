@@ -41,6 +41,12 @@ cargo test --release --test selfhost_fixpoint -- --ignored
 ```sh
 LLVM_SYS_221_PREFIX=/opt/homebrew/opt/llvm \
   cargo test --release --features llvm --test selfhost_llvm
+# 两个重型 capstone(ignored):整前端发 IR 可编译 + native 跑逐字节对齐
+LLVM_SYS_221_PREFIX=/opt/homebrew/opt/llvm \
+  cargo test --release --features llvm --test selfhost_llvm -- --ignored
+# 独立 zetac-native 二进制(Zeta 自己 codegen 产,读 .zeta 文件,~83s):
+LLVM_SYS_221_PREFIX=/opt/homebrew/opt/llvm \
+  cargo test --release --features llvm --test selfhost_aot -- --ignored
 ```
 
 ## 3. LLVM 工具链踩坑(务必记住)
