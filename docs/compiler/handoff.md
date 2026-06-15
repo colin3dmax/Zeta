@@ -47,6 +47,9 @@ LLVM_SYS_221_PREFIX=/opt/homebrew/opt/llvm \
 # 独立 zetac-native 二进制(Zeta 自己 codegen 产,读 .zeta 文件,~83s):
 LLVM_SYS_221_PREFIX=/opt/homebrew/opt/llvm \
   cargo test --release --features llvm --test selfhost_aot -- --ignored
+# 一键产出可用的 ./zetac-native 工具(然后 ./zetac-native foo.zeta mir-dump):
+LLVM_SYS_221_PREFIX=/opt/homebrew/opt/llvm \
+  cargo run --release --example build_zetac
 ```
 
 ## 3. LLVM 工具链踩坑(务必记住)
