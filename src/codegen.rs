@@ -71,6 +71,8 @@ pub fn jit_smoke_constant(value: i64) -> i64 {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ZType {
     Int,
+    /// An f64 floating-point scalar (distinct from the i64 `Int`).
+    Float,
     Struct(String),
     /// A dynamic array, represented at runtime as `{ i64 len, ptr data }` with
     /// `data` pointing at a heap (malloc) buffer of elements. Value semantics is
@@ -176,6 +178,7 @@ impl<'ctx> Types<'ctx> {
     fn llvm(&self, zt: &ZType) -> BasicTypeEnum<'ctx> {
         match zt {
             ZType::Int => self.context.i64_type().into(),
+            ZType::Float => self.context.f64_type().into(),
             ZType::Struct(name) => self.structs[name].ty.into(),
             ZType::Array(_) | ZType::Str => array_struct_type(self.context).into(),
             ZType::Enum(_) => enum_struct_type(self.context).into(),
@@ -212,6 +215,7 @@ impl<'ctx> Types<'ctx> {
 fn parse_ztype(text: &str, struct_names: &[&str], enum_names: &[&str]) -> Result<ZType, String> {
     match text {
         "Int" | "Bool" => Ok(ZType::Int),
+        "Float" => Ok(ZType::Float),
         "Unit" => Ok(ZType::Int),
         "String" => Ok(ZType::Str),
         "IntArray" | "BoolArray" => Ok(ZType::Array(Box::new(ZType::Int))),
@@ -293,6 +297,7 @@ fn llvm_type_of<'ctx>(
 ) -> BasicTypeEnum<'ctx> {
     match zt {
         ZType::Int => context.i64_type().into(),
+        ZType::Float => context.f64_type().into(),
         ZType::Struct(name) => opaque[name].into(),
         ZType::Array(_) | ZType::Str => array_struct_type(context).into(),
         ZType::Enum(_) => enum_struct_type(context).into(),
@@ -847,6 +852,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
     fn zero_of(&self, zt: &ZType) -> BasicValueEnum<'ctx> {
         match zt {
             ZType::Int => self.i64t().const_zero().into(),
+            ZType::Float => self.context.f64_type().const_zero().into(),
             ZType::Struct(name) => self.types.structs[name].ty.const_zero().into(),
             ZType::Array(_) | ZType::Str => array_struct_type(self.context).const_zero().into(),
             ZType::Enum(_) => enum_struct_type(self.context).const_zero().into(),
@@ -1427,10 +1433,10 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let n: i64 = text.parse().map_err(|_| format!("bad Int `{text}`"))?;
                 Ok((self.i64t().const_int(n as u64, true).into(), ZType::Int))
             }
-            // Float is supported in the Stage0 interpreter (the semantic
-            // reference); native f64 codegen is Phase 1b (it needs the scalar
-            // path to carry f64 alongside i64). Reject here until then.
-            MirExpr::Float(_) => Err("Float is not yet in the native subset (Phase 1b)".into()),
+            MirExpr::Float(text) => {
+                let n: f64 = text.parse().map_err(|_| format!("bad Float `{text}`"))?;
+                Ok((self.context.f64_type().const_float(n).into(), ZType::Float))
+            }
             MirExpr::Bool(b) => Ok((self.i64t().const_int(*b as u64, false).into(), ZType::Int)),
             MirExpr::Load(name) => {
                 let (slot, zt) = self
@@ -1442,7 +1448,12 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 Ok((value, zt.clone()))
             }
             MirExpr::Unary { op, expr } => {
-                let v = self.lower_int(expr)?;
+                let (val, ty) = self.lower_expr(expr)?;
+                if matches!(op, UnaryOp::Neg) && ty == ZType::Float {
+                    let f = self.builder.build_float_neg(val.into_float_value(), "fneg").unwrap();
+                    return Ok((f.into(), ZType::Float));
+                }
+                let v = val.into_int_value();
                 let r = match op {
                     UnaryOp::Neg => self.builder.build_int_neg(v, "neg").unwrap(),
                     UnaryOp::BitNot => self.builder.build_not(v, "bitnot").unwrap(),
@@ -1456,9 +1467,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 };
                 Ok((r.into(), ZType::Int))
             }
-            MirExpr::Binary { op, left, right } => {
-                Ok((self.lower_binary(*op, left, right)?.into(), ZType::Int))
-            }
+            MirExpr::Binary { op, left, right } => self.lower_binary(*op, left, right),
             MirExpr::Call { callee, args } => {
                 if let Some(result) = self.lower_builtin(callee, args)? {
                     return Ok(result);
@@ -1975,38 +1984,48 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         op: BinaryOp,
         left: &MirExpr,
         right: &MirExpr,
-    ) -> Result<IntValue<'ctx>, String> {
+    ) -> Result<(BasicValueEnum<'ctx>, ZType), String> {
         if matches!(op, BinaryOp::And | BinaryOp::Or) {
-            return self.lower_logical(op, left, right);
+            return Ok((self.lower_logical(op, left, right)?.into(), ZType::Int));
         }
-        // Equality may be over strings (byte-compare) as well as Int/Bool. Typecheck
-        // guarantees both operands share a type.
-        if matches!(op, BinaryOp::Eq | BinaryOp::NotEq) {
-            let (lv, lt) = self.lower_expr(left)?;
-            let (rv, rt) = self.lower_expr(right)?;
-            if lt == ZType::Str && rt == ZType::Str {
-                let eq = self.string_eq(lv.into_struct_value(), rv.into_struct_value());
-                let bit = if matches!(op, BinaryOp::NotEq) {
-                    self.builder.build_not(eq, "sne").unwrap()
-                } else {
-                    eq
-                };
-                return Ok(self.bool_to_i64(bit));
-            }
-            if lt != ZType::Int || rt != ZType::Int {
-                return Err("equality only supports Int/Bool and String operands".into());
-            }
-            let pred = if matches!(op, BinaryOp::Eq) {
-                IntPredicate::EQ
+        let (lv, lt) = self.lower_expr(left)?;
+        let (rv, _rt) = self.lower_expr(right)?;
+        // String == / != is a byte-compare (typecheck guarantees matching types).
+        if matches!(op, BinaryOp::Eq | BinaryOp::NotEq) && lt == ZType::Str {
+            let eq = self.string_eq(lv.into_struct_value(), rv.into_struct_value());
+            let bit = if matches!(op, BinaryOp::NotEq) {
+                self.builder.build_not(eq, "sne").unwrap()
             } else {
-                IntPredicate::NE
+                eq
             };
-            return Ok(self.compare(pred, lv.into_int_value(), rv.into_int_value()));
+            return Ok((self.bool_to_i64(bit).into(), ZType::Int));
         }
-        let l = self.lower_int(left)?;
-        let r = self.lower_int(right)?;
+        // Float arithmetic / comparison (f64); modulo & bitwise stay Int-only.
+        if lt == ZType::Float {
+            let l = lv.into_float_value();
+            let r = rv.into_float_value();
+            let b = self.builder;
+            return Ok(match op {
+                BinaryOp::Add => (b.build_float_add(l, r, "fadd").unwrap().into(), ZType::Float),
+                BinaryOp::Sub => (b.build_float_sub(l, r, "fsub").unwrap().into(), ZType::Float),
+                BinaryOp::Mul => (b.build_float_mul(l, r, "fmul").unwrap().into(), ZType::Float),
+                BinaryOp::Div => (b.build_float_div(l, r, "fdiv").unwrap().into(), ZType::Float),
+                BinaryOp::Eq => (self.fcompare(inkwell::FloatPredicate::OEQ, l, r).into(), ZType::Int),
+                BinaryOp::NotEq => (self.fcompare(inkwell::FloatPredicate::ONE, l, r).into(), ZType::Int),
+                BinaryOp::Lt => (self.fcompare(inkwell::FloatPredicate::OLT, l, r).into(), ZType::Int),
+                BinaryOp::Lte => (self.fcompare(inkwell::FloatPredicate::OLE, l, r).into(), ZType::Int),
+                BinaryOp::Gt => (self.fcompare(inkwell::FloatPredicate::OGT, l, r).into(), ZType::Int),
+                BinaryOp::Gte => (self.fcompare(inkwell::FloatPredicate::OGE, l, r).into(), ZType::Int),
+                _ => return Err("modulo / bitwise operators are not defined on Float".into()),
+            });
+        }
+        if lt != ZType::Int {
+            return Err(format!("binary operator not supported on {lt:?}"));
+        }
+        let l = lv.into_int_value();
+        let r = rv.into_int_value();
         let b = self.builder;
-        Ok(match op {
+        let result = match op {
             BinaryOp::Add => b.build_int_add(l, r, "add").unwrap(),
             BinaryOp::Sub => b.build_int_sub(l, r, "sub").unwrap(),
             BinaryOp::Mul => b.build_int_mul(l, r, "mul").unwrap(),
@@ -2022,12 +2041,23 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             BinaryOp::Gt => self.compare(IntPredicate::SGT, l, r),
             BinaryOp::Gte => self.compare(IntPredicate::SGE, l, r),
             BinaryOp::And | BinaryOp::Or => unreachable!(),
-        })
+        };
+        Ok((result.into(), ZType::Int))
     }
 
     fn compare(&self, pred: IntPredicate, l: IntValue<'ctx>, r: IntValue<'ctx>) -> IntValue<'ctx> {
         let bit = self.builder.build_int_compare(pred, l, r, "cmp").unwrap();
         self.builder.build_int_z_extend(bit, self.i64t(), "cmp64").unwrap()
+    }
+
+    fn fcompare(
+        &self,
+        pred: inkwell::FloatPredicate,
+        l: inkwell::values::FloatValue<'ctx>,
+        r: inkwell::values::FloatValue<'ctx>,
+    ) -> IntValue<'ctx> {
+        let bit = self.builder.build_float_compare(pred, l, r, "fcmp").unwrap();
+        self.builder.build_int_z_extend(bit, self.i64t(), "fcmp64").unwrap()
     }
 
     /// Byte-wise string equality as an i1: same length AND `memcmp == 0`. The

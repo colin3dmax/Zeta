@@ -16,7 +16,7 @@
 
 | 阶段 | 特性 | 规模 | 理由 |
 |---|---|---|---|
-| **P1** | **Float**(f64 标量) | 中 | **1a 语言层✅**(lexer/parser/typecheck/MIR/runtime + 11 用例);1b native codegen 待做 |
+| **P1** | **Float**(f64 标量) | 中 | **✅ 完成**(1a 语言层 11 用例 + 1b native codegen 6 用例,差分对齐解释器) |
 | **P2** | **Tuple**(`(a,b)`/`t.0`) | 中 | 复合值类型;无名字段聚合,比 struct 轻 |
 | **P3** | **Closure**(`\|x\| e` + 捕获) | 大 | 一等函数;需捕获分析 + 闭包转换(fn ptr + env) |
 | **P4** | **Generics**(`<T>` 参数多态) | 大 | 复用;需单态化(monomorphization) |
