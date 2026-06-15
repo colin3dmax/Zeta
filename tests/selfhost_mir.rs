@@ -99,6 +99,15 @@ fn mir_matches_oracle_on_basic_function() {
 }
 
 #[test]
+fn mir_matches_oracle_on_generic() {
+    // Generics (P4): `<T>` is consumed; the generic body lowers with T-typed
+    // params (mir-dump must still match the Rust oracle).
+    assert_lowering_matches_oracle(
+        "fn id<T>(x: T) -> T { return x; } fn main() -> Int { return id(5); }",
+    );
+}
+
+#[test]
 fn mir_matches_oracle_on_tuple() {
     // Tuple (P2) back-ported: tuple literal lowers to `tuple (...)`, `.N` to field.
     assert_lowering_matches_oracle(

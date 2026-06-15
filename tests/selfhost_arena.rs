@@ -581,3 +581,17 @@ fn arena_matches_oracle_on_tuple_nested_index() {
 fn arena_matches_oracle_on_tuple_heterogeneous() {
     assert_matches_oracle("fn f() -> Int { let t = (7, true); if t.1 { return t.0; } return 0; }");
 }
+
+// --- Generics (P4 feature back-ported into the self-hosting frontend) --------
+
+#[test]
+fn arena_matches_oracle_on_generic_identity() {
+    assert_matches_oracle("fn id<T>(x: T) -> T { return x; } fn main() -> Int { return id(5); }");
+}
+
+#[test]
+fn arena_matches_oracle_on_generic_two_params() {
+    assert_matches_oracle(
+        "fn pick<A, B>(a: A, b: B) -> A { return a; } fn main() -> Int { return pick(9, 3); }",
+    );
+}
