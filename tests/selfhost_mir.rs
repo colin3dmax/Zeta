@@ -99,6 +99,15 @@ fn mir_matches_oracle_on_basic_function() {
 }
 
 #[test]
+fn mir_matches_oracle_on_lambda() {
+    // Closure (P3): lambda lowers to `_tN = lambda |x|` + body; indirect call
+    // `f(5)` dumps as a normal `call f(...)`.
+    assert_lowering_matches_oracle(
+        "fn main() -> Int { let n: Int = 10; let f = |x: Int| x + n; return f(5); }",
+    );
+}
+
+#[test]
 fn mir_matches_oracle_on_generic() {
     // Generics (P4): `<T>` is consumed; the generic body lowers with T-typed
     // params (mir-dump must still match the Rust oracle).

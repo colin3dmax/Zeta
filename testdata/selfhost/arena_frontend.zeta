@@ -46,6 +46,7 @@ fn struct_lit_node() -> Int { return 10; }
 fn range_node() -> Int { return 11; }
 fn float_node() -> Int { return 12; }
 fn tuple_node() -> Int { return 13; }
+fn lambda_node() -> Int { return 14; }
 
 // Top-level item kinds (the item list is dumped in source order).
 fn item_import() -> Int { return 0; }
@@ -458,6 +459,22 @@ fn push_tuple_node(arena: Arena, elem_start: Int, elem_count: Int, full_start: I
   a.node_a = int_array_push(a.node_a, elem_start);
   a.node_b = int_array_push(a.node_b, elem_count);
   a.node_text = string_array_push(a.node_text, "");
+  a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
+  a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
+  a.node_full_start = int_array_push(a.node_full_start, full_start);
+  a.node_full_end = int_array_push(a.node_full_end, full_end);
+  return a;
+}
+
+// Lambda: node_a = body node, node_b = param_start (into param_name/param_type
+// pool), node_text = param count as a decimal string.
+fn push_lambda_node(arena: Arena, body: Int, param_start: Int, param_count: Int,
+                    full_start: Int, full_end: Int) -> Arena {
+  let mut a: Arena = arena;
+  a.node_kind = int_array_push(a.node_kind, lambda_node());
+  a.node_a = int_array_push(a.node_a, body);
+  a.node_b = int_array_push(a.node_b, param_start);
+  a.node_text = string_array_push(a.node_text, int_to_string(param_count));
   a.node_span_start = int_array_push(a.node_span_start, 0 - 1);
   a.node_span_end = int_array_push(a.node_span_end, 0 - 1);
   a.node_full_start = int_array_push(a.node_full_start, full_start);
@@ -1645,6 +1662,9 @@ fn parse_primary(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, al
     }
     return ParseResult { arena: a, node: inner.node, pos: p };
   }
+  if kinds[pos] == token_pipe() || kinds[pos] == token_oror() {
+    return parse_lambda(arena, kinds, texts, pos);
+  }
   if kinds[pos] == token_lbracket() {
     return parse_array_literal(arena, kinds, texts, pos, allow_struct);
   }
@@ -1752,6 +1772,51 @@ fn parse_call(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, calle
 }
 
 // array := "[" (expr ("," expr)*)? "]"  — `pos` points at the "[".
+// Lambda: `|x: Int, y: Int| body` (expression body); `|| body` (zero params,
+// `||` lexes as a single OrOr token). Params go into the shared param pool.
+fn parse_lambda(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int) -> ParseResult {
+  let mut a: Arena = arena;
+  let start_tok: Int = pos;
+  let mut p: Int = pos;
+  let param_start: Int = a.param_name.len;
+  let mut param_count: Int = 0;
+  if kinds[p] == token_oror() {
+    // `||` — empty parameter list.
+    p = p + 1;
+  } else {
+    p = p + 1;
+    while p < kinds.len && kinds[p] != token_pipe() {
+      if kinds[p] == token_comma() {
+        p = p + 1;
+      } else {
+        let pname_tok: Int = p;
+        let pname: String = texts[p];
+        p = p + 1;
+        if p < kinds.len && kinds[p] == token_colon() {
+          p = p + 1;
+        }
+        let ptype: String = texts[p];
+        p = p + 1;
+        a.param_name = string_array_push(a.param_name, pname);
+        a.param_name_span_start = int_array_push(a.param_name_span_start, a.token_start[pname_tok]);
+        a.param_type = string_array_push(a.param_type, ptype);
+        a.param_type_span_start = int_array_push(a.param_type_span_start, a.token_start[p - 1]);
+        param_count = param_count + 1;
+      }
+    }
+    if p < kinds.len && kinds[p] == token_pipe() {
+      p = p + 1;
+    }
+  }
+  let body: ParseResult = parse_expr(a, kinds, texts, p);
+  a = body.arena;
+  p = body.pos;
+  let index: Int = a.node_kind.len;
+  a = push_lambda_node(a, body.node, param_start, param_count,
+                       a.token_start[start_tok], a.node_full_end[body.node]);
+  return ParseResult { arena: a, node: index, pos: p };
+}
+
 fn parse_array_literal(arena: Arena, kinds: IntArray, texts: StringArray, pos: Int, allow_struct: Int) -> ParseResult {
   let mut a: Arena = arena;
   let mut p: Int = pos + 1;
@@ -2250,6 +2315,27 @@ fn dump_expr(out: String, arena: Arena, node: Int, depth: Int) -> String {
       next = dump_expr(next, arena, arena.child_list[start + i], depth + 1);
       i = i + 1;
     }
+    return next;
+  }
+  if kind == lambda_node() {
+    let pstart: Int = arena.node_b[node];
+    let pcount: Int = decimal_to_int(arena.node_text[node]);
+    let mut params: String = "";
+    let mut i: Int = 0;
+    while i < pcount {
+      if i > 0 {
+        params = string_concat(params, ", ");
+      }
+      params = string_concat(params, arena.param_name[pstart + i]);
+      params = string_concat(params, ": ");
+      params = string_concat(params, arena.param_type[pstart + i]);
+      i = i + 1;
+    }
+    let mut next: String = string_concat(out, pad);
+    next = string_concat(next, "Lambda |");
+    next = string_concat(next, params);
+    next = string_concat(next, "|\n");
+    next = dump_expr(next, arena, arena.node_a[node], depth + 1);
     return next;
   }
   if kind == struct_lit_node() {
@@ -5065,6 +5151,7 @@ fn mir_array_expr() -> Int { return 10; }
 fn mir_index_expr() -> Int { return 11; }
 fn mir_float_expr() -> Int { return 12; }
 fn mir_tuple_expr() -> Int { return 13; }
+fn mir_lambda_expr() -> Int { return 14; }
 
 // MIR place kinds (assignment left-values).
 fn mir_place_local() -> Int { return 0; }
@@ -5396,6 +5483,24 @@ fn lower_expr(arena: Arena, enums: EnumTable, mir: Mir, node: Int) -> MirResult 
     }
     let index: Int = mm.me_kind.len;
     mm = push_mir_expr(mm, mir_tuple_expr(), cstart, elem_count, "");
+    return MirResult { mir: mm, node: index };
+  }
+  if kind == lambda_node() {
+    let pstart_arena: Int = arena.node_b[node];
+    let pcount: Int = decimal_to_int(arena.node_text[node]);
+    let mut mm: Mir = mir;
+    // Lambda params join the MIR param pool (disjoint slice via mp_start/count).
+    let mp_start: Int = mm.mp_name.len;
+    let mut i: Int = 0;
+    while i < pcount {
+      mm.mp_name = string_array_push(mm.mp_name, arena.param_name[pstart_arena + i]);
+      mm.mp_type = string_array_push(mm.mp_type, arena.param_type[pstart_arena + i]);
+      i = i + 1;
+    }
+    let r: MirResult = lower_expr(arena, enums, mm, arena.node_a[node]);
+    mm = r.mir;
+    let index: Int = mm.me_kind.len;
+    mm = push_mir_expr(mm, mir_lambda_expr(), r.node, mp_start, int_to_string(pcount));
     return MirResult { mir: mm, node: index };
   }
   if kind == struct_lit_node() {
@@ -6007,6 +6112,27 @@ fn mir_dump_expr(mir: Mir, node: Int, depth: Int, out: String, next: Int) -> Mir
     o = string_concat(o, joined);
     o = string_concat(o, ")\n");
     return MirDumpExpr { out: o, next: n + 1, temp: temp };
+  }
+  if kind == mir_lambda_expr() {
+    let temp: String = mir_temp_name(next);
+    let mp_start: Int = mir.me_b[node];
+    let pcount: Int = decimal_to_int(mir.me_text[node]);
+    let mut names: String = "";
+    let mut i: Int = 0;
+    while i < pcount {
+      if i > 0 {
+        names = string_concat(names, ", ");
+      }
+      names = string_concat(names, mir.mp_name[mp_start + i]);
+      i = i + 1;
+    }
+    let mut o: String = string_concat(out, pad);
+    o = string_concat(o, temp);
+    o = string_concat(o, " = lambda |");
+    o = string_concat(o, names);
+    o = string_concat(o, "|\n");
+    let r: MirDumpExpr = mir_dump_expr(mir, mir.me_a[node], depth + 1, o, next + 1);
+    return MirDumpExpr { out: r.out, next: r.next, temp: temp };
   }
   // index
   let base: MirDumpExpr = mir_dump_expr(mir, mir.me_a[node], depth, out, next);

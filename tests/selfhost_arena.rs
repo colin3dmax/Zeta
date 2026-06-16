@@ -595,3 +595,24 @@ fn arena_matches_oracle_on_generic_two_params() {
         "fn pick<A, B>(a: A, b: B) -> A { return a; } fn main() -> Int { return pick(9, 3); }",
     );
 }
+
+// --- Closure (P3 feature back-ported into the self-hosting frontend) --------
+
+#[test]
+fn arena_matches_oracle_on_lambda_capture() {
+    assert_matches_oracle(
+        "fn main() -> Int { let n: Int = 10; let f = |x: Int| x + n; return f(5); }",
+    );
+}
+
+#[test]
+fn arena_matches_oracle_on_lambda_zero_param() {
+    assert_matches_oracle("fn main() -> Int { let g = || 42; return g(); }");
+}
+
+#[test]
+fn arena_matches_oracle_on_lambda_two_params() {
+    assert_matches_oracle(
+        "fn main() -> Int { let add = |a: Int, b: Int| a + b; return add(3, 4); }",
+    );
+}
