@@ -1142,3 +1142,31 @@ fn generic_over_int_emit_probe() {
         42
     );
 }
+
+#[test]
+fn generic_monomorphized_float() {
+    // Real monomorphization: id instantiated at Float (double) — beyond the
+    // i64-fallback. id$Float must use double, not i64.
+    let src = "\
+fn id<T>(x: T) -> T { return x; }
+fn main() -> Int {
+  let r: Float = id(3.5);
+  if r > 3.4 { if r < 3.6 { return 1; } }
+  return 0;
+}";
+    assert_eq!(check(src), 1);
+}
+
+#[test]
+fn generic_monomorphized_two_instances() {
+    // Same generic at Int and Float → two distinct specializations.
+    let src = "\
+fn id<T>(x: T) -> T { return x; }
+fn main() -> Int {
+  let a: Int = id(40);
+  let b: Float = id(2.0);
+  if b > 1.9 { return a + 2; }
+  return 0;
+}";
+    assert_eq!(check(src), 42);
+}

@@ -7886,6 +7886,12 @@ struct Emit {
   globals: String,
   slotctr: Int,
   allocas: String,
+  // Monomorphization state, threaded across the whole module emit: `spec_names`
+  // is the set of already-generated specialized instances (mangled names) and
+  // `spec_defs` accumulates their full `define ...` text (appended to the module
+  // after the ordinary functions). A generic call generates its instance once.
+  spec_names: StringArray,
+  spec_defs: String,
 }
 
 // What a function emission yields: its `define` body plus the updated
@@ -7894,6 +7900,20 @@ struct FnResult {
   body: String,
   gcount: Int,
   globals: String,
+  spec_names: StringArray,
+  spec_defs: String,
+}
+
+// Membership test for the monomorphization instance cache.
+fn spec_has(names: StringArray, name: String) -> Bool {
+  let mut i: Int = 0;
+  while i < names.len {
+    if names[i] == name {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
 }
 
 // An emitted expression: the threaded state plus the value reference (an "%tN"
@@ -8813,10 +8833,13 @@ fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
     let acount: Int = mir.me_b[node];
     let mut e: Emit = em;
     let mut args: String = "";
+    let mut arg_ztys: StringArray = string_array_empty();
     let mut i: Int = 0;
     while i < acount {
       let argnode: Int = mir.mchild_list[astart + i];
-      let argty: String = llvm_ty(e.tcx, type_of_expr(e.tcx, mir, argnode));
+      let arg_zty: String = type_of_expr(e.tcx, mir, argnode);
+      arg_ztys = string_array_push(arg_ztys, arg_zty);
+      let argty: String = llvm_ty(e.tcx, arg_zty);
       // User-call array args get an independent deep copy (value semantics).
       let a: EmitVal = emit_bind(e, mir, argnode);
       e = a.em;
@@ -8829,6 +8852,37 @@ fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
       i = i + 1;
     }
     let callee: String = mir.me_text[node];
+    // Generic call: monomorphize for the concrete argument types.
+    let gidx: Int = mir_fn_index(mir, callee);
+    if gidx < mir.mf_name.len && string_len(mir.mf_type_params[gidx]) > 0 {
+      let mangled: String = mangle_instance(callee, arg_ztys);
+      let ret_concrete: String = resolve_generic_ret(mir, gidx, arg_ztys);
+      if !spec_has(e.spec_names, mangled) {
+        e = gen_specialization(e, mir, gidx, mangled, arg_ztys, ret_concrete);
+      }
+      if mir.mf_has_ret[gidx] == 0 {
+        e.out = string_concat(e.out, "  call void @");
+        e.out = string_concat(e.out, mangled);
+        e.out = string_concat(e.out, "(");
+        e.out = string_concat(e.out, args);
+        e.out = string_concat(e.out, ")\n");
+        return EmitVal { em: e, vref: "0" };
+      }
+      let gretllty: String = llvm_ty(e.tcx, ret_concrete);
+      let gr: Int = e.reg;
+      e.reg = e.reg + 1;
+      let grn: String = llvm_reg_name(gr);
+      e.out = string_concat(e.out, "  ");
+      e.out = string_concat(e.out, grn);
+      e.out = string_concat(e.out, " = call ");
+      e.out = string_concat(e.out, gretllty);
+      e.out = string_concat(e.out, " @");
+      e.out = string_concat(e.out, mangled);
+      e.out = string_concat(e.out, "(");
+      e.out = string_concat(e.out, args);
+      e.out = string_concat(e.out, ")\n");
+      return EmitVal { em: e, vref: grn };
+    }
     let ci: Int = find_fn(e.tcx, callee);
     let mut retllty: String = "i64";
     let mut has_ret: Int = 1;
@@ -10530,7 +10584,168 @@ fn llvm_block(em: Emit, mir: Mir, start: Int, count: Int, brk: Int, cont: Int) -
   return e;
 }
 
-fn llvm_emit_function(mir: Mir, g: Tcx, fi: Int, gcount_in: Int, globals_in: String) -> FnResult {
+// --- Generics monomorphization (emit side) ---------------------------------
+
+// Index of the MIR function named `name`, or mf_name.len if absent.
+fn mir_fn_index(mir: Mir, name: String) -> Int {
+  let mut i: Int = 0;
+  while i < mir.mf_name.len {
+    if mir.mf_name[i] == name {
+      return i;
+    }
+    i = i + 1;
+  }
+  return mir.mf_name.len;
+}
+
+// Is `name` one of the comma-separated type parameters in `tp` (e.g. "A,B")?
+fn is_type_param(tp: String, name: String) -> Bool {
+  let len: Int = string_len(tp);
+  let mut start: Int = 0;
+  let mut i: Int = 0;
+  while i <= len {
+    if i == len || string_byte_at(tp, i) == 44 {
+      if string_byte_slice(tp, start, i - start) == name {
+        return true;
+      }
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// Map a Zeta type string to an identifier-safe mangle fragment.
+fn mangle_type(ty: String) -> String {
+  let mut out: String = "";
+  let mut i: Int = 0;
+  while i < string_len(ty) {
+    let b: Int = string_byte_at(ty, i);
+    if (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) {
+      out = string_concat(out, string_byte_slice(ty, i, 1));
+    } else {
+      out = string_concat(out, "_");
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// Mangled instance name for a generic `callee` at the given concrete arg types.
+fn mangle_instance(callee: String, arg_ztys: StringArray) -> String {
+  let mut out: String = string_concat(callee, "$");
+  let mut i: Int = 0;
+  while i < arg_ztys.len {
+    if i > 0 {
+      out = string_concat(out, "_");
+    }
+    out = string_concat(out, mangle_type(arg_ztys[i]));
+    i = i + 1;
+  }
+  return out;
+}
+
+// Resolve a generic function's return type at a call site: a bare type
+// parameter resolves to the concrete arg type of the param it matches; any
+// other (concrete) return type is used as-is.
+fn resolve_generic_ret(mir: Mir, gidx: Int, arg_ztys: StringArray) -> String {
+  let ret: String = mir.mf_ret[gidx];
+  if !is_type_param(mir.mf_type_params[gidx], ret) {
+    return ret;
+  }
+  let pstart: Int = mir.mf_param_start[gidx];
+  let pcount: Int = mir.mf_param_count[gidx];
+  let mut i: Int = 0;
+  while i < pcount && i < arg_ztys.len {
+    if mir.mp_type[pstart + i] == ret {
+      return arg_ztys[i];
+    }
+    i = i + 1;
+  }
+  return "Int";
+}
+
+// Generate the monomorphized instance `mangled` of generic function `gidx`
+// specialized to `arg_ztys` (the concrete parameter types) returning
+// `ret_concrete`. Appends its `define ...` text to `em.spec_defs` and records
+// `mangled` in `em.spec_names`. Inserted into the cache BEFORE the body is
+// emitted so a self-recursive generic terminates.
+fn gen_specialization(em: Emit, mir: Mir, gidx: Int, mangled: String,
+                      arg_ztys: StringArray, ret_concrete: String) -> Emit {
+  let mut e: Emit = em;
+  e.spec_names = string_array_push(e.spec_names, mangled);
+  let has_ret: Int = mir.mf_has_ret[gidx];
+  let mut retty: String = "void";
+  if has_ret == 1 {
+    retty = llvm_ty(e.tcx, ret_concrete);
+  }
+  let pstart: Int = mir.mf_param_start[gidx];
+  let pcount: Int = mir.mf_param_count[gidx];
+  let mut sig: String = string_concat("define ", retty);
+  sig = string_concat(sig, " @");
+  sig = string_concat(sig, mangled);
+  sig = string_concat(sig, "(");
+  let mut pi: Int = 0;
+  while pi < pcount {
+    if pi > 0 {
+      sig = string_concat(sig, ", ");
+    }
+    sig = string_concat(sig, llvm_ty(e.tcx, arg_ztys[pi]));
+    sig = string_concat(sig, " %");
+    sig = string_concat(sig, mir.mp_name[pstart + pi]);
+    sig = string_concat(sig, ".arg");
+    pi = pi + 1;
+  }
+  sig = string_concat(sig, ") {\n");
+  // Fresh body emitter; carries the shared monomorphization cache + module
+  // gcount/globals so nested generic calls share state.
+  let mut bem: Emit = Emit { out: "", reg: 0, block: 0, term: 0, tcx: e.tcx,
+                             gcount: e.gcount, globals: e.globals, slotctr: 0,
+                             allocas: "", spec_names: e.spec_names, spec_defs: e.spec_defs };
+  pi = 0;
+  while pi < pcount {
+    let pty: String = arg_ztys[pi];
+    bem = scope_push(bem, mir.mp_name[pstart + pi], pty);
+    bem.out = string_concat(bem.out, "  store ");
+    bem.out = string_concat(bem.out, llvm_ty(bem.tcx, pty));
+    bem.out = string_concat(bem.out, " %");
+    bem.out = string_concat(bem.out, mir.mp_name[pstart + pi]);
+    bem.out = string_concat(bem.out, ".arg, ptr ");
+    bem.out = string_concat(bem.out, scope_slot(bem.tcx, mir.mp_name[pstart + pi]));
+    bem.out = string_concat(bem.out, "\n");
+    pi = pi + 1;
+  }
+  bem = llvm_block(bem, mir, mir.mf_body_start[gidx], mir.mf_body_count[gidx], 0, 0);
+  let mut def: String = string_concat(sig, bem.allocas);
+  def = string_concat(def, bem.out);
+  if bem.term == 0 {
+    if has_ret == 1 {
+      if retty == "i64" {
+        def = string_concat(def, "  ret i64 0\n");
+      } else {
+        if retty == "double" {
+          def = string_concat(def, "  ret double 0.0\n");
+        } else {
+          def = string_concat(def, "  ret ");
+          def = string_concat(def, retty);
+          def = string_concat(def, " zeroinitializer\n");
+        }
+      }
+    } else {
+      def = string_concat(def, "  ret void\n");
+    }
+  }
+  def = string_concat(def, "}\n\n");
+  // Thread shared state back, then append THIS def after any nested ones.
+  e.gcount = bem.gcount;
+  e.globals = bem.globals;
+  e.spec_names = bem.spec_names;
+  e.spec_defs = string_concat(bem.spec_defs, def);
+  return e;
+}
+
+fn llvm_emit_function(mir: Mir, g: Tcx, fi: Int, gcount_in: Int, globals_in: String,
+                      spec_names_in: StringArray, spec_defs_in: String) -> FnResult {
   let mut retty: String = "void";
   if mir.mf_has_ret[fi] == 1 {
     retty = llvm_ty(g, mir.mf_ret[fi]);
@@ -10553,8 +10768,9 @@ fn llvm_emit_function(mir: Mir, g: Tcx, fi: Int, gcount_in: Int, globals_in: Str
     pi = pi + 1;
   }
   sig = string_concat(sig, ") {\n");
-  // Fresh per-function emitter: empty dynamic scope, empty entry-alloca buffer.
-  let mut em: Emit = Emit { out: "", reg: 0, block: 0, term: 0, tcx: g, gcount: gcount_in, globals: globals_in, slotctr: 0, allocas: "" };
+  // Fresh per-function emitter: empty dynamic scope, empty entry-alloca buffer;
+  // carries the shared monomorphization cache.
+  let mut em: Emit = Emit { out: "", reg: 0, block: 0, term: 0, tcx: g, gcount: gcount_in, globals: globals_in, slotctr: 0, allocas: "", spec_names: spec_names_in, spec_defs: spec_defs_in };
   // Each param gets a slot (via scope_push) and its incoming value stored in.
   pi = 0;
   while pi < pcount {
@@ -10593,7 +10809,8 @@ fn llvm_emit_function(mir: Mir, g: Tcx, fi: Int, gcount_in: Int, globals_in: Str
     }
   }
   body = string_concat(body, "}\n\n");
-  return FnResult { body: body, gcount: em.gcount, globals: em.globals };
+  return FnResult { body: body, gcount: em.gcount, globals: em.globals,
+                    spec_names: em.spec_names, spec_defs: em.spec_defs };
 }
 
 fn llvm_module_header() -> String {
@@ -10615,12 +10832,20 @@ fn llvm_emit_module(arena: Arena, mir: Mir) -> String {
   let mut bodies: String = "";
   let mut gcount: Int = 0;
   let mut globals: String = "";
+  let mut spec_names: StringArray = string_array_empty();
+  let mut spec_defs: String = "";
   let mut f: Int = 0;
   while f < mir.mf_name.len {
-    let fr: FnResult = llvm_emit_function(mir, g, f, gcount, globals);
-    bodies = string_concat(bodies, fr.body);
-    gcount = fr.gcount;
-    globals = fr.globals;
+    // Generic functions aren't emitted directly; their instances are generated
+    // on demand at call sites (monomorphization).
+    if string_len(mir.mf_type_params[f]) == 0 {
+      let fr: FnResult = llvm_emit_function(mir, g, f, gcount, globals, spec_names, spec_defs);
+      bodies = string_concat(bodies, fr.body);
+      gcount = fr.gcount;
+      globals = fr.globals;
+      spec_names = fr.spec_names;
+      spec_defs = fr.spec_defs;
+    }
     f = f + 1;
   }
   let mut out: String = llvm_module_header();
@@ -10630,6 +10855,8 @@ fn llvm_emit_module(arena: Arena, mir: Mir) -> String {
     out = string_concat(out, "\n");
   }
   out = string_concat(out, bodies);
+  // Monomorphized instances last (they may reference each other / earlier fns).
+  out = string_concat(out, spec_defs);
   return out;
 }
 
