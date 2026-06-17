@@ -138,6 +138,16 @@ const STD_CORE_FUNCTIONS: &[StandardFunction] = &[
         params: &["BoolArray", "Bool"],
         return_type: Some("BoolArray"),
     },
+    StandardFunction {
+        name: "float_array_empty",
+        params: &[],
+        return_type: Some("FloatArray"),
+    },
+    StandardFunction {
+        name: "float_array_push",
+        params: &["FloatArray", "Float"],
+        return_type: Some("FloatArray"),
+    },
 ];
 
 const STD_IO_FUNCTIONS: &[StandardFunction] = &[

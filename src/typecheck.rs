@@ -255,6 +255,7 @@ fn is_builtin_type_name(name: &str) -> bool {
     matches!(
         name,
         "Int" | "Float" | "String" | "Bool" | "Unit" | "IntArray" | "StringArray" | "BoolArray"
+            | "FloatArray"
     )
 }
 
@@ -1687,6 +1688,7 @@ fn parse_type(name: &str) -> Type {
         "IntArray" => Type::Array(Box::new(Type::Int)),
         "StringArray" => Type::Array(Box::new(Type::String)),
         "BoolArray" => Type::Array(Box::new(Type::Bool)),
+        "FloatArray" => Type::Array(Box::new(Type::Float)),
         "Unit" => Type::Unit,
         other => Type::Named(other.to_string()),
     }
@@ -1752,6 +1754,7 @@ impl Type {
                 Type::Int => "IntArray".to_string(),
                 Type::String => "StringArray".to_string(),
                 Type::Bool => "BoolArray".to_string(),
+                Type::Float => "FloatArray".to_string(),
                 other => format!("{}Array", other.display()),
             },
             Type::Tuple(elements) => {

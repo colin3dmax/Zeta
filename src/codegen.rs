@@ -260,6 +260,7 @@ fn parse_ztype(text: &str, struct_names: &[&str], enum_names: &[&str]) -> Result
         "String" => Ok(ZType::Str),
         "IntArray" | "BoolArray" => Ok(ZType::Array(Box::new(ZType::Int))),
         "StringArray" => Ok(ZType::Array(Box::new(ZType::Str))),
+        "FloatArray" => Ok(ZType::Array(Box::new(ZType::Float))),
         name if struct_names.contains(&name) => Ok(ZType::Struct(name.to_string())),
         name if enum_names.contains(&name) => Ok(ZType::Enum(name.to_string())),
         other => Err(format!("type `{other}` not in the native subset")),
@@ -280,6 +281,8 @@ fn is_fresh_array(expr: &MirExpr) -> bool {
                 | "bool_array_push"
                 | "string_array_empty"
                 | "string_array_push"
+                | "float_array_empty"
+                | "float_array_push"
         ),
         _ => false,
     }
@@ -301,6 +304,7 @@ fn match_inplace_push<'p>(place: &'p MirPlace, value: &'p MirExpr) -> Option<(&'
     let elem = match callee.as_str() {
         "int_array_push" | "bool_array_push" => ZType::Int,
         "string_array_push" => ZType::Str,
+        "float_array_push" => ZType::Float,
         _ => return None,
     };
     // First arg must be `Load(name)` — the same variable being assigned.
@@ -1681,6 +1685,9 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                     "string_array_empty" | "string_array_push" => {
                         Ok(ZType::Array(Box::new(ZType::Str)))
                     }
+                    "float_array_empty" | "float_array_push" => {
+                        Ok(ZType::Array(Box::new(ZType::Float)))
+                    }
                     _ => {
                         let _ = args;
                         Err(format!(
@@ -2446,11 +2453,15 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             // arrays carry `{len,ptr}` elements (stride from the element type).
             "int_array_empty" | "bool_array_empty" => Ok(Some(self.lower_array_empty(ZType::Int))),
             "string_array_empty" => Ok(Some(self.lower_array_empty(ZType::Str))),
+            "float_array_empty" => Ok(Some(self.lower_array_empty(ZType::Float))),
             "int_array_push" | "bool_array_push" => {
                 Ok(Some(self.lower_array_push(&args[0], &args[1], ZType::Int)?))
             }
             "string_array_push" => {
                 Ok(Some(self.lower_array_push(&args[0], &args[1], ZType::Str)?))
+            }
+            "float_array_push" => {
+                Ok(Some(self.lower_array_push(&args[0], &args[1], ZType::Float)?))
             }
             // ascii predicates: Int byte → Bool (i64 0/1). Out-of-[0,255] inputs
             // fall outside every range/equality, yielding 0 — matching the

@@ -2112,6 +2112,8 @@ fn is_std_builtin(callee: &str) -> bool {
             | "string_array_push"
             | "bool_array_empty"
             | "bool_array_push"
+            | "float_array_empty"
+            | "float_array_push"
             | "file_read_to_string"
             | "path_join"
             | "path_basename"
@@ -2238,13 +2240,14 @@ fn eval_std_builtin(callee: &str, args: Vec<Value>) -> Result<Value, Diagnostic>
         "ascii_is_whitespace" => {
             eval_ascii_predicate(callee, args, |byte| byte.is_ascii_whitespace())
         }
-        "int_array_empty" | "string_array_empty" | "bool_array_empty" => {
+        "int_array_empty" | "string_array_empty" | "bool_array_empty" | "float_array_empty" => {
             let []: [Value; 0] = expect_arity(callee, args)?.try_into().ok().unwrap();
             Ok(Value::Array(Rc::new(Vec::new())))
         }
         "int_array_push" => eval_array_push(callee, args, "Int"),
         "string_array_push" => eval_array_push(callee, args, "String"),
         "bool_array_push" => eval_array_push(callee, args, "Bool"),
+        "float_array_push" => eval_array_push(callee, args, "Float"),
         "file_read_to_string" => {
             let [path]: [Value; 1] = expect_arity(callee, args)?.try_into().ok().unwrap();
             let Value::String(path) = path else {
@@ -2383,7 +2386,10 @@ fn eval_array_push(
     // the backing array is still shared elsewhere.
     let target = Rc::make_mut(&mut values);
     match (element_type, &value) {
-        ("Int", Value::Int(_)) | ("String", Value::String(_)) | ("Bool", Value::Bool(_)) => {}
+        ("Int", Value::Int(_))
+        | ("String", Value::String(_))
+        | ("Bool", Value::Bool(_))
+        | ("Float", Value::Float(_)) => {}
         _ => {
             return Err(runtime_error(
                 "RUNTIME_STD_TYPE",
@@ -2419,8 +2425,8 @@ fn expect_arity(callee: &str, args: Vec<Value>) -> Result<Vec<Value>, Diagnostic
         "string_byte_at" => 2,
         "string_byte_slice" => 3,
         "ascii_is_digit" | "ascii_is_alpha" | "ascii_is_alnum" | "ascii_is_whitespace" => 1,
-        "int_array_empty" | "string_array_empty" | "bool_array_empty" => 0,
-        "int_array_push" | "string_array_push" | "bool_array_push" => 2,
+        "int_array_empty" | "string_array_empty" | "bool_array_empty" | "float_array_empty" => 0,
+        "int_array_push" | "string_array_push" | "bool_array_push" | "float_array_push" => 2,
         _ => args.len(),
     };
     if args.len() != expected {

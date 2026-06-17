@@ -971,6 +971,7 @@ fn parse_mir_type(name: &str) -> MirType {
         "IntArray" => MirType::Array(Box::new(MirType::named("Int"))),
         "StringArray" => MirType::Array(Box::new(MirType::named("String"))),
         "BoolArray" => MirType::Array(Box::new(MirType::named("Bool"))),
+        "FloatArray" => MirType::Array(Box::new(MirType::named("Float"))),
         "Unit" => MirType::Unit,
         other => MirType::named(other),
     }
@@ -1642,6 +1643,8 @@ impl<'a> MirVerifier<'a> {
             ),
             "bool_array_empty" => (&[][..], parse_mir_type("BoolArray")),
             "bool_array_push" => (&["BoolArray", "Bool"][..], parse_mir_type("BoolArray")),
+            "float_array_empty" => (&[][..], parse_mir_type("FloatArray")),
+            "float_array_push" => (&["FloatArray", "Float"][..], parse_mir_type("FloatArray")),
             "file_read_to_string" => (&["String"][..], parse_mir_type("ResultString")),
             "path_join" => (&["String", "String"][..], parse_mir_type("String")),
             "path_basename" => (&["String"][..], parse_mir_type("String")),

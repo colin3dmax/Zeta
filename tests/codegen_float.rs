@@ -98,3 +98,20 @@ fn main() -> Int {
 }";
     assert_eq!(check(src), 1);
 }
+
+#[test]
+fn float_array_native() {
+    // FloatArray (P3 first slice): f64 elements, native must equal interpreter.
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let mut xs: FloatArray = float_array_empty();
+  xs = float_array_push(xs, 1.5);
+  xs = float_array_push(xs, 2.5);
+  let lit: FloatArray = [10.0, 20.0];
+  let s: Float = xs[0] + xs[1] + lit[0] + lit[1];
+  if s > 33.9 { if s < 34.1 { return xs.len + lit.len; } }
+  return 0;
+}";
+    assert_eq!(check(src), 4);
+}
