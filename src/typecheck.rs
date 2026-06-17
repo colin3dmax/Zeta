@@ -1,7 +1,34 @@
 use crate::ast::{BinaryOp, Expr, Function, Item, Module, Pattern, Stmt, UnaryOp};
 use crate::diagnostic::{Diagnostic, Span};
 use crate::std_api;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+
+thread_local! {
+    /// All generic type parameter names in the module being checked (functions +
+    /// structs + enums). A `Type::Named(P)` for any `P` here is treated as a
+    /// wildcard by `expect_type` — instantiation args are erased in this slice,
+    /// so generic struct/enum field/payload types check leniently. The
+    /// interpreter (run_mir) is the semantic oracle for generic aggregates.
+    static TYPE_PARAMS: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+}
+
+fn set_type_params(module: &Module) {
+    let mut all = HashSet::new();
+    for item in &module.items {
+        match item {
+            Item::Function(f) => all.extend(f.type_params.iter().cloned()),
+            Item::Struct(s) => all.extend(s.type_params.iter().cloned()),
+            Item::Enum(e) => all.extend(e.type_params.iter().cloned()),
+            _ => {}
+        }
+    }
+    TYPE_PARAMS.with(|s| *s.borrow_mut() = all);
+}
+
+fn is_type_param_type(t: &Type) -> bool {
+    matches!(t, Type::Named(n) if TYPE_PARAMS.with(|s| s.borrow().contains(n)))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Type {
@@ -59,6 +86,7 @@ pub fn check_with_external_items(
     external_structs: &[ExternalStruct],
     external_enums: &[ExternalEnum],
 ) -> Result<(), Vec<Diagnostic>> {
+    set_type_params(module);
     let mut diagnostics = Vec::new();
     let mut structs = struct_types(module);
     for external_struct in external_structs {
@@ -102,7 +130,14 @@ fn validate_declared_types(
         match item {
             Item::Struct(decl) => {
                 for field in &decl.fields {
-                    validate_type_name(&field.ty, field.ty_span, structs, enums, &[], diagnostics);
+                    validate_type_name(
+                        &field.ty,
+                        field.ty_span,
+                        structs,
+                        enums,
+                        &decl.type_params,
+                        diagnostics,
+                    );
                 }
             }
             Item::Enum(decl) => {
@@ -113,7 +148,7 @@ fn validate_declared_types(
                             variant.payload_type_span.unwrap_or(variant.name_span),
                             structs,
                             enums,
-                            &[],
+                            &decl.type_params,
                             diagnostics,
                         );
                     }
@@ -1734,6 +1769,26 @@ fn expect_type(
         return;
     }
     if matches!(found, Type::Error) || matches!(expected, Type::Error) {
+        return;
+    }
+    // A generic type parameter (erased instantiation) is compatible with any
+    // concrete type for assignment-like checks (let/return/call-arg/field/
+    // payload/match). But an OPERATION that requires a concrete capability
+    // (arithmetic, ordering, logical, index, condition) must still reject an
+    // unconstrained type parameter — there are no trait bounds.
+    let operand_constraint = matches!(
+        code,
+        "TYPE_BINARY_OPERAND"
+            | "TYPE_LOGICAL_OPERAND"
+            | "TYPE_ORDERING_OPERAND"
+            | "TYPE_UNARY_OPERAND"
+            | "TYPE_INDEX"
+            | "TYPE_RANGE_BOUND"
+            | "TYPE_IF_CONDITION"
+            | "TYPE_WHILE_CONDITION"
+            | "TYPE_FORC_CONDITION"
+    );
+    if !operand_constraint && (is_type_param_type(found) || is_type_param_type(expected)) {
         return;
     }
     diagnostics.push(Diagnostic::new(

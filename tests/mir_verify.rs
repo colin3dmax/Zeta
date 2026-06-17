@@ -251,6 +251,7 @@ fn verifier_accepts_exhaustive_enum_match_when_all_arms_return() {
     let program = Program {
         enums: vec![MirEnum {
             name: "ResultTag".to_string(),
+            type_params: vec![],
             variants: vec![
                 MirEnumVariant {
                     name: "Ok".to_string(),
@@ -333,6 +334,7 @@ fn verifier_rejects_non_exhaustive_enum_match_without_trailing_return() {
     let program = Program {
         enums: vec![MirEnum {
             name: "ResultTag".to_string(),
+            type_params: vec![],
             variants: vec![
                 MirEnumVariant {
                     name: "Ok".to_string(),

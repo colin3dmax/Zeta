@@ -11,6 +11,10 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MirEnum {
     pub name: String,
+    /// Generic type parameters (empty for non-generic). The verifier treats a
+    /// `Named(P)` for any `P` here as a wildcard, so generic enum payload/match
+    /// binding types check leniently (instantiation erased in this slice).
+    pub type_params: Vec<String>,
     pub variants: Vec<MirEnumVariant>,
 }
 
@@ -194,6 +198,7 @@ pub fn lower_with_external_enum_variants(
         .filter_map(|item| match item {
             Item::Enum(decl) => Some(MirEnum {
                 name: decl.name.clone(),
+                type_params: decl.type_params.clone(),
                 variants: decl
                     .variants
                     .iter()
@@ -226,6 +231,7 @@ pub fn lower_with_external_enum_variants(
         variants.sort_by_key(|variant| variant.name.clone());
         MirEnum {
             name: enum_name.clone(),
+            type_params: Vec::new(),
             variants,
         }
     }));
@@ -1001,6 +1007,12 @@ impl<'a> MirVerifier<'a> {
                 .functions
                 .iter()
                 .flat_map(|function| function.type_params.iter().cloned())
+                .chain(
+                    program
+                        .enums
+                        .iter()
+                        .flat_map(|enum_decl| enum_decl.type_params.iter().cloned()),
+                )
                 .collect(),
             enums: program
                 .enums

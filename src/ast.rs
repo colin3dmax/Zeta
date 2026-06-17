@@ -28,6 +28,10 @@ pub struct StructDecl {
     pub exported: bool,
     pub name: String,
     pub name_span: Span,
+    /// Generic type parameters `struct Box<T> { ... }` (empty for non-generic).
+    /// Within the body these names act as opaque types; instantiation args at use
+    /// sites are erased in the current slice (typed leniently as wildcards).
+    pub type_params: Vec<String>,
     pub fields: Vec<Field>,
 }
 
@@ -44,6 +48,8 @@ pub struct EnumDecl {
     pub exported: bool,
     pub name: String,
     pub name_span: Span,
+    /// Generic type parameters `enum Option<T> { ... }` (empty for non-generic).
+    pub type_params: Vec<String>,
     pub variants: Vec<EnumVariant>,
 }
 

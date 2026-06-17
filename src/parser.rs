@@ -91,12 +91,13 @@ impl Parser {
 
     fn parse_struct(&mut self, exported: bool) -> Result<StructDecl, Diagnostic> {
         let (name, name_span) = self.expect_ident_span("expected struct name")?;
+        let type_params = self.parse_type_params()?;
         self.expect_symbol(Symbol::LBrace, "expected `{` after struct name")?;
         let mut fields = Vec::new();
         while !self.check_symbol(Symbol::RBrace) && !self.at_eof() {
             let (field_name, field_name_span) = self.expect_ident_span("expected field name")?;
             self.expect_symbol(Symbol::Colon, "expected `:` after field name")?;
-            let (ty, ty_span) = self.expect_ident_span("expected field type")?;
+            let (ty, ty_span) = self.parse_type_annotation("expected field type")?;
             fields.push(Field {
                 name: field_name,
                 name_span: field_name_span,
@@ -112,12 +113,14 @@ impl Parser {
             exported,
             name,
             name_span,
+            type_params,
             fields,
         })
     }
 
     fn parse_enum(&mut self, exported: bool) -> Result<EnumDecl, Diagnostic> {
         let (name, name_span) = self.expect_ident_span("expected enum name")?;
+        let type_params = self.parse_type_params()?;
         self.expect_symbol(Symbol::LBrace, "expected `{` after enum name")?;
         let mut variants = Vec::new();
         while !self.check_symbol(Symbol::RBrace) && !self.at_eof() {
@@ -125,7 +128,8 @@ impl Parser {
                 self.expect_ident_span("expected enum variant name")?;
             let (payload_type, payload_type_span) = if self.consume_symbol(Symbol::LParen).is_some()
             {
-                let (ty, ty_span) = self.expect_ident_span("expected enum variant payload type")?;
+                let (ty, ty_span) =
+                    self.parse_type_annotation("expected enum variant payload type")?;
                 self.expect_symbol(Symbol::RParen, "expected `)` after enum variant payload")?;
                 (Some(ty), Some(ty_span))
             } else {
@@ -146,6 +150,7 @@ impl Parser {
             exported,
             name,
             name_span,
+            type_params,
             variants,
         })
     }
@@ -1036,7 +1041,24 @@ impl Parser {
             }
             return Ok((format!("({})", parts.join(", ")), span));
         }
-        self.expect_ident_span(message)
+        let (name, span) = self.expect_ident_span(message)?;
+        // Optional generic instantiation args `Name<...>` (e.g. `Box<Int>`,
+        // `Result<Int, String>`). Erased in this slice: type params are typed
+        // leniently as wildcards, so only the base name is kept.
+        if self.check_symbol(Symbol::Lt) {
+            self.pos += 1;
+            let mut depth = 1;
+            while depth > 0 && !self.at_eof() {
+                if self.consume_symbol(Symbol::Lt).is_some() {
+                    depth += 1;
+                } else if self.consume_symbol(Symbol::Gt).is_some() {
+                    depth -= 1;
+                } else {
+                    self.pos += 1;
+                }
+            }
+        }
+        Ok((name, span))
     }
 
     fn expect_symbol(&mut self, symbol: Symbol, message: &'static str) -> Result<(), Diagnostic> {
