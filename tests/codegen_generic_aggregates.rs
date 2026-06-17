@@ -112,6 +112,76 @@ fn main() -> Int {
 }
 
 #[test]
+fn generic_enum_return_across_function() {
+    // The Stage B payoff: a function whose RETURN type is a generic enum
+    // instantiation. The annotation `Option<Int>` is preserved through the
+    // pipeline so native resolves the function signature to the `Option$Int`
+    // instance (not a degraded Int), and the caller can match on the result.
+    let src = "\
+enum Option<T> { Some(T), None }
+fn find(hit: Bool) -> Option<Int> {
+  if hit { return Option.Some(42); }
+  return Option.None;
+}
+fn main() -> Int {
+  match find(true) {
+    Option.Some(x) -> { return x; },
+    Option.None -> { return 0; },
+  }
+  return 0;
+}";
+    assert_eq!(check(src), 42);
+}
+
+#[test]
+fn generic_result_return_string_err() {
+    // Result<Int, String> across a function boundary: the Err payload is a
+    // String, so the annotation-derived `Result$Int_Str` instance must carry the
+    // correct payload type for the Err arm's {len,ptr} extraction.
+    let src = "\
+import std.core;
+enum Result<T, E> { Ok(T), Err(E) }
+fn parse(ok: Bool) -> Result<Int, String> {
+  if ok { return Result.Ok(7); }
+  return Result.Err(\"bad\");
+}
+fn main() -> Int {
+  match parse(false) {
+    Result.Ok(v) -> { return v; },
+    Result.Err(e) -> { return string_len(e); },
+  }
+  return 0;
+}";
+    assert_eq!(check(src), 3);
+}
+
+#[test]
+fn generic_struct_return_across_function() {
+    // A function returning a generic struct instance `Box<Int>`.
+    let src = "\
+struct Box<T> { value: T }
+fn wrap(n: Int) -> Box<Int> { return Box { value: n }; }
+fn main() -> Int {
+  let b: Box<Int> = wrap(11);
+  return b.value;
+}";
+    assert_eq!(check(src), 11);
+}
+
+#[test]
+fn generic_aggregate_param() {
+    // A generic aggregate passed as a parameter `Box<Int>`.
+    let src = "\
+struct Box<T> { value: T }
+fn unwrap(b: Box<Int>) -> Int { return b.value; }
+fn main() -> Int {
+  let b: Box<Int> = Box { value: 8 };
+  return unwrap(b);
+}";
+    assert_eq!(check(src), 8);
+}
+
+#[test]
 fn generic_string_payload() {
     // String payload in a generic enum exercises the {len, ptr} (p0, p1) split.
     let src = "\

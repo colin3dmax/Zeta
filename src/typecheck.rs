@@ -272,6 +272,15 @@ fn validate_type_name(
         }
         return;
     }
+    // Generic instantiation `Box<Int>`: validate the base aggregate name and each
+    // argument type. The arguments are otherwise erased for type checking.
+    if let Some((base, args)) = crate::type_syntax::generic_parts(name) {
+        validate_type_name(base, span, structs, enums, type_params, diagnostics);
+        for arg in args {
+            validate_type_name(arg, span, structs, enums, type_params, diagnostics);
+        }
+        return;
+    }
     if is_builtin_type_name(name)
         || structs.contains_key(name)
         || enums.contains_key(name)
@@ -1715,6 +1724,11 @@ fn parse_type(name: &str) -> Type {
     if let Some(parts) = crate::type_syntax::tuple_parts(name) {
         return Type::Tuple(parts.iter().map(|p| parse_type(p)).collect());
     }
+    // Generic instantiation `Box<Int>` is erased to its base name for type
+    // checking (the interpreter is the semantic oracle for generic aggregates).
+    if let Some((base, _)) = crate::type_syntax::generic_parts(name) {
+        return parse_type(base);
+    }
     match name {
         "Int" => Type::Int,
         "Float" => Type::Float,
@@ -1750,6 +1764,10 @@ fn parse_declared_type(
                 .map(|p| parse_declared_type(p, structs, enums))
                 .collect(),
         );
+    }
+    // Generic instantiation `Box<Int>` is validated/erased by its base name.
+    if let Some((base, _)) = crate::type_syntax::generic_parts(name) {
+        return parse_declared_type(base, structs, enums);
     }
     if is_builtin_type_name(name) || structs.contains_key(name) || enums.contains_key(name) {
         parse_type(name)

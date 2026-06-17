@@ -1043,20 +1043,27 @@ impl Parser {
         }
         let (name, span) = self.expect_ident_span(message)?;
         // Optional generic instantiation args `Name<...>` (e.g. `Box<Int>`,
-        // `Result<Int, String>`). Erased in this slice: type params are typed
-        // leniently as wildcards, so only the base name is kept.
+        // `Result<Int, String>`). The arguments are recursively parsed and kept
+        // in the canonical `Name<A0, A1>` string form. The typechecker / MIR
+        // verifier strip them back to the base name (instantiation is erased for
+        // type checking — the interpreter is the semantic oracle), while native
+        // codegen reads them to monomorphize concrete aggregate layouts.
         if self.check_symbol(Symbol::Lt) {
             self.pos += 1;
-            let mut depth = 1;
-            while depth > 0 && !self.at_eof() {
-                if self.consume_symbol(Symbol::Lt).is_some() {
-                    depth += 1;
-                } else if self.consume_symbol(Symbol::Gt).is_some() {
-                    depth -= 1;
-                } else {
-                    self.pos += 1;
+            let mut args = Vec::new();
+            if !self.check_symbol(Symbol::Gt) {
+                loop {
+                    let (arg, _) = self.parse_type_annotation("expected generic type argument")?;
+                    args.push(arg);
+                    if self.consume_symbol(Symbol::Comma).is_none() {
+                        break;
+                    }
                 }
             }
+            self.expect_symbol(Symbol::Gt, "expected `>` after generic type arguments")?;
+            let end = self.previous_span().end;
+            let canonical = format!("{name}<{}>", args.join(", "));
+            return Ok((canonical, Span::new(span.start, end)));
         }
         Ok((name, span))
     }

@@ -63,6 +63,60 @@ pub fn split_top_level(inner: &str) -> Vec<&str> {
     parts
 }
 
+/// If `name` is a generic instantiation `Base<A0, A1, ...>` (e.g. `Box<Int>`,
+/// `Result<Int, String>`), return its base name and argument type strings,
+/// split at the top level (respecting nested `<>` and `()`). Returns `None` for
+/// non-instantiations, for tuple `(...)` / function `fn(...) -> R` forms, and
+/// when the `<...>` is empty or unbalanced.
+pub fn generic_parts(name: &str) -> Option<(&str, Vec<&str>)> {
+    let trimmed = name.trim();
+    // Tuples and function types are handled by their own decoders; never treat
+    // their leading token as a generic base.
+    if trimmed.starts_with('(') || trimmed.starts_with("fn") {
+        return None;
+    }
+    let lt = trimmed.find('<')?;
+    if !trimmed.ends_with('>') {
+        return None;
+    }
+    let base = trimmed[..lt].trim();
+    if base.is_empty() {
+        return None;
+    }
+    let inner = &trimmed[lt + 1..trimmed.len() - 1];
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    for (i, c) in inner.char_indices() {
+        match c {
+            '<' | '(' => depth += 1,
+            '>' | ')' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(inner[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    let last = inner[start..].trim();
+    if !last.is_empty() {
+        parts.push(last);
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    Some((base, parts))
+}
+
+/// The base name of a (possibly generic) type string: `Box<Int>` → `Box`,
+/// `Point` → `Point`. Tuple/function forms are returned unchanged.
+pub fn base_name(name: &str) -> &str {
+    match generic_parts(name) {
+        Some((base, _)) => base,
+        None => name.trim(),
+    }
+}
+
 /// If `name` is a function type string `fn(P0, P1, ...) -> R`, return its
 /// parameter type strings and return type string. Returns `None` otherwise.
 pub fn fn_parts(name: &str) -> Option<(Vec<&str>, &str)> {
@@ -90,4 +144,47 @@ pub fn fn_parts(name: &str) -> Option<(Vec<&str>, &str)> {
         return None;
     }
     Some((params, ret))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generic_parts_basic() {
+        assert_eq!(generic_parts("Box<Int>"), Some(("Box", vec!["Int"])));
+        assert_eq!(
+            generic_parts("Result<Int, String>"),
+            Some(("Result", vec!["Int", "String"]))
+        );
+    }
+
+    #[test]
+    fn generic_parts_nested() {
+        // Commas inside nested `<>` / `()` must not split the top level.
+        assert_eq!(
+            generic_parts("Map<Box<Int>, Pair<A, B>>"),
+            Some(("Map", vec!["Box<Int>", "Pair<A, B>"]))
+        );
+        assert_eq!(
+            generic_parts("Box<(Int, String)>"),
+            Some(("Box", vec!["(Int, String)"]))
+        );
+    }
+
+    #[test]
+    fn generic_parts_rejects_non_generics() {
+        assert_eq!(generic_parts("Int"), None);
+        assert_eq!(generic_parts("Point"), None);
+        assert_eq!(generic_parts("(Int, String)"), None);
+        assert_eq!(generic_parts("fn(Int) -> Bool"), None);
+        assert_eq!(generic_parts("Box<>"), None);
+    }
+
+    #[test]
+    fn base_name_strips_args() {
+        assert_eq!(base_name("Box<Int>"), "Box");
+        assert_eq!(base_name("Result<Int, String>"), "Result");
+        assert_eq!(base_name("Point"), "Point");
+    }
 }

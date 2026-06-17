@@ -240,23 +240,27 @@ impl<'ctx> Types<'ctx> {
             enums.insert(enum_decl.name.clone(), variants);
         }
 
-        let mut returns = HashMap::new();
-        for function in &program.functions {
-            let zt = match &function.return_type {
-                Some(t) => parse_ztype(t, &names, &enum_names).unwrap_or(ZType::Int),
-                None => ZType::Int, // Unit-returning → i64 0
-            };
-            returns.insert(function.name.clone(), zt);
-        }
-
-        Ok(Types {
+        // Construct first with empty returns, then resolve return types via
+        // `resolve_ann_ztype` — which may monomorphize generic aggregate return
+        // types (`Option<Int>`), registering instances into the (now live) tables.
+        let mut types = Types {
             context,
             structs: RefCell::new(structs),
             enums: RefCell::new(enums),
             struct_templates,
             enum_templates,
-            returns,
-        })
+            returns: HashMap::new(),
+        };
+        let mut returns = HashMap::new();
+        for function in &program.functions {
+            let zt = match &function.return_type {
+                Some(t) => types.resolve_ann_ztype(t).unwrap_or(ZType::Int),
+                None => ZType::Int, // Unit-returning → i64 0
+            };
+            returns.insert(function.name.clone(), zt);
+        }
+        types.returns = returns;
+        Ok(types)
     }
 
     /// Resolve a declared type string to a `ZType`, using this module's known
@@ -376,9 +380,47 @@ impl<'ctx> Types<'ctx> {
             .collect()
     }
 
+    /// Resolve a TYPE ANNOTATION string to a `ZType`, monomorphizing generic
+    /// aggregate instantiations (`Box<Int>`, `Option<Int>`, `Result<Int,String>`)
+    /// on the fly and registering their instances. Falls back to `parse_ztype`
+    /// for plain (non-generic) type strings.
+    fn resolve_ann_ztype(&self, ann: &str) -> Result<ZType, String> {
+        if let Some((params, ret)) = crate::type_syntax::fn_parts(ann) {
+            let ptys = params
+                .iter()
+                .map(|p| self.resolve_ann_ztype(p))
+                .collect::<Result<Vec<_>, _>>()?;
+            let rty = self.resolve_ann_ztype(ret)?;
+            return Ok(ZType::Closure(ptys, Box::new(rty)));
+        }
+        if let Some(parts) = crate::type_syntax::tuple_parts(ann) {
+            let elems = parts
+                .iter()
+                .map(|p| self.resolve_ann_ztype(p))
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(ZType::Tuple(elems));
+        }
+        if let Some((base, arg_strs)) = crate::type_syntax::generic_parts(ann) {
+            let args = arg_strs
+                .iter()
+                .map(|a| self.resolve_ann_ztype(a))
+                .collect::<Result<Vec<_>, _>>()?;
+            if self.is_generic_struct(base) {
+                return Ok(ZType::Struct(self.instantiate_struct(base, &args)?));
+            }
+            if self.is_generic_enum(base) {
+                return Ok(ZType::Enum(self.instantiate_enum(base, &args)?));
+            }
+            // Unknown generic base — best-effort parse of the base name.
+            return self.parse_ztype(base);
+        }
+        self.parse_ztype(ann)
+    }
+
     /// Resolve a template field/payload type string under a `T → ZType` mapping.
-    /// A bare type-parameter name resolves to its bound concrete type; anything
-    /// else is parsed as an ordinary (already-concrete) type string.
+    /// A bare type-parameter name resolves to its bound concrete type; a nested
+    /// generic instantiation (`Box<T>`) has its arguments substituted and is
+    /// itself monomorphized; anything else is an ordinary concrete type string.
     fn resolve_template_type(
         &self,
         ty_str: &str,
@@ -387,7 +429,19 @@ impl<'ctx> Types<'ctx> {
         if let Some(zt) = subst.get(ty_str) {
             return Ok(zt.clone());
         }
-        self.parse_ztype(ty_str)
+        if let Some((base, arg_strs)) = crate::type_syntax::generic_parts(ty_str) {
+            if self.is_generic_struct(base) || self.is_generic_enum(base) {
+                let args = arg_strs
+                    .iter()
+                    .map(|a| self.resolve_template_type(a, subst))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if self.is_generic_struct(base) {
+                    return Ok(ZType::Struct(self.instantiate_struct(base, &args)?));
+                }
+                return Ok(ZType::Enum(self.instantiate_enum(base, &args)?));
+            }
+        }
+        self.resolve_ann_ztype(ty_str)
     }
 
     /// Build the `T → ZType` substitution for a generic aggregate from its
@@ -1111,7 +1165,7 @@ fn build_module<'ctx>(
         }
         let mut param_types = Vec::with_capacity(function.params.len());
         for param in &function.params {
-            let zt = types.parse_ztype(&param.ty)?;
+            let zt = types.resolve_ann_ztype(&param.ty)?;
             param_types.push(types.llvm(&zt).into());
         }
         let ret = &types.returns[&function.name];
@@ -1154,7 +1208,7 @@ fn build_module<'ctx>(
         // save/restore around nested blocks so shadowed re-declarations of the
         // same name at different types get independent slots.
         for (index, param) in function.params.iter().enumerate() {
-            let zt = types.parse_ztype(&param.ty)?;
+            let zt = types.resolve_ann_ztype(&param.ty)?;
             let slot = lower.entry_alloca(&param.name, types.llvm(&zt));
             let value = llvm_fn.get_nth_param(index as u32).expect("param exists");
             builder.build_store(slot, value).unwrap();
@@ -1956,7 +2010,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let mut inner = local_types.clone();
                 let mut ptys = Vec::with_capacity(params.len());
                 for p in params {
-                    let zt = self.types.parse_ztype(&p.ty)?;
+                    let zt = self.types.resolve_ann_ztype(&p.ty)?;
                     inner.insert(p.name.clone(), zt.clone());
                     ptys.push(zt);
                 }
@@ -1990,7 +2044,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         // Parameter types from annotations.
         let param_ztys: Vec<ZType> = params
             .iter()
-            .map(|p| self.types.parse_ztype(&p.ty))
+            .map(|p| self.types.resolve_ann_ztype(&p.ty))
             .collect::<Result<_, _>>()?;
 
         // Free variables that are enclosing locals → captured into the env.
@@ -2240,7 +2294,21 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         if let Some(zt) = subst.get(ty_str) {
             return Ok(zt.clone());
         }
-        self.types.parse_ztype(ty_str)
+        // A generic aggregate instantiation (`Box<T>` / `Option<Int>`): substitute
+        // its arguments and monomorphize the concrete instance.
+        if let Some((base, arg_strs)) = crate::type_syntax::generic_parts(ty_str) {
+            if self.types.is_generic_struct(base) || self.types.is_generic_enum(base) {
+                let args = arg_strs
+                    .iter()
+                    .map(|a| self.resolve_generic_ztype(a, subst))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if self.types.is_generic_struct(base) {
+                    return Ok(ZType::Struct(self.types.instantiate_struct(base, &args)?));
+                }
+                return Ok(ZType::Enum(self.types.instantiate_enum(base, &args)?));
+            }
+        }
+        self.types.resolve_ann_ztype(ty_str)
     }
 
     /// Get or generate the monomorphized instance `mangled` of `generic` with the
