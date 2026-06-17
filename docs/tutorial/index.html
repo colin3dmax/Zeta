@@ -30,6 +30,10 @@
         <a href="#lesson-control">4. 控制流</a>
         <a href="#lesson-data">5. 结构体和枚举</a>
         <a href="#lesson-repl">6. REPL 文档查询</a>
+        <a href="#lesson-float">7. Float 浮点</a>
+        <a href="#lesson-tuple">8. Tuple 元组</a>
+        <a href="#lesson-closure">9. Closure 闭包</a>
+        <a href="#lesson-generics">10. Generics 泛型</a>
         <a href="#next">下一步</a>
       </section>
     </aside>
@@ -92,6 +96,48 @@ enum ResultTag {
 :doc let
 :complete st</code></pre>
     <p>REPL 可直接计算表达式和查询文档；完整程序可通过 <code>zeta run</code> 走 Stage 0 MIR interpreter 执行。</p>
+
+    <h2 id="lesson-float">课程 7：Float 浮点</h2>
+    <pre><code>fn main() -&gt; Int {
+  let x: Float = 3.0;
+  let y: Float = 2.0;
+  let r: Float = x * y - x / y;   // 4.5
+  if r &gt; 4.4 { if r &lt; 4.6 { return 7; } }
+  return 0;
+}</code></pre>
+    <p><code>Float</code> 是 64 位浮点。字面量小数点后必须有数字（<code>2.0</code> 而非 <code>2.</code>）。<code>Int</code> 和 <code>Float</code> 不隐式混用；取模和位运算仅限 <code>Int</code>。原生后端用 LLVM <code>double</code> 实现。</p>
+
+    <h2 id="lesson-tuple">课程 8：Tuple 元组</h2>
+    <pre><code>fn pair(a: Int, b: Int) -&gt; (Int, Int) {
+  return (a, b);
+}
+
+fn main() -&gt; Int {
+  let t = pair(10, 20);
+  return t.0 + t.1;   // 按位置索引
+}</code></pre>
+    <p>元组是固定元数的异构聚合：<code>(a, b)</code> 构造、<code>t.0</code>/<code>t.1</code> 索引（可嵌套 <code>t.1.0</code>）。注意 <code>(a)</code> 不带逗号只是分组而非单元素元组。类型注解 <code>(Int, String)</code> 让元组能传参与返回。</p>
+
+    <h2 id="lesson-closure">课程 9：Closure 闭包</h2>
+    <pre><code>fn main() -&gt; Int {
+  let n: Int = 10;
+  let addn = |x: Int| x + n;   // 按值捕获 n
+  return addn(5);              // 15
+}</code></pre>
+    <p>Lambda <code>|x: Int| body</code> 是一等值，创建时按值捕获自由变量。函数类型 <code>fn(Int) -&gt; Int</code> 可作参数/返回，因此可以写高阶函数和返回闭包的工厂函数。</p>
+
+    <h2 id="lesson-generics">课程 10：Generics 泛型</h2>
+    <pre><code>fn id&lt;T&gt;(x: T) -&gt; T {
+  return x;
+}
+
+fn main() -&gt; Int {
+  let a: Int = id(40);
+  let b: Float = id(2.0);   // 同一函数，两种类型
+  if b &gt; 1.9 { return a + 2; }
+  return 0;
+}</code></pre>
+    <p>泛型函数 <code>fn id&lt;T&gt;(...)</code> 的类型参数从实参推断（调用点不写 <code>&lt;&gt;</code>）。函数体内 <code>T</code> 是不透明类型，只能做与类型无关的操作。原生后端为每个具体实例（<code>id$Int</code>、<code>id$Float</code>）按需单态化生成专门副本。</p>
 
     <h2 id="next">下一步</h2>
     <ul>

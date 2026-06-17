@@ -34,6 +34,10 @@
         <a href="#array-builder">数组构造</a>
         <a href="#string-scan">字符串扫描</a>
         <a href="#data-declarations">数据声明</a>
+        <a href="#floats">Float 浮点</a>
+        <a href="#tuples">Tuple 元组</a>
+        <a href="#closures">Closure 闭包</a>
+        <a href="#generics">Generics 泛型</a>
         <a href="#tooling">CLI / REPL / 编辑器</a>
         <a href="#online-testing">在线测试</a>
       </section>
@@ -121,7 +125,7 @@ fn main() -&gt; Int {
     <p><a class="button secondary" href="#online-testing" data-zeta-example="overview">在本页测试模块示例</a></p>
 
     <h2 id="scalars-expressions">标量与表达式</h2>
-    <p>当前标量类型包括 <code>Int</code>、<code>String</code> 和 <code>Bool</code>。整数算术支持 <code>+ - * /</code>，乘除优先级高于加减。</p>
+    <p>当前标量类型包括 <code>Int</code>、<code>Float</code>、<code>String</code> 和 <code>Bool</code>（<code>Float</code> 详见<a href="#floats">下文</a>）。整数算术支持 <code>+ - * /</code>，乘除优先级高于加减。</p>
     <pre><code>fn main() -&gt; Int {
   return 1 + 2 * 20 + 1;
 }</code></pre>
@@ -278,6 +282,54 @@ fn main() -&gt; Int {
     <p><a class="button secondary" href="#online-testing" data-zeta-example="match">在本页运行 match 示例</a></p>
     <p><a class="button secondary" href="#online-testing" data-zeta-example="enum">在本页运行 enum 示例</a></p>
     <p><a class="button secondary" href="#online-testing" data-zeta-example="data">在本页查看数据声明 AST</a></p>
+
+    <h2 id="floats">Float 浮点</h2>
+    <p><code>Float</code> 是 64 位 IEEE-754 浮点标量，字面量写作 <code>1.5</code>、<code>2.0</code>（小数点后必须有数字，以区分字段访问 <code>x.0</code> 和区间 <code>1..2</code>）。算术 <code>+ - * /</code> 支持 <code>Int</code> 或 <code>Float</code>，但<strong>两者不隐式混用</strong>；取模 <code>%</code> 和位运算仅限 <code>Int</code>。比较返回 <code>Bool</code>。打印时整数值也带小数点（<code>4.0</code> 而非 <code>4</code>）。</p>
+    <pre><code>fn scale(x: Float, k: Float) -&gt; Float {
+  return x * k;
+}
+
+fn main() -&gt; Int {
+  let r: Float = scale(1.5, 4.0);
+  if r &gt; 5.9 { if r &lt; 6.1 { return 1; } }
+  return 0;
+}</code></pre>
+    <p>Float 在原生后端编译为 LLVM <code>double</code>（<code>fadd</code>/<code>fsub</code>/<code>fmul</code>/<code>fdiv</code>/<code>fcmp</code>），与解释器逐位对齐。</p>
+
+    <h2 id="tuples">Tuple 元组</h2>
+    <p>元组是固定元数的异构聚合：字面量 <code>(a, b)</code>（带逗号；<code>(a)</code> 仍是普通分组），按位置索引 <code>t.0</code>、<code>t.1</code>，可嵌套 <code>t.1.0</code>。类型推断在函数内即可用；也支持类型注解 <code>(Int, String)</code>，因此元组能跨函数边界传参与返回。</p>
+    <pre><code>fn pair(a: Int, b: Int) -&gt; (Int, Int) {
+  return (a, b);
+}
+
+fn main() -&gt; Int {
+  let t = pair(10, 20);
+  return t.0 + t.1;
+}</code></pre>
+    <p>原生后端把元组实现为 LLVM 匿名结构体 <code>{ T0, T1 }</code>（<code>insertvalue</code>/<code>extractvalue</code>），按值语义传递。</p>
+
+    <h2 id="closures">Closure 闭包</h2>
+    <p>Lambda 写作 <code>|x: Int| body</code>（表达式体，参数带类型；<code>|| body</code> 为零参）。闭包是一等值，<strong>按值捕获</strong>创建时刻的自由变量（快照语义）。函数类型写作 <code>fn(Int) -&gt; Int</code>，可作参数/返回类型，支持高阶函数与返回闭包。</p>
+    <pre><code>fn adder(n: Int) -&gt; fn(Int) -&gt; Int {
+  return |x: Int| x + n;
+}
+
+fn main() -&gt; Int {
+  let add7 = adder(7);
+  return add7(35);
+}</code></pre>
+    <p>原生后端用闭包转换实现：lambda 提升为带堆分配环境（env）参数的顶层函数，闭包值为 <code>{ 函数指针, env 指针 }</code>，间接调用解包后跳转。</p>
+
+    <h2 id="generics">Generics 泛型</h2>
+    <p>泛型函数写作 <code>fn id&lt;T&gt;(x: T) -&gt; T</code>，类型参数<strong>从实参推断</strong>（调用点无需 <code>&lt;&gt;</code>）。类型参数在函数体内是不透明类型——只能做与类型无关的操作（传递、存入元组/数组、返回），对 <code>T</code> 做算术会被类型检查拒绝。</p>
+    <pre><code>fn pick&lt;A, B&gt;(a: A, b: B) -&gt; A {
+  return a;
+}
+
+fn main() -&gt; Int {
+  return pick(9, true);
+}</code></pre>
+    <p>原生后端通过<strong>单态化</strong>实现：每个具体类型实例（如 <code>id$Int</code>、<code>id$Float</code>）按需生成一份专门副本并缓存；解释器因运行时动态类型，泛型函数无需单态化即可直接运行。当前仅支持泛型<strong>函数</strong>，尚不支持泛型 struct/enum。</p>
 
     <h2 id="tooling">CLI、REPL 和编辑器</h2>
     <p>CLI 提供 <code>ast-dump</code>、<code>hir-dump</code>、<code>mir-dump</code>、<code>check</code>、<code>run</code> 和 <code>repl</code>。REPL 支持表达式执行、语句执行、文档查询、补全和输入着色。</p>
