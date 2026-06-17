@@ -112,17 +112,46 @@ enum ZType {
 /// type, plus the LLVM struct type. Field ORDER is internal and need not match
 /// the interpreter's by-name map — `main` returns an Int, so the differential
 /// oracle never observes the layout.
+#[derive(Clone)]
 struct StructInfo<'ctx> {
     fields: Vec<(String, ZType)>,
     ty: StructType<'ctx>,
 }
 
+/// A generic struct declaration kept as a *template* (field types are raw type
+/// STRINGS, still mentioning the type parameters). Each `Box<Int>` use site
+/// monomorphizes it into a concrete `StructInfo` registered under the mangled
+/// name `Box$Int` (see [`Types::instantiate_struct`]).
+struct StructTemplate {
+    type_params: Vec<String>,
+    /// Field name → declared type string (e.g. `("value", "T")`).
+    fields: Vec<(String, String)>,
+}
+
+/// A generic enum declaration kept as a *template* (payload types are raw type
+/// STRINGS). Monomorphized per use into the `enums` instance table under a
+/// mangled name like `Option$Int` (see [`Types::instantiate_enum`]).
+struct EnumTemplate {
+    type_params: Vec<String>,
+    /// Variant name → optional payload type string, in declaration order.
+    variants: Vec<(String, Option<String>)>,
+}
+
 struct Types<'ctx> {
     context: &'ctx Context,
-    structs: HashMap<String, StructInfo<'ctx>>,
+    /// Concrete struct instances. Non-generic structs are keyed by their plain
+    /// name; generic instances by a mangled name (`Box$Int`). Filled lazily at
+    /// monomorphization time, hence the `RefCell`.
+    structs: RefCell<HashMap<String, StructInfo<'ctx>>>,
     /// Enum name → variants in declaration order (the index is the runtime tag),
-    /// each with its optional payload type.
-    enums: HashMap<String, Vec<(String, Option<ZType>)>>,
+    /// each with its optional payload type. Keyed like `structs`: plain name for
+    /// non-generic enums, mangled name (`Option$Int`) for generic instances.
+    enums: RefCell<HashMap<String, Vec<(String, Option<ZType>)>>>,
+    /// Generic struct/enum declarations, by base name, used to monomorphize on
+    /// demand. Non-generic decls are NOT here (they are pre-built in `structs`/
+    /// `enums`); only `type_params`-bearing decls need a template.
+    struct_templates: HashMap<String, StructTemplate>,
+    enum_templates: HashMap<String, EnumTemplate>,
     /// Function name → return type (so calls know their result type).
     returns: HashMap<String, ZType>,
 }
@@ -133,16 +162,43 @@ impl<'ctx> Types<'ctx> {
         struct_decls: &[StructDecl],
         program: &Program,
     ) -> Result<Self, String> {
-        let names: Vec<&str> = struct_decls.iter().map(|d| d.name.as_str()).collect();
-        let enum_names: Vec<&str> = program.enums.iter().map(|e| e.name.as_str()).collect();
+        // Only non-generic decls are pre-built into the instance tables; their
+        // names are what `parse_ztype` resolves to `Struct`/`Enum`. Generic decls
+        // are set aside as templates and monomorphized on demand at use sites.
+        let names: Vec<&str> = struct_decls
+            .iter()
+            .filter(|d| d.type_params.is_empty())
+            .map(|d| d.name.as_str())
+            .collect();
+        let enum_names: Vec<&str> = program
+            .enums
+            .iter()
+            .filter(|e| e.type_params.is_empty())
+            .map(|e| e.name.as_str())
+            .collect();
         // Pass 1: opaque named struct types (so fields can reference each other).
         let mut opaque: HashMap<String, StructType> = HashMap::new();
-        for decl in struct_decls {
+        for decl in struct_decls.iter().filter(|d| d.type_params.is_empty()) {
             opaque.insert(decl.name.clone(), context.opaque_struct_type(&decl.name));
         }
-        // Pass 2: resolve field types and set bodies.
+        // Pass 2: resolve field types and set bodies (non-generic structs only).
         let mut structs = HashMap::new();
+        let mut struct_templates = HashMap::new();
         for decl in struct_decls {
+            if !decl.type_params.is_empty() {
+                struct_templates.insert(
+                    decl.name.clone(),
+                    StructTemplate {
+                        type_params: decl.type_params.clone(),
+                        fields: decl
+                            .fields
+                            .iter()
+                            .map(|f| (f.name.clone(), f.ty.clone()))
+                            .collect(),
+                    },
+                );
+                continue;
+            }
             let mut fields = Vec::with_capacity(decl.fields.len());
             let mut field_llvm: Vec<BasicTypeEnum> = Vec::with_capacity(decl.fields.len());
             for field in &decl.fields {
@@ -157,7 +213,22 @@ impl<'ctx> Types<'ctx> {
 
         // Enum tables: variant order (= tag) + each variant's optional payload type.
         let mut enums = HashMap::new();
+        let mut enum_templates = HashMap::new();
         for enum_decl in &program.enums {
+            if !enum_decl.type_params.is_empty() {
+                enum_templates.insert(
+                    enum_decl.name.clone(),
+                    EnumTemplate {
+                        type_params: enum_decl.type_params.clone(),
+                        variants: enum_decl
+                            .variants
+                            .iter()
+                            .map(|v| (v.name.clone(), v.payload_type.clone()))
+                            .collect(),
+                    },
+                );
+                continue;
+            }
             let mut variants = Vec::with_capacity(enum_decl.variants.len());
             for variant in &enum_decl.variants {
                 let payload = match &variant.payload_type {
@@ -180,8 +251,10 @@ impl<'ctx> Types<'ctx> {
 
         Ok(Types {
             context,
-            structs,
-            enums,
+            structs: RefCell::new(structs),
+            enums: RefCell::new(enums),
+            struct_templates,
+            enum_templates,
             returns,
         })
     }
@@ -189,16 +262,24 @@ impl<'ctx> Types<'ctx> {
     /// Resolve a declared type string to a `ZType`, using this module's known
     /// struct and enum names.
     fn parse_ztype(&self, text: &str) -> Result<ZType, String> {
-        let struct_names: Vec<&str> = self.structs.keys().map(|s| s.as_str()).collect();
-        let enum_names: Vec<&str> = self.enums.keys().map(|s| s.as_str()).collect();
+        let structs = self.structs.borrow();
+        let enums = self.enums.borrow();
+        let struct_names: Vec<&str> = structs.keys().map(|s| s.as_str()).collect();
+        let enum_names: Vec<&str> = enums.keys().map(|s| s.as_str()).collect();
         parse_ztype(text, &struct_names, &enum_names)
+    }
+
+    /// The LLVM type of an already-registered struct instance (`name` is a key in
+    /// the `structs` table — plain for non-generic, mangled for generic).
+    fn struct_llvm(&self, name: &str) -> StructType<'ctx> {
+        self.structs.borrow()[name].ty
     }
 
     fn llvm(&self, zt: &ZType) -> BasicTypeEnum<'ctx> {
         match zt {
             ZType::Int => self.context.i64_type().into(),
             ZType::Float => self.context.f64_type().into(),
-            ZType::Struct(name) => self.structs[name].ty.into(),
+            ZType::Struct(name) => self.struct_llvm(name).into(),
             ZType::Array(_) | ZType::Str => array_struct_type(self.context).into(),
             ZType::Enum(_) => enum_struct_type(self.context).into(),
             ZType::Tuple(elements) => {
@@ -211,10 +292,11 @@ impl<'ctx> Types<'ctx> {
     }
 
     /// Resolve `enum_name.variant` to `(tag, payload_type)`; tag is the variant's
-    /// declaration index.
+    /// declaration index. `enum_name` is a registered instance key (plain for a
+    /// non-generic enum, mangled like `Option$Int` for a generic instance).
     fn variant_tag(&self, enum_name: &str, variant: &str) -> Result<(u64, Option<ZType>), String> {
-        let variants = self
-            .enums
+        let enums = self.enums.borrow();
+        let variants = enums
             .get(enum_name)
             .ok_or_else(|| format!("unknown enum `{enum_name}`"))?;
         variants
@@ -224,9 +306,24 @@ impl<'ctx> Types<'ctx> {
             .ok_or_else(|| format!("enum `{enum_name}` has no variant `{variant}`"))
     }
 
+    /// The declaration index (= runtime tag) of `variant`, looked up by base name.
+    /// Works for both registered instances and generic templates, since the
+    /// variant order is identical across all instantiations.
+    fn variant_index(&self, base: &str, variant: &str) -> Result<u64, String> {
+        if let Some(tmpl) = self.enum_templates.get(base) {
+            return tmpl
+                .variants
+                .iter()
+                .position(|(name, _)| name == variant)
+                .map(|i| i as u64)
+                .ok_or_else(|| format!("enum `{base}` has no variant `{variant}`"));
+        }
+        self.variant_tag(base, variant).map(|(tag, _)| tag)
+    }
+
     fn field_index(&self, struct_name: &str, field: &str) -> Result<(u32, ZType), String> {
-        let info = self
-            .structs
+        let structs = self.structs.borrow();
+        let info = structs
             .get(struct_name)
             .ok_or_else(|| format!("unknown struct `{struct_name}`"))?;
         info.fields
@@ -234,6 +331,128 @@ impl<'ctx> Types<'ctx> {
             .position(|(name, _)| name == field)
             .map(|i| (i as u32, info.fields[i].1.clone()))
             .ok_or_else(|| format!("unknown field `{field}` on `{struct_name}`"))
+    }
+
+    /// Whether `name` is a generic struct base (has a template).
+    fn is_generic_struct(&self, name: &str) -> bool {
+        self.struct_templates.contains_key(name)
+    }
+
+    /// Whether `name` is a generic enum base (has a template).
+    fn is_generic_enum(&self, name: &str) -> bool {
+        self.enum_templates.contains_key(name)
+    }
+
+    /// Owned copy of a generic struct template's `(type_params, fields)` — taken
+    /// before lowering field values so no borrow into `self.types` is held across
+    /// the `&mut self` lowering calls.
+    fn struct_template_of(&self, base: &str) -> (Vec<String>, Vec<(String, String)>) {
+        let t = &self.struct_templates[base];
+        (t.type_params.clone(), t.fields.clone())
+    }
+
+    /// Owned copy of a generic enum template's `type_params`.
+    fn enum_template_params(&self, base: &str) -> Vec<String> {
+        self.enum_templates[base].type_params.clone()
+    }
+
+    /// The payload type string declared for `base`'s `variant` (raw, may name a
+    /// type parameter), if any.
+    fn enum_variant_payload_str(&self, base: &str, variant: &str) -> Option<String> {
+        self.enum_templates
+            .get(base)?
+            .variants
+            .iter()
+            .find(|(name, _)| name == variant)
+            .and_then(|(_, p)| p.clone())
+    }
+
+    /// Field names of a registered struct instance, in declaration order.
+    fn struct_field_names(&self, name: &str) -> Vec<String> {
+        self.structs.borrow()[name]
+            .fields
+            .iter()
+            .map(|(n, _)| n.clone())
+            .collect()
+    }
+
+    /// Resolve a template field/payload type string under a `T → ZType` mapping.
+    /// A bare type-parameter name resolves to its bound concrete type; anything
+    /// else is parsed as an ordinary (already-concrete) type string.
+    fn resolve_template_type(
+        &self,
+        ty_str: &str,
+        subst: &HashMap<String, ZType>,
+    ) -> Result<ZType, String> {
+        if let Some(zt) = subst.get(ty_str) {
+            return Ok(zt.clone());
+        }
+        self.parse_ztype(ty_str)
+    }
+
+    /// Build the `T → ZType` substitution for a generic aggregate from its
+    /// declared `type_params` and the concrete instantiation `args`. A param the
+    /// args don't cover (e.g. the `E` of `Result.Ok(x)` at a construction site)
+    /// defaults to `Int` — a harmless inline-slot-compatible placeholder, since
+    /// that variant's payload is never extracted for this value.
+    fn subst_of(type_params: &[String], args: &[ZType]) -> HashMap<String, ZType> {
+        type_params
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (p.clone(), args.get(i).cloned().unwrap_or(ZType::Int)))
+            .collect()
+    }
+
+    /// Monomorphize a generic struct at `args`, registering a concrete
+    /// `StructInfo` under the mangled name (`Box$Int`) if not already present.
+    /// Returns the registered instance name. A non-generic name passes through.
+    fn instantiate_struct(&self, base: &str, args: &[ZType]) -> Result<String, String> {
+        let Some(tmpl) = self.struct_templates.get(base) else {
+            return Ok(base.to_string());
+        };
+        let mangled = mangle_instance(base, args);
+        if self.structs.borrow().contains_key(&mangled) {
+            return Ok(mangled);
+        }
+        let subst = Self::subst_of(&tmpl.type_params, args);
+        let mut fields = Vec::with_capacity(tmpl.fields.len());
+        let mut field_llvm: Vec<BasicTypeEnum> = Vec::with_capacity(tmpl.fields.len());
+        for (fname, fty) in &tmpl.fields {
+            let zt = self.resolve_template_type(fty, &subst)?;
+            field_llvm.push(self.llvm(&zt));
+            fields.push((fname.clone(), zt));
+        }
+        // Anonymous struct (generic instances aren't user-nameable, and the
+        // differential oracle never observes the layout).
+        let ty = self.context.struct_type(&field_llvm, false);
+        self.structs
+            .borrow_mut()
+            .insert(mangled.clone(), StructInfo { fields, ty });
+        Ok(mangled)
+    }
+
+    /// Monomorphize a generic enum at `args`, registering its concrete variant
+    /// payload table under the mangled name (`Option$Int`) if absent. Returns the
+    /// registered instance name. A non-generic name passes through.
+    fn instantiate_enum(&self, base: &str, args: &[ZType]) -> Result<String, String> {
+        let Some(tmpl) = self.enum_templates.get(base) else {
+            return Ok(base.to_string());
+        };
+        let mangled = mangle_instance(base, args);
+        if self.enums.borrow().contains_key(&mangled) {
+            return Ok(mangled);
+        }
+        let subst = Self::subst_of(&tmpl.type_params, args);
+        let mut variants = Vec::with_capacity(tmpl.variants.len());
+        for (vname, payload) in &tmpl.variants {
+            let zt = match payload {
+                Some(p) => Some(self.resolve_template_type(p, &subst)?),
+                None => None,
+            };
+            variants.push((vname.clone(), zt));
+        }
+        self.enums.borrow_mut().insert(mangled.clone(), variants);
+        Ok(mangled)
     }
 }
 
@@ -758,7 +977,7 @@ fn compile_struct_service(
     let ZType::Struct(state_name) = &types.returns["init"] else {
         return Err("NativeStructService requires `init` to return a struct".into());
     };
-    let struct_ty = types.structs[state_name].ty;
+    let struct_ty = types.struct_llvm(state_name);
     add_struct_service_wrappers(context, &module, struct_ty)?;
     optimize_module(&module)?;
     let engine = module
@@ -847,8 +1066,6 @@ fn build_module<'ctx>(
 ) -> Result<inkwell::module::Module<'ctx>, String> {
     let module = context.create_module("zeta_native");
     let builder = context.create_builder();
-    let struct_names: Vec<&str> = types.structs.keys().map(|s| s.as_str()).collect();
-    let enum_names: Vec<&str> = types.enums.keys().map(|s| s.as_str()).collect();
 
     // libc malloc/memcpy for array buffers + deep copies (link via libc).
     let ptr_ty = context.ptr_type(inkwell::AddressSpace::default());
@@ -894,7 +1111,7 @@ fn build_module<'ctx>(
         }
         let mut param_types = Vec::with_capacity(function.params.len());
         for param in &function.params {
-            let zt = parse_ztype(&param.ty, &struct_names, &enum_names)?;
+            let zt = types.parse_ztype(&param.ty)?;
             param_types.push(types.llvm(&zt).into());
         }
         let ret = &types.returns[&function.name];
@@ -937,7 +1154,7 @@ fn build_module<'ctx>(
         // save/restore around nested blocks so shadowed re-declarations of the
         // same name at different types get independent slots.
         for (index, param) in function.params.iter().enumerate() {
-            let zt = parse_ztype(&param.ty, &struct_names, &enum_names)?;
+            let zt = types.parse_ztype(&param.ty)?;
             let slot = lower.entry_alloca(&param.name, types.llvm(&zt));
             let value = llvm_fn.get_nth_param(index as u32).expect("param exists");
             builder.build_store(slot, value).unwrap();
@@ -1054,7 +1271,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         match zt {
             ZType::Int => self.i64t().const_zero().into(),
             ZType::Float => self.context.f64_type().const_zero().into(),
-            ZType::Struct(name) => self.types.structs[name].ty.const_zero().into(),
+            ZType::Struct(name) => self.types.struct_llvm(name).const_zero().into(),
             ZType::Array(_) | ZType::Str => array_struct_type(self.context).const_zero().into(),
             ZType::Enum(_) => enum_struct_type(self.context).const_zero().into(),
             ZType::Tuple(_) => self.types.llvm(zt).const_zero(),
@@ -1463,6 +1680,13 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             ZType::Int => val.into_int_value(),
             _ => return Err("match scrutinee must be an enum or Int/Bool".into()),
         };
+        // The scrutinee's enum instance name (mangled for a generic instance like
+        // `Option$Int`) — payload types come from its monomorphized variant table,
+        // not the pattern's base name.
+        let enum_instance: Option<String> = match &vty {
+            ZType::Enum(name) => Some(name.clone()),
+            _ => None,
+        };
         // The block holding the scrutinee; the switch terminates it. Building the
         // `unreachable` default below repositions the builder, so capture it now.
         let head_bb = self.builder.get_insert_block().unwrap();
@@ -1485,7 +1709,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                     }
                 }
                 MirPattern::Variant { enum_name, variant, .. } => {
-                    let (tag, _) = self.types.variant_tag(enum_name, variant)?;
+                    let tag = self.types.variant_index(enum_name, variant)?;
                     cases.push((self.i64t().const_int(tag, false), arm_blocks[i]));
                 }
                 MirPattern::Int(text) => {
@@ -1530,7 +1754,8 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                     variant,
                     binding: Some(binding),
                 } => {
-                    let (_, payload_ty) = self.types.variant_tag(enum_name, variant)?;
+                    let lookup = enum_instance.as_deref().unwrap_or(enum_name);
+                    let (_, payload_ty) = self.types.variant_tag(lookup, variant)?;
                     let sv = val.into_struct_value();
                     let (bound, bty) = match payload_ty {
                         Some(ZType::Int) => {
@@ -1555,7 +1780,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                         Some(ZType::Struct(name)) => {
                             // p1 points at the boxed struct; load it back by value.
                             let p1 = self.builder.build_extract_value(sv, 2, "pbox").unwrap().into_pointer_value();
-                            let struct_ty = self.types.structs[&name].ty;
+                            let struct_ty = self.types.struct_llvm(&name);
                             let loaded = self.builder.build_load(struct_ty, p1, "boxload").unwrap();
                             (loaded, ZType::Struct(name))
                         }
@@ -1593,7 +1818,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                     return Err("field assignment on non-struct".into());
                 };
                 let (index, field_ty) = self.types.field_index(&struct_name, field)?;
-                let struct_ty = self.types.structs[&struct_name].ty;
+                let struct_ty = self.types.struct_llvm(&struct_name);
                 let field_ptr = self
                     .builder
                     .build_struct_gep(struct_ty, base_ptr, index, "fieldptr")
@@ -2163,21 +2388,45 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 Err(format!("call to unknown `{callee}`"))
             }
             MirExpr::StructLiteral { ty, fields } => {
-                let info = self
-                    .types
-                    .structs
-                    .get(ty)
-                    .ok_or_else(|| format!("unknown struct `{ty}`"))?;
-                let struct_ty = info.ty;
-                // Lower field values in declaration order.
+                // Generic struct: lower fields in declaration order, infer the
+                // type arguments from the field value types, then monomorphize a
+                // concrete `Box$Int`-style instance.
+                if self.types.is_generic_struct(ty) {
+                    let (type_params, tmpl_fields) = self.types.struct_template_of(ty);
+                    let mut lowered: Vec<BasicValueEnum<'ctx>> =
+                        Vec::with_capacity(tmpl_fields.len());
+                    let mut subst: HashMap<String, ZType> = HashMap::new();
+                    for (fname, fty) in &tmpl_fields {
+                        let value_expr = &fields
+                            .iter()
+                            .find(|f| &f.name == fname)
+                            .ok_or_else(|| format!("missing field `{fname}` in `{ty}` literal"))?
+                            .value;
+                        let (v, vt) = self.lower_expr(value_expr)?;
+                        unify_ztype(fty, &vt, &type_params, &mut subst);
+                        lowered.push(v);
+                    }
+                    let args: Vec<ZType> = type_params
+                        .iter()
+                        .map(|p| subst.get(p).cloned().unwrap_or(ZType::Int))
+                        .collect();
+                    let mangled = self.types.instantiate_struct(ty, &args)?;
+                    let struct_ty = self.types.struct_llvm(&mangled);
+                    let mut current = struct_ty.get_undef();
+                    for (index, v) in lowered.into_iter().enumerate() {
+                        current = self
+                            .builder
+                            .build_insert_value(current, v, index as u32, "ins")
+                            .unwrap()
+                            .into_struct_value();
+                    }
+                    return Ok((current.into(), ZType::Struct(mangled)));
+                }
+                // Non-generic struct: lower field values in declaration order.
+                let struct_ty = self.types.struct_llvm(ty);
+                let field_order = self.types.struct_field_names(ty);
                 let mut current = struct_ty.get_undef();
-                let field_order: Vec<(usize, String)> = info
-                    .fields
-                    .iter()
-                    .enumerate()
-                    .map(|(i, (n, _))| (i, n.clone()))
-                    .collect();
-                for (index, field_name) in field_order {
+                for (index, field_name) in field_order.into_iter().enumerate() {
                     let value_expr = &fields
                         .iter()
                         .find(|f| f.name == field_name)
@@ -2331,42 +2580,62 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 // {tag, p0, p1}: tag = variant index. Payload goes into the generic
                 // slot — Int/Bool in p0; String/array's {len, ptr} as (p0, p1); a
                 // struct (too wide for the inline slot) is boxed on the heap with the
-                // pointer in p1. No-payload leaves it zero/null.
-                let (tag, payload_ty) = self.types.variant_tag(enum_name, variant)?;
+                // pointer in p1. No-payload leaves it zero/null. The encoding is
+                // driven by the payload value's ACTUAL lowered type, so a generic
+                // variant (`Some(T)`) needs no declared payload type — the type
+                // argument is inferred here and the enum monomorphized accordingly.
+                let tag = self.types.variant_index(enum_name, variant)?;
                 let null = self.context.ptr_type(inkwell::AddressSpace::default()).const_null();
-                let (p0, p1) = match (payload, &payload_ty) {
-                    (None, _) => (self.i64t().const_zero(), null),
-                    (Some(expr), Some(ZType::Int)) => (self.lower_int(expr)?, null),
-                    (Some(expr), Some(ZType::Str)) => {
-                        let (s, _) = self.lower_expr(expr)?;
-                        let (len, data) = self.len_ptr_parts(s.into_struct_value());
-                        (len, data)
-                    }
-                    (Some(expr), Some(ZType::Array(elem))) => {
-                        // Array payload reuses the String {len, ptr} split across
-                        // (p0, p1). Deep-copy so the enum owns an independent buffer
-                        // (value semantics, like every other array binding point).
-                        let (a, _) = self.lower_expr(expr)?;
-                        let owned = self.deep_copy_array(a.into_struct_value(), elem);
-                        let (len, data) = self.len_ptr_parts(owned);
-                        (len, data)
-                    }
-                    (Some(expr), Some(ZType::Struct(name))) => {
-                        // Struct payload is wider than the inline slot: box a by-value
-                        // copy on the heap and put the pointer in p1 (p0 unused).
-                        let (sv, _) = self.lower_expr(expr)?;
-                        let size = self.types.structs[name].ty.size_of().unwrap();
-                        let boxed = self.malloc_bytes(size);
-                        self.builder.build_store(boxed, sv).unwrap();
-                        (self.i64t().const_zero(), boxed)
-                    }
-                    _ => return Err("enum payload type not in the native subset".into()),
+                let type_params = if self.types.is_generic_enum(enum_name) {
+                    self.types.enum_template_params(enum_name)
+                } else {
+                    Vec::new()
                 };
+                let payload_decl = self.types.enum_variant_payload_str(enum_name, variant);
+                let mut subst: HashMap<String, ZType> = HashMap::new();
+                let (p0, p1) = match payload {
+                    None => (self.i64t().const_zero(), null),
+                    Some(expr) => {
+                        let (v, vt) = self.lower_expr(expr)?;
+                        if let Some(decl) = &payload_decl {
+                            unify_ztype(decl, &vt, &type_params, &mut subst);
+                        }
+                        match &vt {
+                            ZType::Int => (v.into_int_value(), null),
+                            ZType::Str => {
+                                let (len, data) = self.len_ptr_parts(v.into_struct_value());
+                                (len, data)
+                            }
+                            ZType::Array(elem) => {
+                                // Array payload reuses the String {len, ptr} split
+                                // across (p0, p1). Deep-copy so the enum owns an
+                                // independent buffer (value semantics).
+                                let owned = self.deep_copy_array(v.into_struct_value(), elem);
+                                let (len, data) = self.len_ptr_parts(owned);
+                                (len, data)
+                            }
+                            ZType::Struct(name) => {
+                                // Struct payload is wider than the inline slot: box a
+                                // by-value copy on the heap, pointer in p1 (p0 unused).
+                                let size = self.types.struct_llvm(name).size_of().unwrap();
+                                let boxed = self.malloc_bytes(size);
+                                self.builder.build_store(boxed, v).unwrap();
+                                (self.i64t().const_zero(), boxed)
+                            }
+                            _ => return Err("enum payload type not in the native subset".into()),
+                        }
+                    }
+                };
+                let args: Vec<ZType> = type_params
+                    .iter()
+                    .map(|p| subst.get(p).cloned().unwrap_or(ZType::Int))
+                    .collect();
+                let mangled = self.types.instantiate_enum(enum_name, &args)?;
                 let et = enum_struct_type(self.context);
-                let v = self.builder.build_insert_value(et.get_undef(), self.i64t().const_int(tag, false), 0, "e0").unwrap();
-                let v = self.builder.build_insert_value(v, p0, 1, "e1").unwrap();
-                let v = self.builder.build_insert_value(v, p1, 2, "e2").unwrap().into_struct_value();
-                Ok((v.into(), ZType::Enum(enum_name.clone())))
+                let ev = self.builder.build_insert_value(et.get_undef(), self.i64t().const_int(tag, false), 0, "e0").unwrap();
+                let ev = self.builder.build_insert_value(ev, p0, 1, "e1").unwrap();
+                let ev = self.builder.build_insert_value(ev, p1, 2, "e2").unwrap().into_struct_value();
+                Ok((ev.into(), ZType::Enum(mangled)))
             }
         }
     }
