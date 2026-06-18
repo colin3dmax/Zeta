@@ -455,6 +455,7 @@ fn lower_expr(
     enum_variants: &HashMap<String, HashMap<String, Option<String>>>,
 ) -> MirExpr {
     match expr {
+        Expr::Try { .. } => unreachable!("`?` is desugared before MIR lowering"),
         Expr::Name { name, .. } => MirExpr::Load(name.clone()),
         Expr::Int { value, .. } => MirExpr::Int(value.clone()),
         Expr::Float { value, .. } => MirExpr::Float(value.clone()),

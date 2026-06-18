@@ -1,6 +1,7 @@
 pub mod ast;
 #[cfg(feature = "llvm")]
 pub mod codegen;
+pub mod desugar;
 pub mod diagnostic;
 pub mod hir;
 pub mod lexer;
@@ -29,14 +30,16 @@ pub fn dump_ast(source: &str) -> Result<String, Vec<Diagnostic>> {
 }
 
 pub fn dump_hir(source: &str) -> Result<String, Vec<Diagnostic>> {
-    let module = parse_source(source)?;
+    let mut module = parse_source(source)?;
+    desugar::desugar_try(&mut module)?;
     resolver::resolve(&module)?;
     typecheck::check(&module)?;
     Ok(hir::dump(&module))
 }
 
 pub fn dump_mir(source: &str) -> Result<String, Vec<Diagnostic>> {
-    let module = parse_source(source)?;
+    let mut module = parse_source(source)?;
+    desugar::desugar_try(&mut module)?;
     resolver::resolve(&module)?;
     typecheck::check(&module)?;
     let external_enums = typecheck::standard_external_enums(&module);
@@ -52,7 +55,8 @@ pub fn dump_mir(source: &str) -> Result<String, Vec<Diagnostic>> {
 }
 
 pub fn check_source(source: &str) -> Result<(), Vec<Diagnostic>> {
-    let module = parse_source(source)?;
+    let mut module = parse_source(source)?;
+    desugar::desugar_try(&mut module)?;
     resolver::resolve(&module)?;
     typecheck::check(&module)
 }
@@ -63,7 +67,8 @@ pub fn check_source(source: &str) -> Result<(), Vec<Diagnostic>> {
 /// hot-swapped revision. Does NOT require a `main` (a service program may export
 /// only `init`/`step`).
 pub fn lower_source(source: &str) -> Result<mir::Program, Vec<Diagnostic>> {
-    let module = parse_source(source)?;
+    let mut module = parse_source(source)?;
+    desugar::desugar_try(&mut module)?;
     resolver::resolve(&module)?;
     typecheck::check(&module)?;
     let external_enums = typecheck::standard_external_enums(&module);
@@ -79,7 +84,8 @@ pub fn lower_source(source: &str) -> Result<mir::Program, Vec<Diagnostic>> {
 }
 
 pub fn run_source(source: &str) -> Result<runtime::Value, Vec<Diagnostic>> {
-    let module = parse_source(source)?;
+    let mut module = parse_source(source)?;
+    desugar::desugar_try(&mut module)?;
     resolver::resolve(&module)?;
     typecheck::check(&module)?;
     let external_enums = typecheck::standard_external_enums(&module);
@@ -95,7 +101,8 @@ pub fn run_source(source: &str) -> Result<runtime::Value, Vec<Diagnostic>> {
 }
 
 pub fn run_repl_source(source: &str) -> Result<runtime::Value, Vec<Diagnostic>> {
-    let module = parse_source(source)?;
+    let mut module = parse_source(source)?;
+    desugar::desugar_try(&mut module)?;
     resolver::resolve(&module)?;
     runtime::run(&module)
 }
@@ -104,7 +111,8 @@ pub fn eval_repl_source(
     session: &mut runtime::ReplSession,
     source: &str,
 ) -> Result<runtime::Value, Vec<Diagnostic>> {
-    let module = parse_source(source)?;
+    let mut module = parse_source(source)?;
+    desugar::desugar_try(&mut module)?;
     session.eval_module(&module)
 }
 

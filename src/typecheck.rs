@@ -463,6 +463,7 @@ fn stmt_refs(stmt: &Stmt, name: &str) -> bool {
 
 fn expr_refs(expr: &Expr, name: &str) -> bool {
     match expr {
+        Expr::Try { expr, .. } => expr_refs(expr, name),
         Expr::Call { callee, args, .. } => {
             callee.split_once('.').map_or(callee == name, |(base, _)| base == name)
                 || args.iter().any(|a| expr_refs(a, name))
@@ -1080,6 +1081,7 @@ fn infer_expr(
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Type {
     match expr {
+        Expr::Try { .. } => unreachable!("`?` is desugared before typecheck"),
         Expr::Name { name, .. } => locals
             .get(name)
             .map(|binding| binding.ty.clone())

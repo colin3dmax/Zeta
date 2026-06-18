@@ -240,6 +240,14 @@ pub enum Expr {
         end: Box<Expr>,
         span: Span,
     },
+    /// Postfix `expr?` — unwraps an `Option`/`Result` operand, early-returning
+    /// `None`/`Err(e)` from the enclosing function on the failure variant. A
+    /// pre-MIR desugaring pass (`desugar`) rewrites it into a `match`, so later
+    /// stages (resolve/typecheck/mir) never see this node.
+    Try {
+        expr: Box<Expr>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -528,7 +536,8 @@ impl Expr {
             | Expr::ArrayLiteral { span, .. }
             | Expr::Tuple { span, .. }
             | Expr::Index { span, .. }
-            | Expr::Range { span, .. } => *span,
+            | Expr::Range { span, .. }
+            | Expr::Try { span, .. } => *span,
         }
     }
 
@@ -599,6 +608,10 @@ impl Expr {
                 out.push_str(&format!("{pad}Range\n"));
                 start.dump(indent + 1, out);
                 end.dump(indent + 1, out);
+            }
+            Expr::Try { expr, .. } => {
+                out.push_str(&format!("{pad}Try\n"));
+                expr.dump(indent + 1, out);
             }
         }
     }

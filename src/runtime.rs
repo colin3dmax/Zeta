@@ -1671,6 +1671,7 @@ impl Runtime {
         locals: &HashMap<String, Value>,
     ) -> Result<Value, Diagnostic> {
         match expr {
+            Expr::Try { .. } => unreachable!("`?` is desugared before evaluation"),
             Expr::Name { name, .. } => locals.get(name).cloned().ok_or_else(|| {
                 runtime_error("RUNTIME_UNKNOWN_NAME", format!("unknown name `{name}`"))
             }),

@@ -59,6 +59,8 @@ pub enum Symbol {
     EqEq,
     Bang,
     BangEq,
+    /// Postfix `?` — the try operator (early-return on `Err`/`None`).
+    Question,
     AndAnd,
     OrOr,
     Ampersand,
@@ -268,6 +270,7 @@ impl<'a> Lexer<'a> {
                 Some(TokenKind::Symbol(Symbol::BangEq))
             }
             '!' => Some(TokenKind::Symbol(Symbol::Bang)),
+            '?' => Some(TokenKind::Symbol(Symbol::Question)),
             '&' if self.peek_char() == Some('&') => {
                 self.bump_char();
                 Some(TokenKind::Symbol(Symbol::AndAnd))

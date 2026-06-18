@@ -193,6 +193,7 @@ fn dump_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
 fn dump_expr(expr: &Expr, indent: usize, out: &mut String) {
     let pad = "  ".repeat(indent);
     match expr {
+        Expr::Try { expr, .. } => dump_expr(expr, indent, out),
         Expr::Name { name, .. } => out.push_str(&format!("{pad}local {name}\n")),
         Expr::Int { value, .. } => out.push_str(&format!("{pad}const Int {value}\n")),
         Expr::Float { value, .. } => out.push_str(&format!("{pad}const Float {value}\n")),

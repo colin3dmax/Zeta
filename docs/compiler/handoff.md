@@ -7,10 +7,10 @@
 ## 0. 一句话状态
 P1–P4 语言扩展(Float/Tuple/Closure/Generics)在 **Rust 前端 + native** 全部完成;
 **自举前端**已回灌 Float/Tuple/Generics(native 全链)+ Closure(前半段);
-正沿 DevGame 路线推进"补齐与成熟语言差距"。**最近完成:native 单态化泛型 struct/enum
-(阶段A 值流推断 + 阶段B parser 保留实参全链传播,跨函数返回/参数都通)** —— 这是
-内置 Option/Result + `?` 的**硬前置,现已解除**。
-**工作树干净,117 提交未推送到 origin/main**(未 push,官网未部署)。
+正沿 DevGame 路线推进"补齐与成熟语言差距"。**最近完成(本会话):① native 单态化泛型
+struct/enum(阶段A 值流推断 + 阶段B parser 保留实参全链传播);② 内置泛型 Option/Result
+(std.core 注入);③ `?` 运算符(pre-resolve 脱糖)。** 错误处理链条(#75)基本打通。
+**多个提交未推送到 origin/main**(未 push,官网未部署)。
 
 ## 1. 构建 / 测试命令
 ```bash
@@ -65,11 +65,17 @@ index.html(能力清单)。**未部署**。
 
 ## 5. 下一步(按依赖序)
 1. ~~#76 native 单态化泛型 struct/enum~~ **✅ 完成**(eba1963 阶段A + 0ecd7cd 阶段B)。
-2. **内置 Option/Result**(前置已解除):导入 std.core 时注入合成 enum 声明(若用户未定义)。
-   native 现已能编泛型枚举,注入后 import std.core 的程序应能正常单态化。
-3. **`?` 运算符**(依赖 2):lexer 加 `?`;类型导向脱糖(Result/Option 早返回);表达式位需 hoist。
-4. **Closure 自举 emit**(回灌收尾):自由变量分析+lift+heap env+间接调用,复用 Generics 的 spec_defs 缓冲,fixpoint-safe。
-5. 远端:`git push`(117 提交)+ 官网部署(需用户决定)。
+2. ~~内置 Option/Result~~ **✅ 完成**(7f10a50):std.core 注入泛型 `Option<T>`/`Result<T,E>`,
+   仅在被引用时注入(legacy `OptionInt` 等无条件保留),保留名(本地同名→冲突)。
+3. ~~`?` 运算符~~ **✅ 完成**(下一个提交):lexer `?` token + parser 后缀 `Expr::Try` +
+   pre-resolve 脱糖(`src/desugar.rs`,续延移入成功分支的 match,按返回类型分派 Ok/Err 或
+   Some/None)。复用现有 match/enum/return,无新 codegen。**局限**:`?` 仅用于返回
+   `Option`/`Result` 的函数;unwrap 出的值是泛型 payload `T`(通配符),可返回/传参/存储,
+   **不能直接做算术**(`v + 1` 被 TYPE_BINARY_OPERAND 拒——既有 lenient 泛型限制)。
+4. **(可选)放宽 lenient 泛型**:若要让 `?`/泛型 unwrap 值支持算术,需让 typecheck 对泛型
+   payload 用具体类型(真单态化类型检查)或放宽 operand 约束——是设计取舍,需用户拍板。
+5. **Closure 自举 emit**(回灌收尾):自由变量分析+lift+heap env+间接调用,复用 Generics 的 spec_defs 缓冲,fixpoint-safe。
+6. 远端:`git push` + 官网部署(需用户决定)。
 
 ### 阶段B 实现笔记(给接续者)
 - 范式:复用泛型**函数**单态化(`lower_generic_call`/`get_or_build_specialization`/`mangle_instance`/`unify_ztype`)。

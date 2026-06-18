@@ -474,6 +474,7 @@ fn check_expr(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     match expr {
+        Expr::Try { .. } => unreachable!("`?` is desugared before resolve"),
         Expr::Name { name, span } => {
             if !locals.contains_key(name) && !top_level_names.contains(name) {
                 diagnostics.push(Diagnostic::new(

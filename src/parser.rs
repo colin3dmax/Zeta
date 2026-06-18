@@ -762,6 +762,16 @@ impl Parser {
                 continue;
             }
 
+            if self.consume_symbol(Symbol::Question).is_some() {
+                let end = self.previous_span().end;
+                let span = Span::new(expr.span().start, end);
+                expr = Expr::Try {
+                    expr: Box::new(expr),
+                    span,
+                };
+                continue;
+            }
+
             return Ok(expr);
         }
     }
