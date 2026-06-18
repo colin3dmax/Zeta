@@ -69,6 +69,8 @@ pub struct ExternalStruct {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalEnum {
     pub name: String,
+    /// Generic type parameters (empty for non-generic / monomorphized enums).
+    pub type_params: Vec<String>,
     pub variants: Vec<(String, Option<String>)>,
     pub target_name: Option<String>,
 }
@@ -87,6 +89,15 @@ pub fn check_with_external_items(
     external_enums: &[ExternalEnum],
 ) -> Result<(), Vec<Diagnostic>> {
     set_type_params(module);
+    // External (e.g. built-in `Option<T>` / `Result<T, E>`) generic enums also
+    // contribute type parameters, so their payload types (`T`/`E`) check
+    // leniently as wildcards.
+    TYPE_PARAMS.with(|s| {
+        let mut set = s.borrow_mut();
+        for external_enum in external_enums {
+            set.extend(external_enum.type_params.iter().cloned());
+        }
+    });
     let mut diagnostics = Vec::new();
     let mut structs = struct_types(module);
     for external_struct in external_structs {
@@ -360,7 +371,122 @@ pub fn standard_external_enums(module: &Module) -> Vec<ExternalEnum> {
     if imports_std_io {
         enums.extend(standard_enums("std.io", std_api::io_enums()));
     }
+    // Generic built-ins (`Option<T>`/`Result<T,E>`) are injected ONLY when the
+    // module references them. The monomorphized legacy enums (`OptionInt`, …)
+    // stay unconditional. This keeps the MIR/AST of programs that merely
+    // `import std.core` without using the generics byte-identical to before —
+    // preserving the self-hosting fixpoint parity and golden dumps.
+    enums.retain(|e| e.type_params.is_empty() || module_references_type(module, &e.name));
     enums
+}
+
+/// Whether the module references the (built-in) aggregate named `name` — via a
+/// construction/match `name.Variant`, or any type annotation whose base name is
+/// `name` (recursing through generic arguments / tuples / function types).
+fn module_references_type(module: &Module, name: &str) -> bool {
+    module.items.iter().any(|item| match item {
+        Item::Function(f) => {
+            f.params.iter().any(|p| ty_refs(&p.ty, name))
+                || f.return_type.as_deref().is_some_and(|t| ty_refs(t, name))
+                || f.body.iter().any(|s| stmt_refs(s, name))
+        }
+        Item::Struct(s) => s.fields.iter().any(|fl| ty_refs(&fl.ty, name)),
+        Item::Enum(e) => e
+            .variants
+            .iter()
+            .any(|v| v.payload_type.as_deref().is_some_and(|t| ty_refs(t, name))),
+        _ => false,
+    })
+}
+
+/// Whether a type annotation string names the aggregate `name` anywhere — as its
+/// base (`Option`, `Option<Int>`) or nested in its arguments (`Box<Option<Int>>`).
+fn ty_refs(ty: &str, name: &str) -> bool {
+    if crate::type_syntax::base_name(ty) == name {
+        return true;
+    }
+    if let Some((_, args)) = crate::type_syntax::generic_parts(ty) {
+        return args.iter().any(|a| ty_refs(a, name));
+    }
+    if let Some(parts) = crate::type_syntax::tuple_parts(ty) {
+        return parts.iter().any(|p| ty_refs(p, name));
+    }
+    if let Some((params, ret)) = crate::type_syntax::fn_parts(ty) {
+        return params.iter().any(|p| ty_refs(p, name)) || ty_refs(ret, name);
+    }
+    false
+}
+
+fn stmt_refs(stmt: &Stmt, name: &str) -> bool {
+    match stmt {
+        Stmt::Let { ty, value, .. } => {
+            ty.as_deref().is_some_and(|t| ty_refs(t, name)) || expr_refs(value, name)
+        }
+        Stmt::Assign { target, value } => expr_refs(target, name) || expr_refs(value, name),
+        Stmt::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
+            expr_refs(condition, name)
+                || then_body.iter().any(|s| stmt_refs(s, name))
+                || else_body.iter().any(|s| stmt_refs(s, name))
+        }
+        Stmt::While { condition, body } => {
+            expr_refs(condition, name) || body.iter().any(|s| stmt_refs(s, name))
+        }
+        Stmt::ForIn { iterable, body, .. } => {
+            expr_refs(iterable, name) || body.iter().any(|s| stmt_refs(s, name))
+        }
+        Stmt::ForC {
+            init,
+            condition,
+            step,
+            body,
+        } => {
+            stmt_refs(init, name)
+                || expr_refs(condition, name)
+                || stmt_refs(step, name)
+                || body.iter().any(|s| stmt_refs(s, name))
+        }
+        Stmt::Match { value, arms } => {
+            expr_refs(value, name)
+                || arms.iter().any(|arm| {
+                    matches!(&arm.pattern, Pattern::Variant { enum_name, .. } if enum_name == name)
+                        || arm.body.iter().any(|s| stmt_refs(s, name))
+                })
+        }
+        Stmt::Return(Some(value)) | Stmt::Expr(value) => expr_refs(value, name),
+        Stmt::Return(None) | Stmt::Break { .. } | Stmt::Continue { .. } => false,
+    }
+}
+
+fn expr_refs(expr: &Expr, name: &str) -> bool {
+    match expr {
+        Expr::Call { callee, args, .. } => {
+            callee.split_once('.').map_or(callee == name, |(base, _)| base == name)
+                || args.iter().any(|a| expr_refs(a, name))
+        }
+        Expr::Binary { left, right, .. } => expr_refs(left, name) || expr_refs(right, name),
+        Expr::Unary { expr, .. } => expr_refs(expr, name),
+        Expr::Lambda { params, body, .. } => {
+            params.iter().any(|p| ty_refs(&p.ty, name)) || expr_refs(body, name)
+        }
+        Expr::StructLiteral { ty, fields, .. } => {
+            ty_refs(ty, name) || fields.iter().any(|f| expr_refs(&f.value, name))
+        }
+        Expr::FieldAccess { base, .. } => expr_refs(base, name),
+        Expr::ArrayLiteral { elements, .. } | Expr::Tuple { elements, .. } => {
+            elements.iter().any(|e| expr_refs(e, name))
+        }
+        Expr::Index { base, index, .. } => expr_refs(base, name) || expr_refs(index, name),
+        Expr::Range { start, end, .. } => expr_refs(start, name) || expr_refs(end, name),
+        Expr::Name { .. }
+        | Expr::Int { .. }
+        | Expr::Float { .. }
+        | Expr::String { .. }
+        | Expr::Bool { .. } => false,
+    }
 }
 
 pub fn standard_external_functions(module: &Module) -> Vec<ExternalFunction> {
@@ -388,6 +514,11 @@ fn standard_enums(module_name: &str, enums: &[std_api::StandardEnum]) -> Vec<Ext
         .iter()
         .map(|standard_enum| ExternalEnum {
             name: standard_enum.name.to_string(),
+            type_params: standard_enum
+                .type_params
+                .iter()
+                .map(|p| p.to_string())
+                .collect(),
             variants: standard_enum
                 .variants
                 .iter()

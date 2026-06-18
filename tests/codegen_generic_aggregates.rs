@@ -138,9 +138,10 @@ fn generic_result_return_string_err() {
     // Result<Int, String> across a function boundary: the Err payload is a
     // String, so the annotation-derived `Result$Int_Str` instance must carry the
     // correct payload type for the Err arm's {len,ptr} extraction.
+    // Uses the built-in Result from std.core (defining one locally would conflict
+    // with the reserved std.core name).
     let src = "\
 import std.core;
-enum Result<T, E> { Ok(T), Err(E) }
 fn parse(ok: Bool) -> Result<Int, String> {
   if ok { return Result.Ok(7); }
   return Result.Err(\"bad\");
@@ -184,9 +185,9 @@ fn main() -> Int {
 #[test]
 fn generic_string_payload() {
     // String payload in a generic enum exercises the {len, ptr} (p0, p1) split.
+    // Uses the built-in Option from std.core.
     let src = "\
 import std.core;
-enum Option<T> { Some(T), None }
 fn main() -> Int {
   let o: Option<String> = Option.Some(\"hi\");
   match o {

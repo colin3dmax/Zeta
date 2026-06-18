@@ -3,6 +3,9 @@ pub const STANDARD_IMPORTS: &[&[&str]] = &[&["std", "core"], &["std", "io"]];
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StandardEnum {
     pub name: &'static str,
+    /// Generic type parameters (`&[]` for the monomorphized legacy enums like
+    /// `OptionInt`; `&["T"]` / `&["T", "E"]` for the generic `Option`/`Result`).
+    pub type_params: &'static [&'static str],
     pub variants: &'static [StandardEnumVariant],
 }
 
@@ -20,8 +23,43 @@ pub struct StandardFunction {
 }
 
 const STD_CORE_ENUMS: &[StandardEnum] = &[
+    // Generic built-ins. `Option<T>` / `Result<T, E>` are the modern, generic
+    // forms; native codegen monomorphizes them per instantiation. The payload
+    // types name the type parameters, so they stay generic until used.
+    StandardEnum {
+        name: "Option",
+        type_params: &["T"],
+        variants: &[
+            StandardEnumVariant {
+                name: "Some",
+                payload_type: Some("T"),
+            },
+            StandardEnumVariant {
+                name: "None",
+                payload_type: None,
+            },
+        ],
+    },
+    StandardEnum {
+        name: "Result",
+        type_params: &["T", "E"],
+        variants: &[
+            StandardEnumVariant {
+                name: "Ok",
+                payload_type: Some("T"),
+            },
+            StandardEnumVariant {
+                name: "Err",
+                payload_type: Some("E"),
+            },
+        ],
+    },
+    // Monomorphized legacy enums (predate generics; the self-hosting frontend
+    // `arena_frontend.zeta` still uses `OptionInt`/`ResultInt`). Kept for
+    // backward compatibility — do NOT remove (fixpoint depends on them).
     StandardEnum {
         name: "OptionInt",
+        type_params: &[],
         variants: &[
             StandardEnumVariant {
                 name: "Some",
@@ -35,6 +73,7 @@ const STD_CORE_ENUMS: &[StandardEnum] = &[
     },
     StandardEnum {
         name: "ResultInt",
+        type_params: &[],
         variants: &[
             StandardEnumVariant {
                 name: "Ok",
@@ -50,6 +89,7 @@ const STD_CORE_ENUMS: &[StandardEnum] = &[
 
 const STD_IO_ENUMS: &[StandardEnum] = &[StandardEnum {
     name: "ResultString",
+    type_params: &[],
     variants: &[
         StandardEnumVariant {
             name: "Ok",

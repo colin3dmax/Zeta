@@ -177,12 +177,13 @@ pub struct MirStructField {
 }
 
 pub fn lower(module: &Module) -> Program {
-    lower_with_external_enum_variants(module, &HashMap::new())
+    lower_with_external_enum_variants(module, &HashMap::new(), &HashMap::new())
 }
 
 pub fn lower_with_external_enum_variants(
     module: &Module,
     external_enum_variants: &HashMap<String, HashMap<String, Option<String>>>,
+    external_enum_type_params: &HashMap<String, Vec<String>>,
 ) -> Program {
     let mut enum_variants = enum_variants(module);
     for (enum_name, variants) in external_enum_variants {
@@ -231,7 +232,10 @@ pub fn lower_with_external_enum_variants(
         variants.sort_by_key(|variant| variant.name.clone());
         MirEnum {
             name: enum_name.clone(),
-            type_params: Vec::new(),
+            type_params: external_enum_type_params
+                .get(enum_name)
+                .cloned()
+                .unwrap_or_default(),
             variants,
         }
     }));

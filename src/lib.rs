@@ -39,9 +39,14 @@ pub fn dump_mir(source: &str) -> Result<String, Vec<Diagnostic>> {
     let module = parse_source(source)?;
     resolver::resolve(&module)?;
     typecheck::check(&module)?;
-    let external_enum_payloads =
-        module_graph::external_enum_payloads(&typecheck::standard_external_enums(&module));
-    let program = mir::lower_with_external_enum_variants(&module, &external_enum_payloads);
+    let external_enums = typecheck::standard_external_enums(&module);
+    let external_enum_payloads = module_graph::external_enum_payloads(&external_enums);
+    let external_enum_type_params = module_graph::external_enum_type_params(&external_enums);
+    let program = mir::lower_with_external_enum_variants(
+        &module,
+        &external_enum_payloads,
+        &external_enum_type_params,
+    );
     mir::verify(&program)?;
     Ok(mir::dump_program(&program))
 }
@@ -61,9 +66,14 @@ pub fn lower_source(source: &str) -> Result<mir::Program, Vec<Diagnostic>> {
     let module = parse_source(source)?;
     resolver::resolve(&module)?;
     typecheck::check(&module)?;
-    let external_enum_payloads =
-        module_graph::external_enum_payloads(&typecheck::standard_external_enums(&module));
-    let program = mir::lower_with_external_enum_variants(&module, &external_enum_payloads);
+    let external_enums = typecheck::standard_external_enums(&module);
+    let external_enum_payloads = module_graph::external_enum_payloads(&external_enums);
+    let external_enum_type_params = module_graph::external_enum_type_params(&external_enums);
+    let program = mir::lower_with_external_enum_variants(
+        &module,
+        &external_enum_payloads,
+        &external_enum_type_params,
+    );
     mir::verify(&program)?;
     Ok(program)
 }
@@ -72,9 +82,14 @@ pub fn run_source(source: &str) -> Result<runtime::Value, Vec<Diagnostic>> {
     let module = parse_source(source)?;
     resolver::resolve(&module)?;
     typecheck::check(&module)?;
-    let external_enum_payloads =
-        module_graph::external_enum_payloads(&typecheck::standard_external_enums(&module));
-    let program = mir::lower_with_external_enum_variants(&module, &external_enum_payloads);
+    let external_enums = typecheck::standard_external_enums(&module);
+    let external_enum_payloads = module_graph::external_enum_payloads(&external_enums);
+    let external_enum_type_params = module_graph::external_enum_type_params(&external_enums);
+    let program = mir::lower_with_external_enum_variants(
+        &module,
+        &external_enum_payloads,
+        &external_enum_type_params,
+    );
     mir::verify(&program)?;
     runtime::run_mir(&program)
 }

@@ -251,9 +251,13 @@ fn combined_program(
         let imported_targets = imported_call_targets(&parsed.module, module_infos);
         let external_enums = imported_external_enums(&parsed.module, module_infos);
         let external_enum_payloads = external_enum_payloads(&external_enums);
+        let external_enum_type_params = external_enum_type_params(&external_enums);
         let is_main_module = parsed.path == main_path;
-        let mut lowered =
-            mir::lower_with_external_enum_variants(&parsed.module, &external_enum_payloads);
+        let mut lowered = mir::lower_with_external_enum_variants(
+            &parsed.module,
+            &external_enum_payloads,
+            &external_enum_type_params,
+        );
         rewrite_program_calls(
             &mut lowered,
             current_module.as_deref(),
@@ -930,6 +934,16 @@ pub fn external_enum_payloads(
         .collect()
 }
 
+/// Generic type parameters of each external enum (for monomorphizing built-in /
+/// cross-module generic enums like `Option<T>` in native codegen).
+pub fn external_enum_type_params(enums: &[ExternalEnum]) -> HashMap<String, Vec<String>> {
+    enums
+        .iter()
+        .filter(|e| !e.type_params.is_empty())
+        .map(|e| (e.name.clone(), e.type_params.clone()))
+        .collect()
+}
+
 fn imported_call_targets(
     module: &Module,
     module_infos: &HashMap<String, ModuleInfo>,
@@ -1090,6 +1104,7 @@ fn external_struct(decl: &StructDecl, module_name: &str) -> ExternalStruct {
 fn external_enum(decl: &EnumDecl, module_name: &str) -> ExternalEnum {
     ExternalEnum {
         name: decl.name.clone(),
+        type_params: decl.type_params.clone(),
         variants: decl
             .variants
             .iter()
