@@ -7,9 +7,10 @@
 ## 0. 一句话状态
 P1–P4 语言扩展(Float/Tuple/Closure/Generics)在 **Rust 前端 + native** 全部完成;
 **自举前端**已回灌 Float/Tuple/Generics(native 全链)+ Closure(前半段);
-正沿 DevGame 路线推进"补齐与成熟语言差距"。**最近完成(本会话):① native 单态化泛型
-struct/enum(阶段A 值流推断 + 阶段B parser 保留实参全链传播);② 内置泛型 Option/Result
-(std.core 注入);③ `?` 运算符(pre-resolve 脱糖)。** 错误处理链条(#75)基本打通。
+正沿 DevGame 路线推进"补齐与成熟语言差距"。**本会话完成错误处理全链(#75 打通):
+① native 单态化泛型 struct/enum(阶段A 值流推断 + 阶段B parser 保留实参全链);② 内置泛型
+Option/Result(std.core 注入);③ `?` 运算符(pre-resolve 脱糖);④ typecheck 保留泛型实参,
+unwrap/字段值取得具体类型可直接算术。** `?` 已可实用。
 **多个提交未推送到 origin/main**(未 push,官网未部署)。
 
 ## 1. 构建 / 测试命令
@@ -67,23 +68,28 @@ index.html(能力清单)。**未部署**。
 1. ~~#76 native 单态化泛型 struct/enum~~ **✅ 完成**(eba1963 阶段A + 0ecd7cd 阶段B)。
 2. ~~内置 Option/Result~~ **✅ 完成**(7f10a50):std.core 注入泛型 `Option<T>`/`Result<T,E>`,
    仅在被引用时注入(legacy `OptionInt` 等无条件保留),保留名(本地同名→冲突)。
-3. ~~`?` 运算符~~ **✅ 完成**(下一个提交):lexer `?` token + parser 后缀 `Expr::Try` +
+3. ~~`?` 运算符~~ **✅ 完成**(6264d43):lexer `?` token + parser 后缀 `Expr::Try` +
    pre-resolve 脱糖(`src/desugar.rs`,续延移入成功分支的 match,按返回类型分派 Ok/Err 或
-   Some/None)。复用现有 match/enum/return,无新 codegen。**局限**:`?` 仅用于返回
-   `Option`/`Result` 的函数;unwrap 出的值是泛型 payload `T`(通配符),可返回/传参/存储,
-   **不能直接做算术**(`v + 1` 被 TYPE_BINARY_OPERAND 拒——既有 lenient 泛型限制)。
-4. **(可选)放宽 lenient 泛型**:若要让 `?`/泛型 unwrap 值支持算术,需让 typecheck 对泛型
-   payload 用具体类型(真单态化类型检查)或放宽 operand 约束——是设计取舍,需用户拍板。
+   Some/None)。复用现有 match/enum/return,无新 codegen。`?` 仅用于返回 `Option`/`Result` 的函数。
+4. ~~让 `?`/泛型 unwrap 值可算术~~ **✅ 完成**(44c10f6):typecheck 加 `Type::Generic`,
+   保留泛型实参;match 变体绑定与 struct 字段访问在具体 `Generic` 时代入实参 →
+   `Result<Int,String>` 的 `Ok(v)` 绑定 `v:Int`、`Box<Int>.value` 为 Int,可直接算术。
+   真多态 `fn f<T>(x:T){x+1}` 仍被拒(T 未代入,保安全)。
 5. **Closure 自举 emit**(回灌收尾):自由变量分析+lift+heap env+间接调用,复用 Generics 的 spec_defs 缓冲,fixpoint-safe。
 6. 远端:`git push` + 官网部署(需用户决定)。
 
 ### 阶段B 实现笔记(给接续者)
 - 范式:复用泛型**函数**单态化(`lower_generic_call`/`get_or_build_specialization`/`mangle_instance`/`unify_ztype`)。
-- 类型字符串贯穿全链:parser 产规范串 → typecheck(`parse_type`/`parse_declared_type`/`validate_type_name`)
-  与 mir(`parse_mir_type`)在解码点 **strip 到 base**(`type_syntax::generic_parts`/`base_name`)→
-  codegen(`resolve_ann_ztype`)读实参单态化。**runtime 不解码注解,无需改**。
+- 类型字符串贯穿全链:parser 产规范带参串(`Result<Int, String>`)。各层解码:
+  - **typecheck**:`parse_type` 产 `Type::Generic(base,args)`(保留实参);match/字段访问代入;
+    EnumType/StructType 带 type_params;expect_type 用 `aggregate_base` 让擦除 `Named` 与具体
+    `Generic` 互通。
+  - **mir verifier**:`parse_mir_type` **strip 到 base**(type_param 当通配符,lenient,不拒 `v+1`)。
+  - **codegen**:`resolve_ann_ztype` 读实参单态化(`Box$Int`/`Option$Int`)。
+  - **runtime**:不解码注解,类型擦除,无需改。
 - enum 统一 `{tag,p0,p1}` 布局是关键:跨函数返回时注解实例与构造点占位实例 LLVM 类型一致。
-- 加新「按名查 struct/enum」逻辑时,记得它可能收到带 `<...>` 的串 —— 先 `base_name` 再查。
+- codegen 里加新「按名查 struct/enum」逻辑时,串可能带 `<...>` —— 先 `type_syntax::base_name` 再查。
+- `?` 脱糖在 `src/desugar.rs`(pre-resolve):无 match 表达式/未初始化 let → 续延移入成功分支。
 
 ## 6. 关键经验
 - 加类型要改**两个类型检查器**(typecheck.rs + mir.rs verifier)+ 解释器(MIR/AST eval + liveness)+ module_graph + native codegen。
