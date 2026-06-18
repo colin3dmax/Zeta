@@ -145,6 +145,48 @@ fn main() -> Int {
 }
 
 #[test]
+fn try_unwrapped_value_supports_arithmetic() {
+    // The payoff of preserving generic args in typecheck: the `?`-unwrapped value
+    // has the concrete success type (Int from Result<Int, String>), so it can be
+    // used directly in arithmetic — `h + 1` no longer rejected.
+    let src = "\
+import std.core;
+fn half(n: Int) -> Result<Int, String> {
+  if n % 2 == 0 { return Result.Ok(n / 2); }
+  return Result.Err(\"odd\");
+}
+fn compute(n: Int) -> Result<Int, String> {
+  let h = half(n)?;
+  return Result.Ok(h + 1);
+}
+fn main() -> Int {
+  match compute(10) {
+    Result.Ok(v) -> { return v; },
+    Result.Err(e) -> { return 0 - 1; },
+  }
+  return 0;
+}";
+    assert_eq!(check(src), 6);
+}
+
+#[test]
+fn match_generic_payload_is_concrete() {
+    // Even without `?`: matching a concrete Result<Int,String> binds Ok's payload
+    // as Int, usable in arithmetic.
+    let src = "\
+import std.core;
+fn get() -> Result<Int, String> { return Result.Ok(20); }
+fn main() -> Int {
+  match get() {
+    Result.Ok(v) -> { return v * 2; },
+    Result.Err(e) -> { return 0; },
+  }
+  return 0;
+}";
+    assert_eq!(check(src), 40);
+}
+
+#[test]
 fn try_outside_result_option_is_an_error() {
     // `?` in a function returning a plain `Int` has nothing to early-return into.
     let src = "\

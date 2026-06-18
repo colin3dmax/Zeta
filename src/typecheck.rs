@@ -41,6 +41,13 @@ enum Type {
     Fn(Vec<Type>, Box<Type>),
     Range,
     Named(String),
+    /// A generic aggregate instantiation `Base<A0, A1, ...>` (e.g.
+    /// `Result<Int, String>`). The base names a struct/enum; the arguments are
+    /// substituted into its field/variant payload types at use sites (so a
+    /// matched `Result<Int, String>` binds its `Ok` payload as `Int`, not the
+    /// erased type parameter `T`). An erased `Named(base)` (from a value-flow
+    /// constructor) stays compatible with it.
+    Generic(String, Vec<Type>),
     Unit,
     Error,
 }
@@ -62,6 +69,8 @@ pub struct ExternalFunction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalStruct {
     pub name: String,
+    /// Generic type parameters (empty for non-generic).
+    pub type_params: Vec<String>,
     pub fields: Vec<(String, String)>,
     pub target_name: Option<String>,
 }
@@ -336,6 +345,7 @@ fn external_function_signature(
 
 fn external_struct_type(external_struct: &ExternalStruct) -> StructType {
     StructType {
+        type_params: external_struct.type_params.clone(),
         fields: external_struct
             .fields
             .iter()
@@ -346,6 +356,7 @@ fn external_struct_type(external_struct: &ExternalStruct) -> StructType {
 
 fn external_enum_type(external_enum: &ExternalEnum) -> EnumType {
     EnumType {
+        type_params: external_enum.type_params.clone(),
         variants: external_enum
             .variants
             .iter()
@@ -953,7 +964,11 @@ fn check_match_exhaustiveness(
                 ));
             }
         }
-        Type::Named(enum_name) => {
+        // Enum (possibly a concrete generic instantiation) — check by base name.
+        Type::Named(_) | Type::Generic(_, _) => {
+            let Some((enum_name, _)) = aggregate_base(value_type) else {
+                return;
+            };
             let Some(enum_type) = enums.get(enum_name) else {
                 return;
             };
@@ -1016,7 +1031,23 @@ fn check_pattern(
                 Some(enum_type) => match enum_type.variants.get(variant) {
                     Some(payload_type) => match (payload_type, binding) {
                         (Some(payload_type), Some(binding)) => {
-                            return vec![(binding.clone(), payload_type.clone())];
+                            // When the scrutinee is a concrete instantiation
+                            // (`Result<Int, String>`), substitute its arguments
+                            // into the payload so the binding gets the concrete
+                            // type (`Int`) rather than the erased parameter `T`.
+                            let bound_type = match value_type {
+                                Type::Generic(_, args) if !enum_type.type_params.is_empty() => {
+                                    let subst: HashMap<String, Type> = enum_type
+                                        .type_params
+                                        .iter()
+                                        .cloned()
+                                        .zip(args.iter().cloned())
+                                        .collect();
+                                    substitute_generic(payload_type, &subst)
+                                }
+                                _ => payload_type.clone(),
+                            };
+                            return vec![(binding.clone(), bound_type)];
                         }
                         (Some(_), None) => diagnostics.push(Diagnostic::new(
                             "TYPE_ENUM_PATTERN_ARITY",
@@ -1535,13 +1566,19 @@ fn infer_expr(
                     }
                 }
             }
-            let Type::Named(struct_name) = base_type else {
-                diagnostics.push(Diagnostic::new(
-                    "TYPE_FIELD_BASE",
-                    "field access requires a struct value",
-                    base.span(),
-                ));
-                return Type::Named(field.clone());
+            // Struct field access, on an erased `Named(base)` or a concrete
+            // `Generic(base, args)` value.
+            let (struct_name, struct_args): (String, Option<Vec<Type>>) = match base_type {
+                Type::Named(name) => (name, None),
+                Type::Generic(name, args) => (name, Some(args)),
+                _ => {
+                    diagnostics.push(Diagnostic::new(
+                        "TYPE_FIELD_BASE",
+                        "field access requires a struct value",
+                        base.span(),
+                    ));
+                    return Type::Named(field.clone());
+                }
             };
             let Some(struct_type) = structs.get(&struct_name) else {
                 diagnostics.push(Diagnostic::new(
@@ -1551,14 +1588,28 @@ fn infer_expr(
                 ));
                 return Type::Named(field.clone());
             };
-            struct_type.fields.get(field).cloned().unwrap_or_else(|| {
+            let field_type = struct_type.fields.get(field).cloned().unwrap_or_else(|| {
                 diagnostics.push(Diagnostic::new(
                     "TYPE_UNKNOWN_FIELD",
                     format!("unknown field `{field}` on struct `{struct_name}`"),
                     *field_span,
                 ));
                 Type::Named(field.clone())
-            })
+            });
+            // Concrete instantiation → substitute its arguments into the field
+            // type (`Box<Int>.value` is `Int`, not the erased `T`).
+            match struct_args {
+                Some(args) if !struct_type.type_params.is_empty() => {
+                    let subst: HashMap<String, Type> = struct_type
+                        .type_params
+                        .iter()
+                        .cloned()
+                        .zip(args)
+                        .collect();
+                    substitute_generic(&field_type, &subst)
+                }
+                _ => field_type,
+            }
         }
     }
 }
@@ -1692,6 +1743,16 @@ fn parse_type_with_params(
     if type_params.iter().any(|p| p == name) {
         return Type::Named(name.to_string());
     }
+    // Generic instantiation: parse arguments WITH the params in scope, so e.g.
+    // `Box<T>` in a generic function becomes `Generic("Box", [Named("T")])`.
+    if let Some((base, args)) = crate::type_syntax::generic_parts(name) {
+        return Type::Generic(
+            base.to_string(),
+            args.iter()
+                .map(|a| parse_type_with_params(a, structs, enums, type_params))
+                .collect(),
+        );
+    }
     parse_declared_type(name, structs, enums)
 }
 
@@ -1727,6 +1788,14 @@ fn unify_generic(declared: &Type, actual: &Type, type_params: &[String], subst: 
                     .all(|(d, a)| unify_generic(d, a, type_params, subst))
                 && unify_generic(dr, ar, type_params, subst)
         }
+        (Type::Generic(db, da), Type::Generic(ab, aa)) => {
+            db == ab
+                && da.len() == aa.len()
+                && da
+                    .iter()
+                    .zip(aa)
+                    .all(|(d, a)| unify_generic(d, a, type_params, subst))
+        }
         _ => declared == actual,
     }
 }
@@ -1743,17 +1812,27 @@ fn substitute_generic(ty: &Type, subst: &HashMap<String, Type>) -> Type {
             params.iter().map(|p| substitute_generic(p, subst)).collect(),
             Box::new(substitute_generic(ret, subst)),
         ),
+        Type::Generic(base, args) => Type::Generic(
+            base.clone(),
+            args.iter().map(|a| substitute_generic(a, subst)).collect(),
+        ),
         _ => ty.clone(),
     }
 }
 
 #[derive(Debug, Clone)]
 struct StructType {
+    /// Generic type parameters (empty for non-generic). Lets a concrete
+    /// `Generic(base, args)` value substitute these into field types.
+    type_params: Vec<String>,
     fields: HashMap<String, Type>,
 }
 
 #[derive(Debug, Clone)]
 struct EnumType {
+    /// Generic type parameters (empty for non-generic). Lets a concrete
+    /// `Generic(base, args)` scrutinee substitute these into variant payloads.
+    type_params: Vec<String>,
     variants: HashMap<String, Option<Type>>,
 }
 
@@ -1810,6 +1889,7 @@ fn struct_types(module: &Module) -> HashMap<String, StructType> {
             Item::Struct(decl) => Some((
                 decl.name.clone(),
                 StructType {
+                    type_params: decl.type_params.clone(),
                     fields: decl
                         .fields
                         .iter()
@@ -1830,6 +1910,7 @@ fn enum_types(module: &Module) -> HashMap<String, EnumType> {
             Item::Enum(decl) => Some((
                 decl.name.clone(),
                 EnumType {
+                    type_params: decl.type_params.clone(),
                     variants: decl
                         .variants
                         .iter()
@@ -1857,10 +1938,10 @@ fn parse_type(name: &str) -> Type {
     if let Some(parts) = crate::type_syntax::tuple_parts(name) {
         return Type::Tuple(parts.iter().map(|p| parse_type(p)).collect());
     }
-    // Generic instantiation `Box<Int>` is erased to its base name for type
-    // checking (the interpreter is the semantic oracle for generic aggregates).
-    if let Some((base, _)) = crate::type_syntax::generic_parts(name) {
-        return parse_type(base);
+    // Generic instantiation `Result<Int, String>` keeps its arguments so they can
+    // be substituted into variant/field payloads at use sites.
+    if let Some((base, args)) = crate::type_syntax::generic_parts(name) {
+        return Type::Generic(base.to_string(), args.iter().map(|a| parse_type(a)).collect());
     }
     match name {
         "Int" => Type::Int,
@@ -1898,14 +1979,30 @@ fn parse_declared_type(
                 .collect(),
         );
     }
-    // Generic instantiation `Box<Int>` is validated/erased by its base name.
-    if let Some((base, _)) = crate::type_syntax::generic_parts(name) {
-        return parse_declared_type(base, structs, enums);
+    // Generic instantiation `Result<Int, String>` keeps its arguments (each
+    // resolved as a declared type) for substitution at use sites.
+    if let Some((base, args)) = crate::type_syntax::generic_parts(name) {
+        return Type::Generic(
+            base.to_string(),
+            args.iter()
+                .map(|a| parse_declared_type(a, structs, enums))
+                .collect(),
+        );
     }
     if is_builtin_type_name(name) || structs.contains_key(name) || enums.contains_key(name) {
         parse_type(name)
     } else {
         Type::Error
+    }
+}
+
+/// View a struct/enum type by base name: `Named(b)` → `(b, None)` (erased),
+/// `Generic(b, args)` → `(b, Some(args))`. `None` for non-aggregate types.
+fn aggregate_base(ty: &Type) -> Option<(&str, Option<&[Type]>)> {
+    match ty {
+        Type::Named(name) => Some((name.as_str(), None)),
+        Type::Generic(name, args) => Some((name.as_str(), Some(args.as_slice()))),
+        _ => None,
     }
 }
 
@@ -1921,6 +2018,24 @@ fn expect_type(
     }
     if matches!(found, Type::Error) || matches!(expected, Type::Error) {
         return;
+    }
+    // Aggregate-base compatibility: an erased constructor type `Named(base)` is
+    // compatible with a concrete `Generic(base, ...)` (and vice versa); two
+    // `Generic`s of the same base are compatible iff their arguments are (a
+    // wildcard argument staying lenient via the recursive call).
+    if let Some((fb, fargs)) = aggregate_base(found) {
+        if let Some((eb, eargs)) = aggregate_base(expected) {
+            if fb == eb {
+                if let (Some(fa), Some(ea)) = (fargs, eargs) {
+                    if fa.len() == ea.len() {
+                        for (f, e) in fa.iter().zip(ea) {
+                            expect_type(f, e, code, span, diagnostics);
+                        }
+                    }
+                }
+                return;
+            }
+        }
     }
     // A generic type parameter (erased instantiation) is compatible with any
     // concrete type for assignment-like checks (let/return/call-arg/field/
@@ -1973,6 +2088,10 @@ impl Type {
             }
             Type::Range => "Range".to_string(),
             Type::Named(name) => name.clone(),
+            Type::Generic(base, args) => {
+                let inner: Vec<String> = args.iter().map(|a| a.display()).collect();
+                format!("{base}<{}>", inner.join(", "))
+            }
             Type::Unit => "Unit".to_string(),
             Type::Error => "<error>".to_string(),
         }

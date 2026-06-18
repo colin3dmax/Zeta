@@ -1092,6 +1092,7 @@ fn external_function(function: &Function, module_name: &str) -> ExternalFunction
 fn external_struct(decl: &StructDecl, module_name: &str) -> ExternalStruct {
     ExternalStruct {
         name: decl.name.clone(),
+        type_params: decl.type_params.clone(),
         fields: decl
             .fields
             .iter()
