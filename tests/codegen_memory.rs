@@ -133,6 +133,43 @@ fn main() -> Int {
 }
 
 #[test]
+fn array_return_transfers_ownership_frees_other_locals() {
+    // v3: a function returning an array transfers that buffer to the caller (no
+    // copy) while freeing its OTHER array locals; the caller frees the
+    // transferred buffer at its own scope exit. Correct result + no UAF/double
+    // free (the differential check would catch either).
+    let src = "\
+fn build(n: Int) -> IntArray {
+  let scratch: IntArray = [99, 99, 99];
+  let result: IntArray = [n, n + 1];
+  return result;
+}
+fn main() -> Int {
+  let a: IntArray = build(5);
+  return a[0] + a[1];
+}";
+    assert_eq!(check(src), 11);
+    // `scratch` is freed inside build; the result is freed in main.
+    assert!(ir_of(src).contains("call void @free("));
+}
+
+#[test]
+fn nested_array_returning_calls() {
+    // Chained array-returning calls: each result's ownership transfers cleanly.
+    let src = "\
+fn wrap(n: Int) -> IntArray { return [n, n * 2]; }
+fn pick(n: Int) -> IntArray {
+  let w: IntArray = wrap(n);
+  return w;
+}
+fn main() -> Int {
+  let a: IntArray = pick(6);
+  return a[0] + a[1];
+}";
+    assert_eq!(check(src), 18);
+}
+
+#[test]
 fn loop_array_assigned_outward_stays_correct() {
     // The body-local array is deep-copied into the outer var on assignment, then
     // the body-local is freed — the outer copy must remain valid.

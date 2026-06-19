@@ -1362,16 +1362,21 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
     }
 
     /// Like [`bind_value`] but skips the array deep-copy when `expr` already
-    /// produced a fresh, unaliased buffer (an array literal or an `*_array_*`
-    /// builtin result) — copying it would be pure waste. (Strings are never copied
-    /// regardless, being immutable.)
+    /// produced a fresh, unaliased buffer the binding can TAKE OWNERSHIP of —
+    /// copying it would be pure waste (and would leak the original). Such sources:
+    /// an array literal, an `*_array_*` builtin, or any function/closure call
+    /// returning an array (the callee transfers ownership of the returned buffer;
+    /// see the array-return path in `lower_stmt`). Strings are never copied
+    /// regardless, being immutable.
     fn bind_owned(
         &self,
         expr: &MirExpr,
         value: BasicValueEnum<'ctx>,
         zt: &ZType,
     ) -> BasicValueEnum<'ctx> {
-        if is_fresh_array(expr) {
+        let owns =
+            is_fresh_array(expr) || (matches!(expr, MirExpr::Call { .. }) && matches!(zt, ZType::Array(_)));
+        if owns {
             value
         } else {
             self.bind_value(value, zt)
@@ -1504,17 +1509,17 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         self.builder.build_call(self.free, &[base.into()], "").unwrap();
     }
 
-    /// Free every currently-live array local (one per name; the newest binding
-    /// shadows). Used before a non-array `return` to reclaim the function's
-    /// per-call array allocations (params + locals). Sound because a non-array
-    /// return means no array escapes, and the function is exiting so all array
-    /// locals are dead.
-    fn free_live_arrays(&self) {
+    /// Free every currently-live array local except `skip` (the slot whose buffer
+    /// is being returned, for an array return — its ownership transfers to the
+    /// caller). One entry per name; the newest binding shadows. Sound because the
+    /// function is exiting so every other array local is dead.
+    fn free_live_arrays_except(&self, skip: Option<PointerValue<'ctx>>) {
         let slots: Vec<PointerValue<'ctx>> = self
             .locals
             .values()
             .filter(|(_, zt)| matches!(zt, ZType::Array(_)))
             .map(|(slot, _)| *slot)
+            .filter(|slot| Some(*slot) != skip)
             .collect();
         for slot in slots {
             self.free_array_at_slot(slot);
@@ -1575,17 +1580,27 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let v = match value {
                     Some(expr) => {
                         let (v, vt) = self.lower_expr(expr)?;
-                        // Free live array locals before returning — unless the
-                        // returned value is itself an array (it escapes to the
-                        // caller). The value is already computed, so freeing the
-                        // locals it read from is safe.
-                        if !matches!(vt, ZType::Array(_)) {
-                            self.free_live_arrays();
+                        if matches!(vt, ZType::Array(_)) {
+                            // Array return: ownership of the returned buffer
+                            // transfers to the caller (which takes it without a
+                            // copy — see `bind_owned`). Free every OTHER array
+                            // local; if returning a local directly, skip its slot
+                            // (that buffer IS the return value).
+                            let skip = match expr {
+                                MirExpr::Load(name) => self.locals.get(name).and_then(|(slot, zt)| {
+                                    matches!(zt, ZType::Array(_)).then_some(*slot)
+                                }),
+                                _ => None,
+                            };
+                            self.free_live_arrays_except(skip);
+                        } else {
+                            // Non-array return: no array escapes, free them all.
+                            self.free_live_arrays_except(None);
                         }
                         v
                     }
                     None => {
-                        self.free_live_arrays();
+                        self.free_live_arrays_except(None);
                         self.i64t().const_zero().into()
                     }
                 };
