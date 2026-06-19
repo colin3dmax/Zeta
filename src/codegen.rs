@@ -765,6 +765,15 @@ pub fn jit_run_i64(program: &Program, structs: &[StructDecl], entry: &str) -> Re
     }
 }
 
+/// Emit the textual LLVM IR for `program` (no JIT/run). Exposed for tests that
+/// inspect the generated IR (e.g. that array locals are freed at scope exit).
+pub fn emit_llvm_ir(program: &Program, structs: &[StructDecl]) -> Result<String, String> {
+    let context = Context::create();
+    let types = Types::build(&context, structs, program)?;
+    let module = build_module(&context, &types, program)?;
+    Ok(module.print_to_string().to_string())
+}
+
 /// Like [`jit_run_i64`] but the entry takes one `i64` argument and the module is
 /// run through LLVM `-O3` before JIT — real optimized native code. The runtime
 /// `arg` keeps the optimizer from constant-folding the computation away.
@@ -1125,6 +1134,11 @@ fn build_module<'ctx>(
     let ptr_ty = context.ptr_type(inkwell::AddressSpace::default());
     let i64_ty = context.i64_type();
     let malloc = module.add_function("malloc", ptr_ty.fn_type(&[i64_ty.into()], false), None);
+    let free = module.add_function(
+        "free",
+        context.void_type().fn_type(&[ptr_ty.into()], false),
+        None,
+    );
     let memcpy = module.add_function(
         "memcpy",
         ptr_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into()], false),
@@ -1194,6 +1208,7 @@ fn build_module<'ctx>(
             generics: &generics,
             specialized: &specialized,
             malloc,
+            free,
             memcpy,
             memcmp,
             snprintf,
@@ -1300,6 +1315,7 @@ struct FnLower<'a, 'ctx> {
     /// is generated once and reused.
     specialized: &'a RefCell<HashMap<String, FunctionValue<'ctx>>>,
     malloc: FunctionValue<'ctx>,
+    free: FunctionValue<'ctx>,
     memcpy: FunctionValue<'ctx>,
     memcmp: FunctionValue<'ctx>,
     snprintf: FunctionValue<'ctx>,
@@ -1439,14 +1455,63 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         Ok(false)
     }
 
+    /// Free the heap buffers of array-typed locals declared since the `saved`
+    /// scope snapshot. Each array local UNIQUELY owns its capacity-headed buffer
+    /// (value semantics deep-copies the array at every other binding point), so
+    /// on the fall-through path at scope exit the local is dead with no live
+    /// alias — freeing it is sound. Strings (immutable, shared), closure
+    /// environments, and boxed enum payloads are shared by value-copy and are
+    /// NOT freed here. Called only on fall-through (never after a return / break /
+    /// continue, where the value may escape and trailing code is unreachable).
+    fn free_scope_locals(&mut self, saved: &HashMap<String, (PointerValue<'ctx>, ZType)>) {
+        let mut slots: Vec<PointerValue<'ctx>> = Vec::new();
+        for (name, (slot, zt)) in self.locals.iter() {
+            if !matches!(zt, ZType::Array(_)) {
+                continue;
+            }
+            // Declared in THIS scope = absent from the snapshot, or a shadow
+            // re-using the name with a different slot. The outer binding (same
+            // slot) is left for its own scope to free.
+            let outer = saved.get(name).map(|(s, _)| *s == *slot).unwrap_or(false);
+            if !outer {
+                slots.push(*slot);
+            }
+        }
+        for slot in slots {
+            // Load {len, ptr}, recover the malloc base (ptr - 8 header), free it.
+            let arr = self
+                .builder
+                .build_load(array_struct_type(self.context), slot, "freearr")
+                .unwrap()
+                .into_struct_value();
+            let data = self
+                .builder
+                .build_extract_value(arr, 1, "freedata")
+                .unwrap()
+                .into_pointer_value();
+            let back = self.i64t().const_int((-8i64) as u64, true);
+            let base = unsafe {
+                self.builder
+                    .build_in_bounds_gep(self.context.i8_type(), data, &[back], "freebase")
+                    .unwrap()
+            };
+            self.builder.build_call(self.free, &[base.into()], "").unwrap();
+        }
+    }
+
     /// Lower a nested block in its own lexical scope: locals declared inside are
     /// discarded afterwards, so a sibling block may reuse a name at a different
     /// type (each `let` gets its own slot). Returns whether the block terminates.
+    /// On the fall-through path, array locals declared in the block are freed so
+    /// a loop body reclaims its per-iteration allocations.
     fn lower_block(&mut self, stmts: &[MirStmt]) -> Result<bool, String> {
         let saved = self.locals.clone();
-        let terminated = self.lower_stmts(stmts);
+        let terminated = self.lower_stmts(stmts)?;
+        if !terminated {
+            self.free_scope_locals(&saved);
+        }
         self.locals = saved;
-        terminated
+        Ok(terminated)
     }
 
     fn lower_stmt(&mut self, stmt: &MirStmt) -> Result<bool, String> {
@@ -2104,6 +2169,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 generics: self.generics,
                 specialized: self.specialized,
                 malloc: self.malloc,
+                free: self.free,
                 memcpy: self.memcpy,
                 memcmp: self.memcmp,
                 snprintf: self.snprintf,
@@ -2348,6 +2414,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 generics: self.generics,
                 specialized: self.specialized,
                 malloc: self.malloc,
+                free: self.free,
                 memcpy: self.memcpy,
                 memcmp: self.memcmp,
                 snprintf: self.snprintf,
