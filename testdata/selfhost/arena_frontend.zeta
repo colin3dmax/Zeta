@@ -8425,9 +8425,132 @@ fn tuple_elem_type(ty: String, idx: Int) -> String {
   return "Int";
 }
 
+// ---- Closure (function-value) type strings: `fn(P0, P1) -> R` ----
+// A closure's static type is the canonical function-type string the parser
+// produces. Its LLVM value is `{ ptr fn, ptr env }` (see llvm_ty / gen_lambda).
+
+fn is_fn_type(ty: String) -> Bool {
+  return string_len(ty) >= 3 && string_byte_at(ty, 0) == 102
+    && string_byte_at(ty, 1) == 110 && string_byte_at(ty, 2) == 40;
+}
+
+// Index of the `)` closing the `fn(` parameter list (top level).
+fn fn_close_paren(ty: String) -> Int {
+  let len: Int = string_len(ty);
+  let mut depth: Int = 0;
+  let mut i: Int = 2;
+  while i < len {
+    let b: Int = string_byte_at(ty, i);
+    if b == 40 {
+      depth = depth + 1;
+    }
+    if b == 41 {
+      depth = depth - 1;
+      if depth == 0 {
+        return i;
+      }
+    }
+    i = i + 1;
+  }
+  return len;
+}
+
+// The return type string of `fn(...) -> R` (substring after the `>`).
+fn fn_type_ret(ty: String) -> String {
+  let close: Int = fn_close_paren(ty);
+  let len: Int = string_len(ty);
+  let mut i: Int = close + 1;
+  while i < len {
+    if string_byte_at(ty, i) == 62 {
+      return trim_leading_space(string_byte_slice(ty, i + 1, len - i - 1));
+    }
+    i = i + 1;
+  }
+  return "Int";
+}
+
+// The parameter list inner string of `fn(P0, P1) -> R` → `P0, P1`.
+fn fn_params_inner(ty: String) -> String {
+  let close: Int = fn_close_paren(ty);
+  return string_byte_slice(ty, 3, close - 3);
+}
+
+// Number of top-level parameters (comma split respecting nested parens).
+fn fn_param_count(ty: String) -> Int {
+  let inner: String = fn_params_inner(ty);
+  let len: Int = string_len(inner);
+  if len == 0 {
+    return 0;
+  }
+  let mut depth: Int = 0;
+  let mut count: Int = 1;
+  let mut i: Int = 0;
+  while i < len {
+    let b: Int = string_byte_at(inner, i);
+    if b == 40 {
+      depth = depth + 1;
+    }
+    if b == 41 {
+      depth = depth - 1;
+    }
+    if b == 44 && depth == 0 {
+      count = count + 1;
+    }
+    i = i + 1;
+  }
+  return count;
+}
+
+// The idx-th parameter type string.
+fn fn_param_type(ty: String, idx: Int) -> String {
+  let inner: String = fn_params_inner(ty);
+  let len: Int = string_len(inner);
+  let mut depth: Int = 0;
+  let mut start: Int = 0;
+  let mut cur: Int = 0;
+  let mut i: Int = 0;
+  while i < len {
+    let b: Int = string_byte_at(inner, i);
+    if b == 40 {
+      depth = depth + 1;
+    }
+    if b == 41 {
+      depth = depth - 1;
+    }
+    if b == 44 && depth == 0 {
+      if cur == idx {
+        return trim_leading_space(string_byte_slice(inner, start, i - start));
+      }
+      cur = cur + 1;
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  if cur == idx {
+    return trim_leading_space(string_byte_slice(inner, start, len - start));
+  }
+  return "Int";
+}
+
+// Whether `name` is bound in the dynamic scope (a local/param/capture).
+fn scope_has(tcx: Tcx, name: String) -> Bool {
+  let mut i: Int = tcx.loc_name.len;
+  while i > 0 {
+    i = i - 1;
+    if tcx.loc_name[i] == name {
+      return true;
+    }
+  }
+  return false;
+}
+
 // The LLVM type for a Zeta type string. Int / Bool unify as i64; an array is
 // `%zarr`; a struct maps to its named `%Name` type. (String / enum: later.)
 fn llvm_ty(tcx: Tcx, ty: String) -> String {
+  if is_fn_type(ty) {
+    // A closure value: function pointer + heap environment pointer.
+    return "{ ptr, ptr }";
+  }
   if is_tuple_type(ty) {
     let count: Int = tuple_elem_count(ty);
     let mut out: String = "{ ";
@@ -8506,6 +8629,14 @@ fn type_of_expr(tcx: Tcx, mir: Mir, node: Int) -> String {
     return "Bool";
   }
   if kind == mir_call_expr() {
+    // Indirect call through a closure-typed local: result is the closure's
+    // return type.
+    if scope_has(tcx, mir.me_text[node]) {
+      let lt: String = scope_type(tcx, mir.me_text[node]);
+      if is_fn_type(lt) {
+        return fn_type_ret(lt);
+      }
+    }
     if is_array_builtin(mir.me_text[node]) {
       return elem_to_array_type(array_builtin_elem(mir.me_text[node]));
     }
@@ -8561,6 +8692,34 @@ fn type_of_expr(tcx: Tcx, mir: Mir, node: Int) -> String {
       return struct_field_type_at(tcx, si, fidx);
     }
     return "Int";
+  }
+  if kind == mir_lambda_expr() {
+    // Closure static type `fn(P0, P1) -> R`: parameter types from the MIR param
+    // pool, return type inferred from the body with the params in scope.
+    let body: Int = mir.me_a[node];
+    let mp_start: Int = mir.me_b[node];
+    let pcount: Int = decimal_to_int(mir.me_text[node]);
+    let mut t: Tcx = tcx;
+    let mut i: Int = 0;
+    while i < pcount {
+      t.loc_name = string_array_push(t.loc_name, mir.mp_name[mp_start + i]);
+      t.loc_type = string_array_push(t.loc_type, mir.mp_type[mp_start + i]);
+      t.loc_slot = string_array_push(t.loc_slot, "%x");
+      i = i + 1;
+    }
+    let ret: String = type_of_expr(t, mir, body);
+    let mut out: String = "fn(";
+    i = 0;
+    while i < pcount {
+      if i > 0 {
+        out = string_concat(out, ", ");
+      }
+      out = string_concat(out, mir.mp_type[mp_start + i]);
+      i = i + 1;
+    }
+    out = string_concat(out, ") -> ");
+    out = string_concat(out, ret);
+    return out;
   }
   return "Int";
 }
@@ -8697,8 +8856,300 @@ fn llvm_normalize_bool(em: Emit, vref: String) -> EmitVal {
   return EmitVal { em: e, vref: rn2 };
 }
 
+// Collect the `Load` (variable-reference) names reachable in a MIR expr subtree,
+// plus indirect-call callees (which may be closure locals). Order is first-seen
+// with possible duplicates; the caller dedups/filters. Recurses every expr kind
+// that has children (mirrors mir_dump_expr's traversal).
+fn collect_loads(mir: Mir, node: Int, acc: StringArray) -> StringArray {
+  let kind: Int = mir.me_kind[node];
+  let mut out: StringArray = acc;
+  if kind == mir_load_expr() {
+    return string_array_push(out, mir.me_text[node]);
+  }
+  if kind == mir_unary_expr() {
+    return collect_loads(mir, mir.me_a[node], out);
+  }
+  if kind == mir_binary_expr() {
+    out = collect_loads(mir, mir.me_a[node], out);
+    return collect_loads(mir, mir.me_b[node], out);
+  }
+  if kind == mir_index_expr() {
+    out = collect_loads(mir, mir.me_a[node], out);
+    return collect_loads(mir, mir.me_b[node], out);
+  }
+  if kind == mir_field_expr() {
+    return collect_loads(mir, mir.me_a[node], out);
+  }
+  if kind == mir_call_expr() {
+    let start: Int = mir.me_a[node];
+    let count: Int = mir.me_b[node];
+    let mut i: Int = 0;
+    while i < count {
+      out = collect_loads(mir, mir.mchild_list[start + i], out);
+      i = i + 1;
+    }
+    // The callee may itself be a captured closure local (indirect call).
+    return string_array_push(out, mir.me_text[node]);
+  }
+  if kind == mir_array_expr() || kind == mir_tuple_expr() {
+    let start: Int = mir.me_a[node];
+    let count: Int = mir.me_b[node];
+    let mut i: Int = 0;
+    while i < count {
+      out = collect_loads(mir, mir.mchild_list[start + i], out);
+      i = i + 1;
+    }
+    return out;
+  }
+  if kind == mir_struct_expr() {
+    let fstart: Int = mir.me_a[node];
+    let fcount: Int = mir.me_b[node];
+    let mut i: Int = 0;
+    while i < fcount {
+      out = collect_loads(mir, mir.msl_field_value[fstart + i], out);
+      i = i + 1;
+    }
+    return out;
+  }
+  if kind == mir_enum_expr() {
+    if mir.me_a[node] >= 0 {
+      return collect_loads(mir, mir.me_a[node], out);
+    }
+    return out;
+  }
+  if kind == mir_lambda_expr() {
+    // Nested lambda: its body's references are also (transitively) free here;
+    // conservative — names bound by the inner lambda's params are filtered out
+    // at the use site by scope membership.
+    return collect_loads(mir, mir.me_a[node], out);
+  }
+  return out;
+}
+
+// Closure conversion for a `|params| body` lambda (mirrors the Rust backend's
+// `lower_lambda`): lift the body into a top-level `@__lambda_N(ptr env, params)`,
+// capturing the enclosing locals it reads into a heap environment, and yield the
+// closure value `{ ptr fn, ptr env }`. The lifted define is appended to the
+// shared `spec_defs` buffer (dedup via `spec_names`, like monomorphized fns), so
+// it is fixpoint-safe: arena_frontend has no lambdas, so this path never fires.
+fn gen_lambda(em: Emit, mir: Mir, node: Int) -> EmitVal {
+  let body: Int = mir.me_a[node];
+  let mp_start: Int = mir.me_b[node];
+  let pcount: Int = decimal_to_int(mir.me_text[node]);
+  let lname: String = string_concat("__lambda_", int_to_string(node));
+
+  // Lambda parameter names (excluded from captures).
+  let mut pnames: StringArray = string_array_empty();
+  let mut i: Int = 0;
+  while i < pcount {
+    pnames = string_array_push(pnames, mir.mp_name[mp_start + i]);
+    i = i + 1;
+  }
+  // Free variables that are enclosing locals → captures (deduped, in order).
+  let raw: StringArray = collect_loads(mir, body, string_array_empty());
+  let mut cap_names: StringArray = string_array_empty();
+  let mut cap_types: StringArray = string_array_empty();
+  i = 0;
+  while i < raw.len {
+    let nm: String = raw[i];
+    if !spec_has(pnames, nm) && scope_has(em.tcx, nm) && !spec_has(cap_names, nm) {
+      cap_names = string_array_push(cap_names, nm);
+      cap_types = string_array_push(cap_types, scope_type(em.tcx, nm));
+    }
+    i = i + 1;
+  }
+  let ccount: Int = cap_names.len;
+
+  // Environment LLVM struct type `{ ty0, ty1, ... }` (one field per capture).
+  let mut envty: String = "{ ";
+  i = 0;
+  while i < ccount {
+    if i > 0 {
+      envty = string_concat(envty, ", ");
+    }
+    envty = string_concat(envty, llvm_ty(em.tcx, cap_types[i]));
+    i = i + 1;
+  }
+  envty = string_concat(envty, " }");
+
+  let fty: String = type_of_expr(em.tcx, mir, node);
+  let retll: String = llvm_ty(em.tcx, fn_type_ret(fty));
+
+  let mut e: Emit = em;
+  // ---- Lift the body into a top-level function (once per lambda node) ----
+  if !spec_has(e.spec_names, lname) {
+    e.spec_names = string_array_push(e.spec_names, lname);
+    let mut sig: String = string_concat("define ", retll);
+    sig = string_concat(sig, " @");
+    sig = string_concat(sig, lname);
+    sig = string_concat(sig, "(ptr %env");
+    let mut pi: Int = 0;
+    while pi < pcount {
+      sig = string_concat(sig, ", ");
+      sig = string_concat(sig, llvm_ty(e.tcx, mir.mp_type[mp_start + pi]));
+      sig = string_concat(sig, " %");
+      sig = string_concat(sig, mir.mp_name[mp_start + pi]);
+      sig = string_concat(sig, ".arg");
+      pi = pi + 1;
+    }
+    sig = string_concat(sig, ") {\n");
+    let mut bem: Emit = Emit { out: "", reg: 0, block: 0, term: 0, tcx: e.tcx,
+                               gcount: e.gcount, globals: e.globals, slotctr: 0,
+                               allocas: "", spec_names: e.spec_names, spec_defs: e.spec_defs };
+    // Captures: a slot, loaded from the environment struct.
+    let mut ci: Int = 0;
+    while ci < ccount {
+      let cll: String = llvm_ty(bem.tcx, cap_types[ci]);
+      bem = scope_push(bem, cap_names[ci], cap_types[ci]);
+      let cslot: String = scope_slot(bem.tcx, cap_names[ci]);
+      let gr: Int = bem.reg;
+      bem.reg = bem.reg + 1;
+      let grn: String = llvm_reg_name(gr);
+      bem.out = string_concat(bem.out, "  ");
+      bem.out = string_concat(bem.out, grn);
+      bem.out = string_concat(bem.out, " = getelementptr ");
+      bem.out = string_concat(bem.out, envty);
+      bem.out = string_concat(bem.out, ", ptr %env, i32 0, i32 ");
+      bem.out = string_concat(bem.out, int_to_string(ci));
+      bem.out = string_concat(bem.out, "\n");
+      let lr: Int = bem.reg;
+      bem.reg = bem.reg + 1;
+      let lrn: String = llvm_reg_name(lr);
+      bem.out = string_concat(bem.out, "  ");
+      bem.out = string_concat(bem.out, lrn);
+      bem.out = string_concat(bem.out, " = load ");
+      bem.out = string_concat(bem.out, cll);
+      bem.out = string_concat(bem.out, ", ptr ");
+      bem.out = string_concat(bem.out, grn);
+      bem.out = string_concat(bem.out, "\n  store ");
+      bem.out = string_concat(bem.out, cll);
+      bem.out = string_concat(bem.out, " ");
+      bem.out = string_concat(bem.out, lrn);
+      bem.out = string_concat(bem.out, ", ptr ");
+      bem.out = string_concat(bem.out, cslot);
+      bem.out = string_concat(bem.out, "\n");
+      ci = ci + 1;
+    }
+    // Parameters: a slot, with the incoming arg stored in.
+    pi = 0;
+    while pi < pcount {
+      let pty: String = mir.mp_type[mp_start + pi];
+      bem = scope_push(bem, mir.mp_name[mp_start + pi], pty);
+      bem.out = string_concat(bem.out, "  store ");
+      bem.out = string_concat(bem.out, llvm_ty(bem.tcx, pty));
+      bem.out = string_concat(bem.out, " %");
+      bem.out = string_concat(bem.out, mir.mp_name[mp_start + pi]);
+      bem.out = string_concat(bem.out, ".arg, ptr ");
+      bem.out = string_concat(bem.out, scope_slot(bem.tcx, mir.mp_name[mp_start + pi]));
+      bem.out = string_concat(bem.out, "\n");
+      pi = pi + 1;
+    }
+    let bv: EmitVal = llvm_expr(bem, mir, body);
+    bem = bv.em;
+    bem.out = string_concat(bem.out, "  ret ");
+    bem.out = string_concat(bem.out, retll);
+    bem.out = string_concat(bem.out, " ");
+    bem.out = string_concat(bem.out, bv.vref);
+    bem.out = string_concat(bem.out, "\n");
+    let mut def: String = string_concat(sig, bem.allocas);
+    def = string_concat(def, bem.out);
+    def = string_concat(def, "}\n\n");
+    e.gcount = bem.gcount;
+    e.globals = bem.globals;
+    e.spec_names = bem.spec_names;
+    e.spec_defs = string_concat(bem.spec_defs, def);
+  }
+
+  // ---- Build the closure value `{ fn_ptr, env_ptr }` at the use site ----
+  let mut envref: String = "null";
+  if ccount > 0 {
+    // Environment size via the GEP-on-null idiom, then malloc + store captures.
+    let szr: Int = e.reg;
+    e.reg = e.reg + 1;
+    let szn: String = llvm_reg_name(szr);
+    e.out = string_concat(e.out, "  ");
+    e.out = string_concat(e.out, szn);
+    e.out = string_concat(e.out, " = getelementptr ");
+    e.out = string_concat(e.out, envty);
+    e.out = string_concat(e.out, ", ptr null, i32 1\n");
+    let szi: Int = e.reg;
+    e.reg = e.reg + 1;
+    let szin: String = llvm_reg_name(szi);
+    e.out = string_concat(e.out, "  ");
+    e.out = string_concat(e.out, szin);
+    e.out = string_concat(e.out, " = ptrtoint ptr ");
+    e.out = string_concat(e.out, szn);
+    e.out = string_concat(e.out, " to i64\n");
+    let er: Int = e.reg;
+    e.reg = e.reg + 1;
+    let ern: String = llvm_reg_name(er);
+    e.out = string_concat(e.out, "  ");
+    e.out = string_concat(e.out, ern);
+    e.out = string_concat(e.out, " = call ptr @malloc(i64 ");
+    e.out = string_concat(e.out, szin);
+    e.out = string_concat(e.out, ")\n");
+    envref = ern;
+    let mut ci: Int = 0;
+    while ci < ccount {
+      let cll: String = llvm_ty(e.tcx, cap_types[ci]);
+      let cslot: String = scope_slot(e.tcx, cap_names[ci]);
+      let lr: Int = e.reg;
+      e.reg = e.reg + 1;
+      let lrn: String = llvm_reg_name(lr);
+      e.out = string_concat(e.out, "  ");
+      e.out = string_concat(e.out, lrn);
+      e.out = string_concat(e.out, " = load ");
+      e.out = string_concat(e.out, cll);
+      e.out = string_concat(e.out, ", ptr ");
+      e.out = string_concat(e.out, cslot);
+      e.out = string_concat(e.out, "\n");
+      let gr: Int = e.reg;
+      e.reg = e.reg + 1;
+      let grn: String = llvm_reg_name(gr);
+      e.out = string_concat(e.out, "  ");
+      e.out = string_concat(e.out, grn);
+      e.out = string_concat(e.out, " = getelementptr ");
+      e.out = string_concat(e.out, envty);
+      e.out = string_concat(e.out, ", ptr ");
+      e.out = string_concat(e.out, envref);
+      e.out = string_concat(e.out, ", i32 0, i32 ");
+      e.out = string_concat(e.out, int_to_string(ci));
+      e.out = string_concat(e.out, "\n  store ");
+      e.out = string_concat(e.out, cll);
+      e.out = string_concat(e.out, " ");
+      e.out = string_concat(e.out, lrn);
+      e.out = string_concat(e.out, ", ptr ");
+      e.out = string_concat(e.out, grn);
+      e.out = string_concat(e.out, "\n");
+      ci = ci + 1;
+    }
+  }
+  let c0: Int = e.reg;
+  e.reg = e.reg + 1;
+  let c0n: String = llvm_reg_name(c0);
+  e.out = string_concat(e.out, "  ");
+  e.out = string_concat(e.out, c0n);
+  e.out = string_concat(e.out, " = insertvalue { ptr, ptr } undef, ptr @");
+  e.out = string_concat(e.out, lname);
+  e.out = string_concat(e.out, ", 0\n");
+  let c1: Int = e.reg;
+  e.reg = e.reg + 1;
+  let c1n: String = llvm_reg_name(c1);
+  e.out = string_concat(e.out, "  ");
+  e.out = string_concat(e.out, c1n);
+  e.out = string_concat(e.out, " = insertvalue { ptr, ptr } ");
+  e.out = string_concat(e.out, c0n);
+  e.out = string_concat(e.out, ", ptr ");
+  e.out = string_concat(e.out, envref);
+  e.out = string_concat(e.out, ", 1\n");
+  return EmitVal { em: e, vref: c1n };
+}
+
 fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
   let kind: Int = mir.me_kind[node];
+  if kind == mir_lambda_expr() {
+    return gen_lambda(em, mir, node);
+  }
   if kind == mir_int_expr() {
     return EmitVal { em: em, vref: mir.me_text[node] };
   }
@@ -8978,6 +9429,64 @@ fn llvm_expr(em: Emit, mir: Mir, node: Int) -> EmitVal {
       i = i + 1;
     }
     let callee: String = mir.me_text[node];
+    // Indirect call through a closure-typed local: load `{ fn, env }`, then
+    // `call fn(env, args...)`.
+    if scope_has(e.tcx, callee) && is_fn_type(scope_type(e.tcx, callee)) {
+      let cfty: String = scope_type(e.tcx, callee);
+      let cretc: String = fn_type_ret(cfty);
+      let cretll: String = llvm_ty(e.tcx, cretc);
+      let cslot: String = scope_slot(e.tcx, callee);
+      let clr: Int = e.reg;
+      e.reg = e.reg + 1;
+      let cln: String = llvm_reg_name(clr);
+      e.out = string_concat(e.out, "  ");
+      e.out = string_concat(e.out, cln);
+      e.out = string_concat(e.out, " = load { ptr, ptr }, ptr ");
+      e.out = string_concat(e.out, cslot);
+      e.out = string_concat(e.out, "\n");
+      let fr: Int = e.reg;
+      e.reg = e.reg + 1;
+      let frn: String = llvm_reg_name(fr);
+      e.out = string_concat(e.out, "  ");
+      e.out = string_concat(e.out, frn);
+      e.out = string_concat(e.out, " = extractvalue { ptr, ptr } ");
+      e.out = string_concat(e.out, cln);
+      e.out = string_concat(e.out, ", 0\n");
+      let env_r: Int = e.reg;
+      e.reg = e.reg + 1;
+      let envn: String = llvm_reg_name(env_r);
+      e.out = string_concat(e.out, "  ");
+      e.out = string_concat(e.out, envn);
+      e.out = string_concat(e.out, " = extractvalue { ptr, ptr } ");
+      e.out = string_concat(e.out, cln);
+      e.out = string_concat(e.out, ", 1\n");
+      let mut callargs: String = string_concat("ptr ", envn);
+      if string_len(args) > 0 {
+        callargs = string_concat(callargs, ", ");
+        callargs = string_concat(callargs, args);
+      }
+      if cretc == "Unit" {
+        e.out = string_concat(e.out, "  call void ");
+        e.out = string_concat(e.out, frn);
+        e.out = string_concat(e.out, "(");
+        e.out = string_concat(e.out, callargs);
+        e.out = string_concat(e.out, ")\n");
+        return EmitVal { em: e, vref: "0" };
+      }
+      let ir: Int = e.reg;
+      e.reg = e.reg + 1;
+      let irn: String = llvm_reg_name(ir);
+      e.out = string_concat(e.out, "  ");
+      e.out = string_concat(e.out, irn);
+      e.out = string_concat(e.out, " = call ");
+      e.out = string_concat(e.out, cretll);
+      e.out = string_concat(e.out, " ");
+      e.out = string_concat(e.out, frn);
+      e.out = string_concat(e.out, "(");
+      e.out = string_concat(e.out, callargs);
+      e.out = string_concat(e.out, ")\n");
+      return EmitVal { em: e, vref: irn };
+    }
     // Generic call: monomorphize for the concrete argument types.
     let gidx: Int = mir_fn_index(mir, callee);
     if gidx < mir.mf_name.len && string_len(mir.mf_type_params[gidx]) > 0 {

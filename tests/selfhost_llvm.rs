@@ -1170,3 +1170,49 @@ fn main() -> Int {
 }";
     assert_eq!(check(src), 42);
 }
+
+// ---- Closure emit (closure conversion): lift + heap env + indirect call ----
+
+#[test]
+fn closure_no_capture() {
+    let src = "\
+fn main() -> Int {
+  let f = |x: Int| x + 1;
+  return f(41);
+}";
+    assert_eq!(check(src), 42);
+}
+
+#[test]
+fn closure_captures_one_local() {
+    let src = "\
+fn main() -> Int {
+  let n: Int = 10;
+  let add = |x: Int| x + n;
+  return add(32);
+}";
+    assert_eq!(check(src), 42);
+}
+
+#[test]
+fn closure_captures_two_locals_two_params() {
+    let src = "\
+fn main() -> Int {
+  let a: Int = 1;
+  let b: Int = 2;
+  let f = |x: Int, y: Int| x + y + a + b;
+  return f(20, 19);
+}";
+    assert_eq!(check(src), 42);
+}
+
+#[test]
+fn closure_no_params_capture() {
+    let src = "\
+fn main() -> Int {
+  let n: Int = 42;
+  let f = || n;
+  return f();
+}";
+    assert_eq!(check(src), 42);
+}
