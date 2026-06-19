@@ -7,11 +7,10 @@
 ## 0. 一句话状态
 P1–P4 语言扩展(Float/Tuple/Closure/Generics)在 **Rust 前端 + native** 全部完成;
 **自举前端 P1–P4 回灌全部完成**(Float/Tuple/Generics/Closure native emit 全链;仅 ev_expr 解释器复合值推迟);
-正沿 DevGame 路线推进"补齐与成熟语言差距"。**本会话完成错误处理全链(#75 打通):
-① native 单态化泛型 struct/enum(阶段A 值流推断 + 阶段B parser 保留实参全链);② 内置泛型
-Option/Result(std.core 注入);③ `?` 运算符(pre-resolve 脱糖);④ typecheck 保留泛型实参,
-unwrap/字段值取得具体类型可直接算术。** `?` 已可实用。
-**多个提交未推送到 origin/main**(未 push,官网未部署)。
+正沿 DevGame 路线推进"补齐与成熟语言差距"。**本会话完成:错误处理全链(#75)— native 单态化
+泛型 struct/enum(阶段A/B)+ 内置 Option/Result + `?` + typecheck 保留泛型实参(unwrap 值可算术);
+Closure 自举 emit 回灌(P1-P4 回灌全完成);native 内存管理 v1(#74,作用域释放数组局部修循环泄漏)。**
+**已 push 到 origin/main 并部署官网 zeta.jennieapp.com(本会话内);其后 Closure/内存 v1 提交待再次 push。**
 
 ## 1. 构建 / 测试命令
 ```bash
@@ -41,13 +40,13 @@ LLVM_SYS_221_PREFIX=/opt/homebrew/opt/llvm cargo test --release --features llvm 
   - 遗留边界:泛型字段 T 通配符,`Box<Int>` 塞 Float 值会在 native LLVM verify 报错。
 
 ### 2b. 回灌自举前端 `testdata/selfhost/arena_frontend.zeta`(10k+ 行手写编译器)
-- **Float/Tuple/Generics:native 全链回灌完成**(lexer→parser→dumps→emit LLVM),每个经
-  selfhost_arena/mir/llvm + **fixpoint 4/4** 验证。
-- **Closure:前半段**(parse→lower→dumps);**emit 闭包转换待做**。
-- ev_expr 解释器的 Float/Tuple/Closure 推迟(值系统无 f64/复合槽)。
+- **Float/Tuple/Generics/Closure:native 全链回灌完成**(lexer→parser→dumps→emit LLVM),每个经
+  selfhost_arena/mir/llvm + **fixpoint 4/4** 验证。Closure emit = c38469b。
+- ev_expr 解释器的 Float/Tuple/Closure 推迟(值系统无 f64/复合槽,次要路径)。
 
 ## 3. DevGame(zeta 项目)路线任务
-- #73 差距分析总览;#74 P1 内存管理(native 22 malloc/0 free,泄漏);#75 P2 stdlib+错误处理;
+- #73 差距分析总览;#74 P1 内存管理(**v1 ✅ 01d52cb**:作用域释放数组局部修循环泄漏;
+  字符串/闭包env/enum装箱/逃逸/终止路径/顶层局部仍泄漏,待 v2);#75 P2 stdlib+错误处理;
   #76 P3 泛型容器(FloatArray✅ + 泛型 struct/enum 语言层✅ + **native 单态化聚合✅** eba1963/0ecd7cd);
   #77 P4 并发;#78 P5 FFI/跨平台。
 - **依赖链(记录在 #75/#76)**:错误处理(内置 Option/Result + `?`)硬前置 = native 单态化泛型
@@ -78,7 +77,14 @@ index.html(能力清单)。**未部署**。
 5. ~~Closure 自举 emit~~ **✅ 完成**(c38469b):arena_frontend.zeta emit 闭包转换(fn-type 助手 +
    gen_lambda lift/env/间接调用,复用 spec_defs 缓冲);selfhost_llvm +4,fixpoint 4/4 不变。
    **P1-P4 回灌全部完成。** 仅 ev_expr 解释器闭包/Float/Tuple 推迟(值系统无复合槽,次要路径)。
-6. 远端:`git push` + 官网部署(`tools/deploy-website.sh` → zeta.jennieapp.com)。
+6. ~~#74 native 内存管理 v1~~ **✅ 完成**(01d52cb):作用域释放数组局部(fall-through 路径,
+   `free` elems-8),`lower_block` 覆盖 if/while/for/forc body → 循环每迭代回收。安全:数组值语义
+   唯一拥有 ⇒ 无 UAF。测试 tests/codegen_memory.rs。
+7. **#74 native 内存管理 v2(候选下一步)**:字符串(需引用计数或不可变池)、闭包 env、enum 装箱、
+   嵌聚合的数组字段、终止/逃逸路径、顶层函数局部、赋值/grow 覆盖的旧 buffer —— 都仍泄漏。
+   可做:`return <array>` 所有权转移(深拷到调用方拥有 + caller is_fresh 不再拷)、赋值前释放旧数组。
+8. 其它候选:#77 P4 并发 / #78 P5 FFI;ev_expr 解释器补全(FloatArray 现已有,blocker 或已解)。
+9. 远端:`git push`(本会话 Closure/内存 v1 提交)+ 官网重部署(`tools/deploy-website.sh`)。
 
 ### 阶段B 实现笔记(给接续者)
 - 范式:复用泛型**函数**单态化(`lower_generic_call`/`get_or_build_specialization`/`mangle_instance`/`unify_ztype`)。
