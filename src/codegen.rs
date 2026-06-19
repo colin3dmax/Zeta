@@ -1478,24 +1478,46 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             }
         }
         for slot in slots {
-            // Load {len, ptr}, recover the malloc base (ptr - 8 header), free it.
-            let arr = self
-                .builder
-                .build_load(array_struct_type(self.context), slot, "freearr")
+            self.free_array_at_slot(slot);
+        }
+    }
+
+    /// Emit `free` for the array buffer currently held in `slot`: load `{len,
+    /// ptr}`, recover the malloc base (`ptr - 8` capacity header), free it.
+    fn free_array_at_slot(&self, slot: PointerValue<'ctx>) {
+        let arr = self
+            .builder
+            .build_load(array_struct_type(self.context), slot, "freearr")
+            .unwrap()
+            .into_struct_value();
+        let data = self
+            .builder
+            .build_extract_value(arr, 1, "freedata")
+            .unwrap()
+            .into_pointer_value();
+        let back = self.i64t().const_int((-8i64) as u64, true);
+        let base = unsafe {
+            self.builder
+                .build_in_bounds_gep(self.context.i8_type(), data, &[back], "freebase")
                 .unwrap()
-                .into_struct_value();
-            let data = self
-                .builder
-                .build_extract_value(arr, 1, "freedata")
-                .unwrap()
-                .into_pointer_value();
-            let back = self.i64t().const_int((-8i64) as u64, true);
-            let base = unsafe {
-                self.builder
-                    .build_in_bounds_gep(self.context.i8_type(), data, &[back], "freebase")
-                    .unwrap()
-            };
-            self.builder.build_call(self.free, &[base.into()], "").unwrap();
+        };
+        self.builder.build_call(self.free, &[base.into()], "").unwrap();
+    }
+
+    /// Free every currently-live array local (one per name; the newest binding
+    /// shadows). Used before a non-array `return` to reclaim the function's
+    /// per-call array allocations (params + locals). Sound because a non-array
+    /// return means no array escapes, and the function is exiting so all array
+    /// locals are dead.
+    fn free_live_arrays(&self) {
+        let slots: Vec<PointerValue<'ctx>> = self
+            .locals
+            .values()
+            .filter(|(_, zt)| matches!(zt, ZType::Array(_)))
+            .map(|(slot, _)| *slot)
+            .collect();
+        for slot in slots {
+            self.free_array_at_slot(slot);
         }
     }
 
@@ -1538,22 +1560,36 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 }
                 let (v, vt) = self.lower_expr(value)?;
                 let v = self.bind_owned(value, v, &vt);
-                let (slot, _) = self.resolve_place(place)?;
+                let (slot, slot_ty) = self.resolve_place(place)?;
+                // Reassigning a simple array local: free the old buffer first. The
+                // new value was already deep-copied / freshly allocated by
+                // `bind_owned`, so it cannot alias the old buffer, and the old
+                // buffer is uniquely owned by this local — safe to free.
+                if matches!(place, MirPlace::Local(_)) && matches!(slot_ty, ZType::Array(_)) {
+                    self.free_array_at_slot(slot);
+                }
                 self.builder.build_store(slot, v).unwrap();
                 Ok(false)
             }
             MirStmt::Return(value) => {
-                match value {
+                let v = match value {
                     Some(expr) => {
-                        let (v, _) = self.lower_expr(expr)?;
-                        self.builder.build_return(Some(&v)).unwrap();
+                        let (v, vt) = self.lower_expr(expr)?;
+                        // Free live array locals before returning — unless the
+                        // returned value is itself an array (it escapes to the
+                        // caller). The value is already computed, so freeing the
+                        // locals it read from is safe.
+                        if !matches!(vt, ZType::Array(_)) {
+                            self.free_live_arrays();
+                        }
+                        v
                     }
                     None => {
-                        self.builder
-                            .build_return(Some(&self.i64t().const_zero()))
-                            .unwrap();
+                        self.free_live_arrays();
+                        self.i64t().const_zero().into()
                     }
-                }
+                };
+                self.builder.build_return(Some(&v)).unwrap();
                 Ok(true)
             }
             MirStmt::If {

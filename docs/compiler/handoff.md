@@ -80,9 +80,11 @@ index.html(能力清单)。**未部署**。
 6. ~~#74 native 内存管理 v1~~ **✅ 完成**(01d52cb):作用域释放数组局部(fall-through 路径,
    `free` elems-8),`lower_block` 覆盖 if/while/for/forc body → 循环每迭代回收。安全:数组值语义
    唯一拥有 ⇒ 无 UAF。测试 tests/codegen_memory.rs。
-7. **#74 native 内存管理 v2(候选下一步)**:字符串(需引用计数或不可变池)、闭包 env、enum 装箱、
-   嵌聚合的数组字段、终止/逃逸路径、顶层函数局部、赋值/grow 覆盖的旧 buffer —— 都仍泄漏。
-   可做:`return <array>` 所有权转移(深拷到调用方拥有 + caller is_fresh 不再拷)、赋值前释放旧数组。
+7. **#74 native 内存管理 v2(部分 ✅)**:已做 —— 数组局部**赋值时释放旧 buffer**(简单局部)+
+   **非数组 return 前释放存活数组局部**(回收 Int 返回函数的 per-call 数组+param)。
+   **v3 候选(仍泄漏)**:字符串(需引用计数或不可变池)、闭包 env、enum 装箱、嵌聚合的数组字段、
+   `return <array>`(逃逸,可做所有权转移:深拷到 caller + 扩展 is_fresh_array 让 caller 不再二次拷)、
+   隐式 fall-through return 的顶层局部、grow 时 realloc 抛弃的旧 buffer。
 8. 其它候选:#77 P4 并发 / #78 P5 FFI;ev_expr 解释器补全(FloatArray 现已有,blocker 或已解)。
 9. 远端:`git push`(本会话 Closure/内存 v1 提交)+ 官网重部署(`tools/deploy-website.sh`)。
 

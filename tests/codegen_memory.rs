@@ -98,6 +98,41 @@ fn main() -> Int {
 }
 
 #[test]
+fn reassigning_array_local_frees_old_buffer() {
+    // v2: overwriting a simple array local frees the previous buffer (the new
+    // value is already a fresh/copied buffer, so freeing the old is safe).
+    let src = "\
+fn main() -> Int {
+  let mut a: IntArray = [1];
+  a = [2, 3];
+  return a[0] + a[1];
+}";
+    assert_eq!(check(src), 5);
+    assert!(
+        ir_of(src).contains("call void @free("),
+        "expected free() for the overwritten array buffer"
+    );
+}
+
+#[test]
+fn int_returning_function_frees_its_array_locals() {
+    // v2: a function returning a non-array frees its array locals before `return`.
+    let src = "\
+fn sum3(n: Int) -> Int {
+  let xs: IntArray = [n, n + 1, n + 2];
+  return xs[0] + xs[1] + xs[2];
+}
+fn main() -> Int {
+  return sum3(10);
+}";
+    assert_eq!(check(src), 33);
+    assert!(
+        ir_of(src).contains("call void @free("),
+        "expected free() before the int return"
+    );
+}
+
+#[test]
 fn loop_array_assigned_outward_stays_correct() {
     // The body-local array is deep-copied into the outer var on assignment, then
     // the body-local is freed — the outer copy must remain valid.
