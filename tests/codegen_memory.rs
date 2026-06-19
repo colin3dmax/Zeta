@@ -170,6 +170,41 @@ fn main() -> Int {
 }
 
 #[test]
+fn push_grow_frees_outgrown_buffer() {
+    // v4: building an array by repeated in-place push doubles the buffer; each
+    // outgrown buffer is freed (the local uniquely owns it). Correct + free emitted.
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let mut xs: IntArray = int_array_empty();
+  let mut i: Int = 0;
+  while i < 50 {
+    xs = int_array_push(xs, i);
+    i = i + 1;
+  }
+  return xs[49] + xs[0];
+}";
+    assert_eq!(check(src), 49);
+    assert!(ir_of(src).contains("call void @free("));
+}
+
+#[test]
+fn fall_through_unit_function_frees_array_local() {
+    // v4: a function that falls through (implicit return) frees its array locals.
+    let src = "\
+fn touch(n: Int) {
+  let xs: IntArray = [n, n + 1];
+  let s: Int = xs[0] + xs[1];
+}
+fn main() -> Int {
+  touch(5);
+  return 42;
+}";
+    assert_eq!(check(src), 42);
+    assert!(ir_of(src).contains("call void @free("));
+}
+
+#[test]
 fn loop_array_assigned_outward_stays_correct() {
     // The body-local array is deep-copied into the outer var on assignment, then
     // the body-local is freed — the outer copy must remain valid.

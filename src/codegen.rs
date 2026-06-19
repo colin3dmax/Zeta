@@ -1235,6 +1235,11 @@ fn build_module<'ctx>(
             .map_err(|e| format!("in `{}`: {e}", function.name))?;
         if !terminated {
             let ret = &types.returns[&function.name];
+            // Implicit fall-through return: free the function's array locals
+            // (params + top-level lets) unless it returns an array.
+            if !matches!(ret, ZType::Array(_)) {
+                lower.free_live_arrays_except(None);
+            }
             let zero = lower.zero_of(ret);
             builder.build_return(Some(&zero)).unwrap();
         }
@@ -1487,8 +1492,20 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         }
     }
 
+    /// Emit `free` for an array elements pointer: recover the malloc base
+    /// (`data - 8` capacity header, see [`alloc_array_buf`]) and free it.
+    fn free_array_data(&self, data: PointerValue<'ctx>) {
+        let back = self.i64t().const_int((-8i64) as u64, true);
+        let base = unsafe {
+            self.builder
+                .build_in_bounds_gep(self.context.i8_type(), data, &[back], "freebase")
+                .unwrap()
+        };
+        self.builder.build_call(self.free, &[base.into()], "").unwrap();
+    }
+
     /// Emit `free` for the array buffer currently held in `slot`: load `{len,
-    /// ptr}`, recover the malloc base (`ptr - 8` capacity header), free it.
+    /// ptr}`, then free its buffer.
     fn free_array_at_slot(&self, slot: PointerValue<'ctx>) {
         let arr = self
             .builder
@@ -1500,13 +1517,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             .build_extract_value(arr, 1, "freedata")
             .unwrap()
             .into_pointer_value();
-        let back = self.i64t().const_int((-8i64) as u64, true);
-        let base = unsafe {
-            self.builder
-                .build_in_bounds_gep(self.context.i8_type(), data, &[back], "freebase")
-                .unwrap()
-        };
-        self.builder.build_call(self.free, &[base.into()], "").unwrap();
+        self.free_array_data(data);
     }
 
     /// Free every currently-live array local except `skip` (the slot whose buffer
@@ -3067,6 +3078,9 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         let newbuf = self.alloc_array_buf(newcap, elem_sz);
         let old_bytes = self.builder.build_int_mul(len, elem_sz, "ob").unwrap();
         self.memcpy_bytes(newbuf, ptr, old_bytes);
+        // Free the outgrown buffer: this local uniquely owns it (value
+        // semantics), and after the copy + slot update nothing references it.
+        self.free_array_data(ptr);
         self.builder.build_unconditional_branch(cont).unwrap();
 
         self.builder.position_at_end(cont);
