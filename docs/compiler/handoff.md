@@ -6,7 +6,7 @@
 
 ## 0. 一句话状态
 P1–P4 语言扩展(Float/Tuple/Closure/Generics)在 **Rust 前端 + native** 全部完成;
-**自举前端**已回灌 Float/Tuple/Generics(native 全链)+ Closure(前半段);
+**自举前端 P1–P4 回灌全部完成**(Float/Tuple/Generics/Closure native emit 全链;仅 ev_expr 解释器复合值推迟);
 正沿 DevGame 路线推进"补齐与成熟语言差距"。**本会话完成错误处理全链(#75 打通):
 ① native 单态化泛型 struct/enum(阶段A 值流推断 + 阶段B parser 保留实参全链);② 内置泛型
 Option/Result(std.core 注入);③ `?` 运算符(pre-resolve 脱糖);④ typecheck 保留泛型实参,
@@ -75,8 +75,10 @@ index.html(能力清单)。**未部署**。
    保留泛型实参;match 变体绑定与 struct 字段访问在具体 `Generic` 时代入实参 →
    `Result<Int,String>` 的 `Ok(v)` 绑定 `v:Int`、`Box<Int>.value` 为 Int,可直接算术。
    真多态 `fn f<T>(x:T){x+1}` 仍被拒(T 未代入,保安全)。
-5. **Closure 自举 emit**(回灌收尾):自由变量分析+lift+heap env+间接调用,复用 Generics 的 spec_defs 缓冲,fixpoint-safe。
-6. 远端:`git push` + 官网部署(需用户决定)。
+5. ~~Closure 自举 emit~~ **✅ 完成**(c38469b):arena_frontend.zeta emit 闭包转换(fn-type 助手 +
+   gen_lambda lift/env/间接调用,复用 spec_defs 缓冲);selfhost_llvm +4,fixpoint 4/4 不变。
+   **P1-P4 回灌全部完成。** 仅 ev_expr 解释器闭包/Float/Tuple 推迟(值系统无复合槽,次要路径)。
+6. 远端:`git push` + 官网部署(`tools/deploy-website.sh` → zeta.jennieapp.com)。
 
 ### 阶段B 实现笔记(给接续者)
 - 范式:复用泛型**函数**单态化(`lower_generic_call`/`get_or_build_specialization`/`mangle_instance`/`unify_ztype`)。
