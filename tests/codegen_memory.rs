@@ -252,6 +252,57 @@ fn main() -> Int {
 }
 
 #[test]
+fn enum_string_payload_dropped_each_iteration() {
+    // Each iteration boxes a heap String into an enum, matches it (binding clones an
+    // independent copy), then both the enum and the binding go out of scope and are
+    // dropped. No leak / double-free → differential result stays correct.
+    let src = "\
+import std.core;
+enum Msg { Text(String), Empty }
+fn main() -> Int {
+  let mut total: Int = 0;
+  let mut i: Int = 0;
+  while i < 50 {
+    let m: Msg = Msg.Text(string_concat(\"ab\", \"c\"));
+    match m {
+      Msg.Text(s) -> { total = total + string_len(s); }
+      Msg.Empty -> {}
+    }
+    i = i + 1;
+  }
+  return total;
+}";
+    assert_eq!(check(src), 150);
+    assert!(ir_of(src).contains("call void @free("));
+}
+
+#[test]
+fn enum_struct_payload_box_freed() {
+    // A struct payload is heap-BOXED in the enum (p1). Dropping the enum must drop
+    // the boxed struct's managed field (its String) AND free the box itself.
+    let src = "\
+import std.core;
+struct Tagged { name: String, n: Int }
+enum Wrap { One(Tagged), Zero }
+fn main() -> Int {
+  let mut total: Int = 0;
+  let mut i: Int = 0;
+  while i < 20 {
+    let w: Wrap = Wrap.One(Tagged { name: string_concat(\"x\", \"yz\"), n: i });
+    match w {
+      Wrap.One(t) -> { total = total + string_len(t.name) + t.n; }
+      Wrap.Zero -> {}
+    }
+    i = i + 1;
+  }
+  return total;
+}";
+    // sum over i in 0..20 of (3 + i) = 60 + 190 = 250.
+    assert_eq!(check(src), 250);
+    assert!(ir_of(src).contains("call void @free("));
+}
+
+#[test]
 fn loop_array_assigned_outward_stays_correct() {
     // The body-local array is deep-copied into the outer var on assignment, then
     // the body-local is freed — the outer copy must remain valid.

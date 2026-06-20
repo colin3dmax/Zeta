@@ -1471,6 +1471,17 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let fields = self.types.structs.borrow()[name].fields.clone();
                 fields.iter().any(|(_, t)| self.needs_drop(t))
             }
+            // An enum needs drop if any variant carries managed heap: a Str/Array
+            // payload (its buffer), or a Struct payload (always heap-BOXED via p1,
+            // so the box must be freed even when the struct itself has no managed
+            // fields). Int/Bool/Float payloads and payload-less variants are inline.
+            ZType::Enum(name) => {
+                let variants = self.types.enums.borrow()[name].clone();
+                variants.iter().any(|(_, p)| match p {
+                    Some(pt) => self.needs_drop(pt) || matches!(pt, ZType::Struct(_)),
+                    None => false,
+                })
+            }
             _ => false,
         }
     }
@@ -1571,6 +1582,55 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                         self.builder.build_call(df, &[fv.into()], "").unwrap();
                     }
                 }
+            }
+            // `{tag, p0, p1}`: switch on the tag and drop the active variant's
+            // payload. Str/Array → reconstruct {len, ptr} from (p0, p1) and call its
+            // drop (frees the buffer). Struct → load the boxed struct from p1, drop
+            // its managed fields, then free the box itself (a plain malloc).
+            ZType::Enum(name) => {
+                let variants = self.types.enums.borrow()[name].clone();
+                let sv = v.into_struct_value();
+                let tag = self.builder.build_extract_value(sv, 0, "etag").unwrap().into_int_value();
+                let p0 = self.builder.build_extract_value(sv, 1, "ep0").unwrap().into_int_value();
+                let p1 = self.builder.build_extract_value(sv, 2, "ep1").unwrap().into_pointer_value();
+                let end = self.context.append_basic_block(func, "e.end");
+                let default = self.context.append_basic_block(func, "e.def");
+                let mut cases = Vec::new();
+                let mut managed = Vec::new();
+                for (i, (_, payload)) in variants.iter().enumerate() {
+                    let pt = match payload {
+                        Some(pt) if self.needs_drop(pt) || matches!(pt, ZType::Struct(_)) => pt.clone(),
+                        _ => continue,
+                    };
+                    let blk = self.context.append_basic_block(func, "e.case");
+                    cases.push((self.i64t().const_int(i as u64, false), blk));
+                    managed.push((blk, pt));
+                }
+                self.builder.build_switch(tag, default, &cases).unwrap();
+                for (blk, pt) in managed {
+                    self.builder.position_at_end(blk);
+                    match &pt {
+                        ZType::Str | ZType::Array(_) => {
+                            let payload = self.make_len_ptr(p0, p1);
+                            if let Some(df) = self.get_or_build_drop(&pt) {
+                                self.builder.build_call(df, &[payload.into()], "").unwrap();
+                            }
+                        }
+                        ZType::Struct(sname) => {
+                            if let Some(df) = self.get_or_build_drop(&pt) {
+                                let struct_ty = self.types.struct_llvm(sname);
+                                let loaded = self.builder.build_load(struct_ty, p1, "boxload").unwrap();
+                                self.builder.build_call(df, &[loaded.into()], "").unwrap();
+                            }
+                            self.builder.build_call(self.free, &[p1.into()], "").unwrap();
+                        }
+                        _ => {}
+                    }
+                    self.builder.build_unconditional_branch(end).unwrap();
+                }
+                self.builder.position_at_end(default);
+                self.builder.build_unconditional_branch(end).unwrap();
+                self.builder.position_at_end(end);
             }
             _ => {}
         }
@@ -1678,6 +1738,62 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                     cur = self.builder.build_insert_value(cur, cv, i as u32, "si").unwrap().into_struct_value();
                 }
                 cur.into()
+            }
+            // Deep-copy the active variant's heap so the clone owns it independently:
+            // switch on the tag, clone the payload (Str/Array buffer; Struct → a fresh
+            // box), and overwrite (p0, p1). Inline payloads copy with the value as-is.
+            ZType::Enum(name) => {
+                let variants = self.types.enums.borrow()[name].clone();
+                let sv = v.into_struct_value();
+                let tag = self.builder.build_extract_value(sv, 0, "etag").unwrap().into_int_value();
+                let p0 = self.builder.build_extract_value(sv, 1, "ep0").unwrap().into_int_value();
+                let p1 = self.builder.build_extract_value(sv, 2, "ep1").unwrap().into_pointer_value();
+                let enum_ty = self.types.llvm(zt);
+                let slot = self.builder.build_alloca(enum_ty, "eclone").unwrap();
+                self.builder.build_store(slot, v).unwrap();
+                let end = self.context.append_basic_block(func, "ec.end");
+                let default = self.context.append_basic_block(func, "ec.def");
+                let mut cases = Vec::new();
+                let mut managed = Vec::new();
+                for (i, (_, payload)) in variants.iter().enumerate() {
+                    let pt = match payload {
+                        Some(pt) if self.needs_drop(pt) || matches!(pt, ZType::Struct(_)) => pt.clone(),
+                        _ => continue,
+                    };
+                    let blk = self.context.append_basic_block(func, "ec.case");
+                    cases.push((self.i64t().const_int(i as u64, false), blk));
+                    managed.push((blk, pt));
+                }
+                self.builder.build_switch(tag, default, &cases).unwrap();
+                for (blk, pt) in managed {
+                    self.builder.position_at_end(blk);
+                    let (np0, np1): (IntValue<'ctx>, PointerValue<'ctx>) = match &pt {
+                        ZType::Str | ZType::Array(_) => {
+                            let payload = self.make_len_ptr(p0, p1);
+                            let cloned = self.clone_value(payload.into(), &pt).into_struct_value();
+                            self.len_ptr_parts(cloned)
+                        }
+                        ZType::Struct(sname) => {
+                            let struct_ty = self.types.struct_llvm(sname);
+                            let loaded = self.builder.build_load(struct_ty, p1, "boxload").unwrap();
+                            let cloned = self.clone_value(loaded, &pt);
+                            let size = struct_ty.size_of().unwrap();
+                            let boxed = self.malloc_bytes(size);
+                            self.builder.build_store(boxed, cloned).unwrap();
+                            (self.i64t().const_zero(), boxed)
+                        }
+                        _ => (p0, p1),
+                    };
+                    let f1 = self.builder.build_struct_gep(enum_ty, slot, 1, "ecf1").unwrap();
+                    self.builder.build_store(f1, np0).unwrap();
+                    let f2 = self.builder.build_struct_gep(enum_ty, slot, 2, "ecf2").unwrap();
+                    self.builder.build_store(f2, np1).unwrap();
+                    self.builder.build_unconditional_branch(end).unwrap();
+                }
+                self.builder.position_at_end(default);
+                self.builder.build_unconditional_branch(end).unwrap();
+                self.builder.position_at_end(end);
+                self.builder.build_load(enum_ty, slot, "eres").unwrap()
             }
             _ => v,
         }
@@ -2145,25 +2261,34 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                             (p0, ZType::Int)
                         }
                         Some(ZType::Str) => {
-                            // Reconstruct the String {len, ptr} from (p0, p1).
+                            // Reconstruct the String {len, ptr} from (p0, p1), then
+                            // CLONE it so the binding owns an independent buffer — the
+                            // enum still owns the original and frees it on drop, so a
+                            // shared pointer would double-free.
                             let p0 = self.builder.build_extract_value(sv, 1, "plen").unwrap().into_int_value();
                             let p1 = self.builder.build_extract_value(sv, 2, "pdata").unwrap().into_pointer_value();
-                            (self.make_len_ptr(p0, p1).into(), ZType::Str)
+                            let shared = self.make_len_ptr(p0, p1).into();
+                            (self.clone_value(shared, &ZType::Str), ZType::Str)
                         }
                         Some(ZType::Array(elem)) => {
-                            // Rebuild {len, ptr} from (p0, p1), then deep-copy so the
-                            // bound local is an independent owner (safe to push/mutate).
+                            // Rebuild {len, ptr} from (p0, p1), then element-deep clone
+                            // so the binding is an independent owner (its element
+                            // strings/arrays don't alias the enum's — both get dropped).
                             let p0 = self.builder.build_extract_value(sv, 1, "plen").unwrap().into_int_value();
                             let p1 = self.builder.build_extract_value(sv, 2, "pdata").unwrap().into_pointer_value();
-                            let owned = self.deep_copy_array(self.make_len_ptr(p0, p1), &elem);
-                            (owned.into(), ZType::Array(elem))
+                            let shared = self.make_len_ptr(p0, p1).into();
+                            let ty = ZType::Array(elem);
+                            (self.clone_value(shared, &ty), ty)
                         }
                         Some(ZType::Struct(name)) => {
-                            // p1 points at the boxed struct; load it back by value.
+                            // p1 points at the boxed struct; load it, then clone so the
+                            // binding's managed fields don't alias the box (the enum
+                            // frees the box + its fields on drop).
                             let p1 = self.builder.build_extract_value(sv, 2, "pbox").unwrap().into_pointer_value();
-                            let struct_ty = self.types.struct_llvm(&name);
+                            let ty = ZType::Struct(name);
+                            let struct_ty = self.types.llvm(&ty);
                             let loaded = self.builder.build_load(struct_ty, p1, "boxload").unwrap();
-                            (loaded, ZType::Struct(name))
+                            (self.clone_value(loaded, &ty), ty)
                         }
                         _ => return Err("enum payload type not in the native subset".into()),
                     };
