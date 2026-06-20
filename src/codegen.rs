@@ -1467,13 +1467,10 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         match zt {
             ZType::Str | ZType::Array(_) => true,
             ZType::Tuple(elems) => elems.iter().any(|e| self.needs_drop(e)),
-            // Struct (and Enum/Closure) heap is a conservative leak for now:
-            // managing structs surfaced a heap double-free in the self-hosting
-            // frontend (isolated by bisection) that needs a focused follow-up.
-            // Their MANAGED members are still cloned at construction (so they
-            // stay independent of droppable sources — no use-after-free), they
-            // just aren't freed. Strings / arrays / tuples are fully managed.
-            ZType::Struct(_) => false,
+            ZType::Struct(name) => {
+                let fields = self.types.structs.borrow()[name].fields.clone();
+                fields.iter().any(|(_, t)| self.needs_drop(t))
+            }
             _ => false,
         }
     }

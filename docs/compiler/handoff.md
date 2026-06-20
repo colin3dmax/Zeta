@@ -99,12 +99,16 @@ index.html(能力清单)。**未部署**。
     构造点(Array/Tuple/Struct/EnumVariant payload)bind_owned 每个 managed 成员;push 拥有追加元素;
     return move-on-return。**Str / Array / Tuple 完全值管理零泄漏**(含 string array、嵌套);
     codegen_memory 13 个差分测试 + fixpoint 4/4 无回归。
-    **⚠️ 遗留(下一步专项):Struct / Enum / Closure 仍保守泄漏。** 给 **Struct** 开管理(needs_drop
-    Struct→true)时,自举前端出现**堆 double-free**(单线程过、多线程 SEGV;已 bisection 隔离到
-    **struct clone/drop**)。其 managed 成员仍在构造点 clone(独立于源,无 UAF),只是不释放。
-    **调试建议**:写最小复现(struct 含 array 字段 + `arena = f(arena)` 线程化模式)走 native codegen,
-    多线程跑 codegen_selfhost_run 是最敏感探测器;重点查 @__clone_Struct/@__drop_Struct 与 move/clone 配对
-    (字段索引、generic 实例命名、struct 按值传参的 by-value ABI)。修好后:Struct→Enum payload→Closure env。
+10b. **#74 值语义内存 v6 ✅(commit 6d669d6)= Struct 开管理,全聚合零泄漏**:needs_drop(Struct) 改为
+    按字段递归判定(任一字段需 drop ⇒ struct 需 drop),复用 v5 的生成式 @__drop_T/@__clone_T 自动覆盖
+    嵌套/含数组/含字符串 struct。**至此 array/string/tuple/struct 全聚合都走值语义 + 确定性 Drop。**
+    ⚠️**重要更正**:v5 里归因到 struct 的「堆 double-free」**是误诊**。真因 = 并行测试 harness 下对 ~1 万行
+    合并前端做深递归(lower/run_mir/codegen)时,默认 **2 MiB 测试线程栈处于临界值**,struct 管理加深的
+    codegen 递归把它推过边界 → 偶发 SIGSEGV/SIGBUS。**证据**:ASan 对生成代码(clang 编译 run/mir-dump/
+    ast-dump 各模式)全程干净、digest 始终一致;改用 64 MiB 大栈线程跑 codegen_selfhost_run 后连跑 5 次零
+    flake。**经验**:并行 harness 下自举前端的偶发 SEGV 优先怀疑栈溢出(RUST_MIN_STACK=64M 一测便知),
+    别先假设堆错误。Enum payload / Closure env 的释放可同法推进(needs_drop 已对 Tuple/Struct 递归,
+    Enum/Closure 待补对应分支)。门禁:全 llvm 套件 53 suite 0 失败、fixpoint 4/4(144s)。
 11. **COW + move 优化(性能,#74 之后)**:绑定从「clone」改「共享+refcount+写时拷」(Swift/Nim),
     砍掉值语义的冗余拷贝;无环 ⇒ refcount 无需环收集器。这是「无别名 ⇒ 可超典型 C」性能红利的兑现处。
 12. 其它候选:#77 P4 并发 / #78 P5 FFI;ev_expr 解释器补全(FloatArray 现已有,blocker 或已解)。

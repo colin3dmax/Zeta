@@ -56,7 +56,24 @@ fn main() -> Int {{\n\
 
 /// Run the combined program through interpreter and native JIT; assert the Int
 /// digests match (and are non-trivial, i.e. the dump wasn't empty).
+///
+/// Lowering + interpreting + codegen of the ~10k-line combined frontend recurses
+/// deeply over very large MIR trees. The default 2 MiB test-thread stack is right
+/// at the edge for this input, so under the parallel test harness it intermittently
+/// overflowed (a flaky SIGSEGV — not a heap bug; ASan is clean and the digests
+/// match). Run the work on a thread with a generous stack instead.
 fn assert_native_matches_interpreter(prog: &str, mode: &str) {
+    let prog = prog.to_string();
+    let mode = mode.to_string();
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || assert_native_matches_interpreter_inner(&prog, &mode))
+        .expect("spawn large-stack worker")
+        .join()
+        .expect("worker thread panicked");
+}
+
+fn assert_native_matches_interpreter_inner(prog: &str, mode: &str) {
     let src = combined(prog, mode);
     let program = zeta::lower_source(&src).expect("combined frontend should lower");
     let oracle = match zeta::runtime::run_mir(&program).expect("interpreter should run") {
