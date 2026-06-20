@@ -91,19 +91,24 @@ index.html(能力清单)。**未部署**。
    (学 Swift 值类型+COW、Nim ARC;**不**搬 Rust 借用检查器——避开新手陡峭),关键优势:值语义⇒无环⇒
    连环收集器都不需要。
 
-   **⚠️ 全语言递归 Drop 尝试(2026-06-20)——已回退,留经验**:试过把数组那套(deep_copy_value +
-   drop_value + bind_owned)递归推广到 Str/Tuple/Struct/Array(managed),构造点深拷成员、全链 Drop。
-   **flat 类型全通过**(string/struct/tuple/enum/array/dynarray/memory 7 套差分绿),但在**自举前端**
-   (recursive_run)**栈溢出**:① **inline 递归 Drop/Copy 对递归类型(struct 经 array 字段成环)会无限
-   展开**——加 visited 栈/深度兜底仍溢出,说明是**运行时**溢出(copy/drop 对复杂结构数据损坏 → JIT 的
-   递归下降 parser 死循环)。**结论:inline drop/copy 不行,正解是为每个类型生成递归析构/克隆函数
-   (`@drop_T(ptr)`/`@clone_T`,像 Rust 的 `Drop::drop`/`Clone`,runtime 递归处理任意深度 + 天然支持
-   递归类型)。** 这是字符串/聚合零泄漏的真正前置,是个独立中型工程。已回退到 v4(数组零泄漏)干净态。
-   **下一步若做**:① 生成 per-type drop/clone 函数(替代 inline);② 字符串纳入(值拷贝或 Rc);
-   ③ 聚合/容器递归;④ 全程差分 + 自举 fixpoint 守门(自举前端是最强的 UAF/损坏探测器)。
-   字符串若用 Rc:堆串加 refcount 头、retain/drop-release、归零 free、全局字面量哨兵 refcount 永不释放。
-8. 其它候选:#77 P4 并发 / #78 P5 FFI;ev_expr 解释器补全(FloatArray 现已有,blocker 或已解)。
-9. 远端:`git push`(本会话 Closure/内存 v1 提交)+ 官网重部署(`tools/deploy-website.sh`)。
+10. **#74 值语义内存 v5 ✅(commit 656ace0)= 生成式 per-type drop/clone**:落地「值语义 + 自动 Drop」
+    的正确架构。为每个 managed 类型生成一份递归 `@__drop_T`/`@__clone_T` 模块函数(缓存,先于函数体插
+    缓存以支持递归类型),绑定点调 clone、scope/return/reassign 调 drop。**函数在数据上递归(有限)⇒
+    天然支持递归类型、无 codegen 栈溢出**(这正是先前 inline 递归失败的根因,现已解决)。框架:needs_drop /
+    get_or_build_drop+emit_drop_body / get_or_build_clone+emit_clone_body / clone_value / drop_local;
+    构造点(Array/Tuple/Struct/EnumVariant payload)bind_owned 每个 managed 成员;push 拥有追加元素;
+    return move-on-return。**Str / Array / Tuple 完全值管理零泄漏**(含 string array、嵌套);
+    codegen_memory 13 个差分测试 + fixpoint 4/4 无回归。
+    **⚠️ 遗留(下一步专项):Struct / Enum / Closure 仍保守泄漏。** 给 **Struct** 开管理(needs_drop
+    Struct→true)时,自举前端出现**堆 double-free**(单线程过、多线程 SEGV;已 bisection 隔离到
+    **struct clone/drop**)。其 managed 成员仍在构造点 clone(独立于源,无 UAF),只是不释放。
+    **调试建议**:写最小复现(struct 含 array 字段 + `arena = f(arena)` 线程化模式)走 native codegen,
+    多线程跑 codegen_selfhost_run 是最敏感探测器;重点查 @__clone_Struct/@__drop_Struct 与 move/clone 配对
+    (字段索引、generic 实例命名、struct 按值传参的 by-value ABI)。修好后:Struct→Enum payload→Closure env。
+11. **COW + move 优化(性能,#74 之后)**:绑定从「clone」改「共享+refcount+写时拷」(Swift/Nim),
+    砍掉值语义的冗余拷贝;无环 ⇒ refcount 无需环收集器。这是「无别名 ⇒ 可超典型 C」性能红利的兑现处。
+12. 其它候选:#77 P4 并发 / #78 P5 FFI;ev_expr 解释器补全(FloatArray 现已有,blocker 或已解)。
+13. 远端:`git push`(本会话各提交)+ 官网重部署(`tools/deploy-website.sh`)。
 
 ### 阶段B 实现笔记(给接续者)
 - 范式:复用泛型**函数**单态化(`lower_generic_call`/`get_or_build_specialization`/`mangle_instance`/`unify_ztype`)。
