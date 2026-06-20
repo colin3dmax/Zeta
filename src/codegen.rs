@@ -540,26 +540,6 @@ fn parse_ztype(text: &str, struct_names: &[&str], enum_names: &[&str]) -> Result
     }
 }
 
-/// Whether `expr` evaluates to a freshly-allocated, unaliased array buffer (so a
-/// binding need not deep-copy it for value semantics): an array literal or an
-/// `*_array_empty` / `*_array_push` builtin result.
-fn is_fresh_array(expr: &MirExpr) -> bool {
-    match expr {
-        MirExpr::ArrayLiteral { .. } => true,
-        MirExpr::Call { callee, .. } => matches!(
-            callee.as_str(),
-            "int_array_empty"
-                | "int_array_push"
-                | "bool_array_empty"
-                | "bool_array_push"
-                | "string_array_empty"
-                | "string_array_push"
-                | "float_array_empty"
-                | "float_array_push"
-        ),
-        _ => false,
-    }
-}
 
 /// Recognize the in-place push idiom `name = <T>_array_push(name, value)` —
 /// returns `(name, element type, value expr)` when `place` is exactly the local
@@ -1235,11 +1215,9 @@ fn build_module<'ctx>(
             .map_err(|e| format!("in `{}`: {e}", function.name))?;
         if !terminated {
             let ret = &types.returns[&function.name];
-            // Implicit fall-through return: free the function's array locals
-            // (params + top-level lets) unless it returns an array.
-            if !matches!(ret, ZType::Array(_)) {
-                lower.free_live_arrays_except(None);
-            }
+            // Implicit fall-through return: the value is a zero/zeroinitializer
+            // (aliases no local), so drop every managed local.
+            lower.free_live_managed_except(None);
             let zero = lower.zero_of(ret);
             builder.build_return(Some(&zero)).unwrap();
         }
@@ -1359,29 +1337,35 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
     /// types are already value types in LLVM and pass through. (String elements
     /// are themselves immutable, so copying their `{len,ptr}` is safe sharing.)
     fn bind_value(&self, value: BasicValueEnum<'ctx>, zt: &ZType) -> BasicValueEnum<'ctx> {
-        if let ZType::Array(elem) = zt {
-            self.deep_copy_array(value.into_struct_value(), elem).into()
-        } else {
-            value
+        self.clone_value(value, zt)
+    }
+
+    /// Whether `expr`'s value is already a uniquely-owned heap tree the binding
+    /// can TAKE without cloning. A container literal (array/tuple/struct/enum) is
+    /// self-owned because its managed members are cloned at construction; a call
+    /// result MOVES ownership from the callee. Everything else (a `Load`, a
+    /// field/index read, a string literal) aliases memory owned elsewhere and
+    /// must be cloned.
+    fn is_owned_source(&self, expr: &MirExpr, zt: &ZType) -> bool {
+        match expr {
+            MirExpr::ArrayLiteral { .. }
+            | MirExpr::Tuple { .. }
+            | MirExpr::StructLiteral { .. }
+            | MirExpr::EnumVariant { .. } => true,
+            MirExpr::Call { .. } => self.needs_drop(zt),
+            _ => false,
         }
     }
 
-    /// Like [`bind_value`] but skips the array deep-copy when `expr` already
-    /// produced a fresh, unaliased buffer the binding can TAKE OWNERSHIP of —
-    /// copying it would be pure waste (and would leak the original). Such sources:
-    /// an array literal, an `*_array_*` builtin, or any function/closure call
-    /// returning an array (the callee transfers ownership of the returned buffer;
-    /// see the array-return path in `lower_stmt`). Strings are never copied
-    /// regardless, being immutable.
+    /// Like [`bind_value`] but skips the clone when `expr` already produced a
+    /// uniquely-owned value (see [`is_owned_source`]).
     fn bind_owned(
         &self,
         expr: &MirExpr,
         value: BasicValueEnum<'ctx>,
         zt: &ZType,
     ) -> BasicValueEnum<'ctx> {
-        let owns =
-            is_fresh_array(expr) || (matches!(expr, MirExpr::Call { .. }) && matches!(zt, ZType::Array(_)));
-        if owns {
+        if self.is_owned_source(expr, zt) {
             value
         } else {
             self.bind_value(value, zt)
@@ -1465,30 +1449,32 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         Ok(false)
     }
 
-    /// Free the heap buffers of array-typed locals declared since the `saved`
-    /// scope snapshot. Each array local UNIQUELY owns its capacity-headed buffer
-    /// (value semantics deep-copies the array at every other binding point), so
-    /// on the fall-through path at scope exit the local is dead with no live
-    /// alias — freeing it is sound. Strings (immutable, shared), closure
-    /// environments, and boxed enum payloads are shared by value-copy and are
-    /// NOT freed here. Called only on fall-through (never after a return / break /
-    /// continue, where the value may escape and trailing code is unreachable).
-    fn free_scope_locals(&mut self, saved: &HashMap<String, (PointerValue<'ctx>, ZType)>) {
-        let mut slots: Vec<PointerValue<'ctx>> = Vec::new();
-        for (name, (slot, zt)) in self.locals.iter() {
-            if !matches!(zt, ZType::Array(_)) {
-                continue;
-            }
-            // Declared in THIS scope = absent from the snapshot, or a shadow
-            // re-using the name with a different slot. The outer binding (same
-            // slot) is left for its own scope to free.
-            let outer = saved.get(name).map(|(s, _)| *s == *slot).unwrap_or(false);
-            if !outer {
-                slots.push(*slot);
-            }
-        }
-        for slot in slots {
-            self.free_array_at_slot(slot);
+    // ===== Value-semantics memory management: generated per-type drop/clone =====
+    //
+    // The Rust-style model realized through value semantics: each value uniquely
+    // owns its heap, freed deterministically at scope exit (no GC). For every
+    // MANAGED type we generate ONE recursive `@__drop_T` / `@__clone_T` module
+    // function (cached, built once). They recurse on DATA via calls — so a
+    // recursive type (struct reachable from itself through an array field) drops
+    // to its actual finite depth at RUNTIME, with no codegen blow-up. Enum and
+    // Closure heap stay a conservative leak for now (their payload/env layout
+    // isn't statically known at every site).
+
+    /// Whether `zt` owns heap that drop/clone must manage. Terminates: `Array`
+    /// short-circuits (no recursion into the element), and inline struct/tuple
+    /// nesting is acyclic (it would otherwise be infinite size).
+    fn needs_drop(&self, zt: &ZType) -> bool {
+        match zt {
+            ZType::Str | ZType::Array(_) => true,
+            ZType::Tuple(elems) => elems.iter().any(|e| self.needs_drop(e)),
+            // Struct (and Enum/Closure) heap is a conservative leak for now:
+            // managing structs surfaced a heap double-free in the self-hosting
+            // frontend (isolated by bisection) that needs a focused follow-up.
+            // Their MANAGED members are still cloned at construction (so they
+            // stay independent of droppable sources — no use-after-free), they
+            // just aren't freed. Strings / arrays / tuples are fully managed.
+            ZType::Struct(_) => false,
+            _ => false,
         }
     }
 
@@ -1504,36 +1490,250 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         self.builder.build_call(self.free, &[base.into()], "").unwrap();
     }
 
-    /// Emit `free` for the array buffer currently held in `slot`: load `{len,
-    /// ptr}`, then free its buffer.
-    fn free_array_at_slot(&self, slot: PointerValue<'ctx>) {
-        let arr = self
-            .builder
-            .build_load(array_struct_type(self.context), slot, "freearr")
-            .unwrap()
-            .into_struct_value();
-        let data = self
-            .builder
-            .build_extract_value(arr, 1, "freedata")
-            .unwrap()
-            .into_pointer_value();
-        self.free_array_data(data);
+    /// Get (or generate once) the `void @__drop_T(T)` destructor for a managed
+    /// type. Inserted into the cache BEFORE its body is emitted so a recursive
+    /// type's drop can call itself.
+    fn get_or_build_drop(&self, zt: &ZType) -> Option<FunctionValue<'ctx>> {
+        if !self.needs_drop(zt) {
+            return None;
+        }
+        let mangled = format!("__drop_{}", zty_mangle(zt));
+        if let Some(f) = self.specialized.borrow().get(&mangled) {
+            return Some(*f);
+        }
+        let param_ty = self.types.llvm(zt);
+        let fn_ty = self.context.void_type().fn_type(&[param_ty.into()], false);
+        let func = self.module.add_function(&mangled, fn_ty, None);
+        self.specialized.borrow_mut().insert(mangled, func);
+        let saved = self.builder.get_insert_block();
+        let entry = self.context.append_basic_block(func, "entry");
+        self.builder.position_at_end(entry);
+        let v = func.get_nth_param(0).expect("drop param");
+        self.emit_drop_body(v, zt, func);
+        self.builder.build_return(None).unwrap();
+        if let Some(block) = saved {
+            self.builder.position_at_end(block);
+        }
+        Some(func)
     }
 
-    /// Free every currently-live array local except `skip` (the slot whose buffer
-    /// is being returned, for an array return — its ownership transfers to the
-    /// caller). One entry per name; the newest binding shadows. Sound because the
-    /// function is exiting so every other array local is dead.
-    fn free_live_arrays_except(&self, skip: Option<PointerValue<'ctx>>) {
-        let slots: Vec<PointerValue<'ctx>> = self
+    fn emit_drop_body(&self, v: BasicValueEnum<'ctx>, zt: &ZType, func: FunctionValue<'ctx>) {
+        match zt {
+            ZType::Str => {
+                let ptr = self
+                    .builder
+                    .build_extract_value(v.into_struct_value(), 1, "sd")
+                    .unwrap()
+                    .into_pointer_value();
+                self.builder.build_call(self.free, &[ptr.into()], "").unwrap();
+            }
+            ZType::Array(elem) => {
+                let sv = v.into_struct_value();
+                let len = self.builder.build_extract_value(sv, 0, "al").unwrap().into_int_value();
+                let data = self.builder.build_extract_value(sv, 1, "ad").unwrap().into_pointer_value();
+                if let Some(df) = self.get_or_build_drop(elem) {
+                    // for i in 0..len: @__drop_elem(load data[i])
+                    let elem_llvm = self.types.llvm(elem);
+                    let entry = self.builder.get_insert_block().unwrap();
+                    let head = self.context.append_basic_block(func, "d.head");
+                    let body = self.context.append_basic_block(func, "d.body");
+                    let exit = self.context.append_basic_block(func, "d.exit");
+                    self.builder.build_unconditional_branch(head).unwrap();
+                    self.builder.position_at_end(head);
+                    let phi = self.builder.build_phi(self.i64t(), "i").unwrap();
+                    phi.add_incoming(&[(&self.i64t().const_zero(), entry)]);
+                    let i = phi.as_basic_value().into_int_value();
+                    let c = self.builder.build_int_compare(IntPredicate::SLT, i, len, "c").unwrap();
+                    self.builder.build_conditional_branch(c, body, exit).unwrap();
+                    self.builder.position_at_end(body);
+                    let ep = unsafe { self.builder.build_in_bounds_gep(elem_llvm, data, &[i], "ep").unwrap() };
+                    let ev = self.builder.build_load(elem_llvm, ep, "ev").unwrap();
+                    self.builder.build_call(df, &[ev.into()], "").unwrap();
+                    let nx = self.builder.build_int_add(i, self.i64t().const_int(1, false), "nx").unwrap();
+                    phi.add_incoming(&[(&nx, self.builder.get_insert_block().unwrap())]);
+                    self.builder.build_unconditional_branch(head).unwrap();
+                    self.builder.position_at_end(exit);
+                }
+                self.free_array_data(data);
+            }
+            ZType::Tuple(elems) => {
+                let sv = v.into_struct_value();
+                for (i, e) in elems.iter().enumerate() {
+                    if let Some(df) = self.get_or_build_drop(e) {
+                        let fv = self.builder.build_extract_value(sv, i as u32, "te").unwrap();
+                        self.builder.build_call(df, &[fv.into()], "").unwrap();
+                    }
+                }
+            }
+            ZType::Struct(name) => {
+                let fields = self.types.structs.borrow()[name].fields.clone();
+                let sv = v.into_struct_value();
+                for (i, (_, ft)) in fields.iter().enumerate() {
+                    if let Some(df) = self.get_or_build_drop(ft) {
+                        let fv = self.builder.build_extract_value(sv, i as u32, "fe").unwrap();
+                        self.builder.build_call(df, &[fv.into()], "").unwrap();
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Get (or generate once) the `T @__clone_T(T)` deep-copy for a managed type.
+    fn get_or_build_clone(&self, zt: &ZType) -> Option<FunctionValue<'ctx>> {
+        if !self.needs_drop(zt) {
+            return None;
+        }
+        let mangled = format!("__clone_{}", zty_mangle(zt));
+        if let Some(f) = self.specialized.borrow().get(&mangled) {
+            return Some(*f);
+        }
+        let param_ty = self.types.llvm(zt);
+        let fn_ty = param_ty.fn_type(&[param_ty.into()], false);
+        let func = self.module.add_function(&mangled, fn_ty, None);
+        self.specialized.borrow_mut().insert(mangled, func);
+        let saved = self.builder.get_insert_block();
+        let entry = self.context.append_basic_block(func, "entry");
+        self.builder.position_at_end(entry);
+        let v = func.get_nth_param(0).expect("clone param");
+        let r = self.emit_clone_body(v, zt, func);
+        self.builder.build_return(Some(&r)).unwrap();
+        if let Some(block) = saved {
+            self.builder.position_at_end(block);
+        }
+        Some(func)
+    }
+
+    fn emit_clone_body(
+        &self,
+        v: BasicValueEnum<'ctx>,
+        zt: &ZType,
+        func: FunctionValue<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
+        match zt {
+            ZType::Str => {
+                let sv = v.into_struct_value();
+                let len = self.builder.build_extract_value(sv, 0, "sl").unwrap().into_int_value();
+                let src = self.builder.build_extract_value(sv, 1, "ss").unwrap().into_pointer_value();
+                let buf = self.malloc_bytes(len);
+                self.memcpy_bytes(buf, src, len);
+                self.make_len_ptr(len, buf).into()
+            }
+            ZType::Array(elem) => {
+                let sv = v.into_struct_value();
+                let len = self.builder.build_extract_value(sv, 0, "cl").unwrap().into_int_value();
+                let src = self.builder.build_extract_value(sv, 1, "cs").unwrap().into_pointer_value();
+                let elem_size = self.elem_bytes(elem);
+                let dst = self.alloc_array_buf(len, elem_size);
+                if let Some(cf) = self.get_or_build_clone(elem) {
+                    // for i in 0..len: dst[i] = @__clone_elem(src[i])
+                    let elem_llvm = self.types.llvm(elem);
+                    let entry = self.builder.get_insert_block().unwrap();
+                    let head = self.context.append_basic_block(func, "c.head");
+                    let body = self.context.append_basic_block(func, "c.body");
+                    let exit = self.context.append_basic_block(func, "c.exit");
+                    self.builder.build_unconditional_branch(head).unwrap();
+                    self.builder.position_at_end(head);
+                    let phi = self.builder.build_phi(self.i64t(), "i").unwrap();
+                    phi.add_incoming(&[(&self.i64t().const_zero(), entry)]);
+                    let i = phi.as_basic_value().into_int_value();
+                    let c = self.builder.build_int_compare(IntPredicate::SLT, i, len, "c").unwrap();
+                    self.builder.build_conditional_branch(c, body, exit).unwrap();
+                    self.builder.position_at_end(body);
+                    let sp = unsafe { self.builder.build_in_bounds_gep(elem_llvm, src, &[i], "sp").unwrap() };
+                    let ev = self.builder.build_load(elem_llvm, sp, "ev").unwrap();
+                    let cv = self.builder.build_call(cf, &[ev.into()], "cv").unwrap().try_as_basic_value().basic().unwrap();
+                    let dp = unsafe { self.builder.build_in_bounds_gep(elem_llvm, dst, &[i], "dp").unwrap() };
+                    self.builder.build_store(dp, cv).unwrap();
+                    let nx = self.builder.build_int_add(i, self.i64t().const_int(1, false), "nx").unwrap();
+                    phi.add_incoming(&[(&nx, self.builder.get_insert_block().unwrap())]);
+                    self.builder.build_unconditional_branch(head).unwrap();
+                    self.builder.position_at_end(exit);
+                } else {
+                    let bytes = self.builder.build_int_mul(len, elem_size, "cb").unwrap();
+                    self.memcpy_bytes(dst, src, bytes);
+                }
+                self.make_len_ptr(len, dst).into()
+            }
+            ZType::Tuple(elems) => {
+                let sv = v.into_struct_value();
+                let mut cur = self.types.llvm(zt).into_struct_type().get_undef();
+                for (i, e) in elems.iter().enumerate() {
+                    let fv = self.builder.build_extract_value(sv, i as u32, "tf").unwrap();
+                    let cv = match self.get_or_build_clone(e) {
+                        Some(cf) => self.builder.build_call(cf, &[fv.into()], "cv").unwrap().try_as_basic_value().basic().unwrap(),
+                        None => fv,
+                    };
+                    cur = self.builder.build_insert_value(cur, cv, i as u32, "ti").unwrap().into_struct_value();
+                }
+                cur.into()
+            }
+            ZType::Struct(name) => {
+                let fields = self.types.structs.borrow()[name].fields.clone();
+                let sv = v.into_struct_value();
+                let mut cur = self.types.struct_llvm(name).get_undef();
+                for (i, (_, ft)) in fields.iter().enumerate() {
+                    let fv = self.builder.build_extract_value(sv, i as u32, "sf").unwrap();
+                    let cv = match self.get_or_build_clone(ft) {
+                        Some(cf) => self.builder.build_call(cf, &[fv.into()], "cv").unwrap().try_as_basic_value().basic().unwrap(),
+                        None => fv,
+                    };
+                    cur = self.builder.build_insert_value(cur, cv, i as u32, "si").unwrap().into_struct_value();
+                }
+                cur.into()
+            }
+            _ => v,
+        }
+    }
+
+    /// Recursively clone a value (call `@__clone_T`) so it uniquely owns its heap.
+    fn clone_value(&self, value: BasicValueEnum<'ctx>, zt: &ZType) -> BasicValueEnum<'ctx> {
+        match self.get_or_build_clone(zt) {
+            Some(f) => self.builder.build_call(f, &[value.into()], "clone").unwrap().try_as_basic_value().basic().unwrap(),
+            None => value,
+        }
+    }
+
+    /// Recursively drop the value currently held in `slot` (call `@__drop_T`).
+    fn drop_local(&self, slot: PointerValue<'ctx>, zt: &ZType) {
+        if let Some(f) = self.get_or_build_drop(zt) {
+            let val = self.builder.build_load(self.types.llvm(zt), slot, "dl").unwrap();
+            self.builder.build_call(f, &[val.into()], "").unwrap();
+        }
+    }
+
+    /// Drop the managed locals declared since the `saved` scope snapshot (the
+    /// Rust-style scope-exit `Drop`). Called only on fall-through; value semantics
+    /// gives each local unique ownership, so the drop is sound (no double-free /
+    /// use-after-free).
+    fn free_scope_locals(&mut self, saved: &HashMap<String, (PointerValue<'ctx>, ZType)>) {
+        let mut targets: Vec<(PointerValue<'ctx>, ZType)> = Vec::new();
+        for (name, (slot, zt)) in self.locals.iter() {
+            if !self.needs_drop(zt) {
+                continue;
+            }
+            let outer = saved.get(name).map(|(s, _)| *s == *slot).unwrap_or(false);
+            if !outer {
+                targets.push((*slot, zt.clone()));
+            }
+        }
+        for (slot, zt) in targets {
+            self.drop_local(slot, &zt);
+        }
+    }
+
+    /// Drop every currently-live managed local except `skip` (the slot whose
+    /// value MOVES out as the return value). Sound because the function is
+    /// exiting so every other managed local is dead.
+    fn free_live_managed_except(&self, skip: Option<PointerValue<'ctx>>) {
+        let targets: Vec<(PointerValue<'ctx>, ZType)> = self
             .locals
             .values()
-            .filter(|(_, zt)| matches!(zt, ZType::Array(_)))
-            .map(|(slot, _)| *slot)
-            .filter(|slot| Some(*slot) != skip)
+            .filter(|(slot, zt)| self.needs_drop(zt) && Some(*slot) != skip)
+            .map(|(slot, zt)| (*slot, zt.clone()))
             .collect();
-        for slot in slots {
-            self.free_array_at_slot(slot);
+        for (slot, zt) in targets {
+            self.drop_local(slot, &zt);
         }
     }
 
@@ -1577,12 +1777,11 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let (v, vt) = self.lower_expr(value)?;
                 let v = self.bind_owned(value, v, &vt);
                 let (slot, slot_ty) = self.resolve_place(place)?;
-                // Reassigning a simple array local: free the old buffer first. The
-                // new value was already deep-copied / freshly allocated by
-                // `bind_owned`, so it cannot alias the old buffer, and the old
-                // buffer is uniquely owned by this local — safe to free.
-                if matches!(place, MirPlace::Local(_)) && matches!(slot_ty, ZType::Array(_)) {
-                    self.free_array_at_slot(slot);
+                // Reassigning a simple managed local: drop the old value first. The
+                // new value was already cloned/owned by `bind_owned`, so it can't
+                // alias the old, and the old is uniquely owned by this local.
+                if matches!(place, MirPlace::Local(_)) && self.needs_drop(&slot_ty) {
+                    self.drop_local(slot, &slot_ty);
                 }
                 self.builder.build_store(slot, v).unwrap();
                 Ok(false)
@@ -1590,28 +1789,32 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             MirStmt::Return(value) => {
                 let v = match value {
                     Some(expr) => {
-                        let (v, vt) = self.lower_expr(expr)?;
-                        if matches!(vt, ZType::Array(_)) {
-                            // Array return: ownership of the returned buffer
-                            // transfers to the caller (which takes it without a
-                            // copy — see `bind_owned`). Free every OTHER array
-                            // local; if returning a local directly, skip its slot
-                            // (that buffer IS the return value).
-                            let skip = match expr {
-                                MirExpr::Load(name) => self.locals.get(name).and_then(|(slot, zt)| {
-                                    matches!(zt, ZType::Array(_)).then_some(*slot)
-                                }),
-                                _ => None,
-                            };
-                            self.free_live_arrays_except(skip);
+                        let (v0, vt) = self.lower_expr(expr)?;
+                        if !self.needs_drop(&vt) {
+                            self.free_live_managed_except(None);
+                            v0
+                        } else if let Some(slot) = match expr {
+                            // Returning a whole managed local → MOVE it: keep its
+                            // value, drop every OTHER managed local.
+                            MirExpr::Load(name) => self
+                                .locals
+                                .get(name)
+                                .and_then(|(slot, zt)| self.needs_drop(zt).then_some(*slot)),
+                            _ => None,
+                        } {
+                            self.free_live_managed_except(Some(slot));
+                            v0
                         } else {
-                            // Non-array return: no array escapes, free them all.
-                            self.free_live_arrays_except(None);
+                            // Owned literal/call (independent) or a field/element
+                            // that ALIASES a local: make the return value
+                            // independent (clone the aliasing case), THEN drop all.
+                            let v = self.bind_owned(expr, v0, &vt);
+                            self.free_live_managed_except(None);
+                            v
                         }
-                        v
                     }
                     None => {
-                        self.free_live_arrays_except(None);
+                        self.free_live_managed_except(None);
                         self.i64t().const_zero().into()
                     }
                 };
@@ -2601,6 +2804,8 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                             .value;
                         let (v, vt) = self.lower_expr(value_expr)?;
                         unify_ztype(fty, &vt, &type_params, &mut subst);
+                        // The struct owns each managed field.
+                        let v = self.bind_owned(value_expr, v, &vt);
                         lowered.push(v);
                     }
                     let args: Vec<ZType> = type_params
@@ -2629,7 +2834,9 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                         .find(|f| f.name == field_name)
                         .ok_or_else(|| format!("missing field `{field_name}` in `{ty}` literal"))?
                         .value;
-                    let (v, _) = self.lower_expr(value_expr)?;
+                    let (v, vt) = self.lower_expr(value_expr)?;
+                    // The struct owns each managed field.
+                    let v = self.bind_owned(value_expr, v, &vt);
                     current = self
                         .builder
                         .build_insert_value(current, v, index as u32, "ins")
@@ -2648,7 +2855,9 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let tuple_ty = ZType::Tuple(elem_types);
                 let struct_ty = self.types.llvm(&tuple_ty).into_struct_type();
                 let mut current = struct_ty.get_undef();
-                for (index, (v, _)) in values.into_iter().enumerate() {
+                for (index, (element, (v, vt))) in elements.iter().zip(values).enumerate() {
+                    // The tuple owns each managed element.
+                    let v = self.bind_owned(element, v, &vt);
                     current = self
                         .builder
                         .build_insert_value(current, v, index as u32, "tup")
@@ -2711,7 +2920,9 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                     self.i64t().const_int(n as u64, false),
                     self.elem_bytes(&elem),
                 );
-                for (i, (v, _)) in values.into_iter().enumerate() {
+                for (i, (element, (v, vt))) in elements.iter().zip(values).enumerate() {
+                    // The array owns its elements: clone a managed, non-fresh element.
+                    let v = self.bind_owned(element, v, &vt);
                     let ptr = unsafe {
                         self.builder
                             .build_in_bounds_gep(
@@ -2793,27 +3004,25 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let (p0, p1) = match payload {
                     None => (self.i64t().const_zero(), null),
                     Some(expr) => {
-                        let (v, vt) = self.lower_expr(expr)?;
+                        let (v0, vt) = self.lower_expr(expr)?;
                         if let Some(decl) = &payload_decl {
                             unify_ztype(decl, &vt, &type_params, &mut subst);
                         }
+                        // The enum owns its payload, independent of any droppable
+                        // source it aliases. The enum value itself is NOT dropped
+                        // (conservative leak for now), but cloning keeps the source
+                        // safely droppable. `bind_owned` skips the clone for an
+                        // already-owned source (a fresh call result).
+                        let v = self.bind_owned(expr, v0, &vt);
                         match &vt {
                             ZType::Int => (v.into_int_value(), null),
-                            ZType::Str => {
+                            ZType::Str | ZType::Array(_) => {
                                 let (len, data) = self.len_ptr_parts(v.into_struct_value());
                                 (len, data)
                             }
-                            ZType::Array(elem) => {
-                                // Array payload reuses the String {len, ptr} split
-                                // across (p0, p1). Deep-copy so the enum owns an
-                                // independent buffer (value semantics).
-                                let owned = self.deep_copy_array(v.into_struct_value(), elem);
-                                let (len, data) = self.len_ptr_parts(owned);
-                                (len, data)
-                            }
                             ZType::Struct(name) => {
-                                // Struct payload is wider than the inline slot: box a
-                                // by-value copy on the heap, pointer in p1 (p0 unused).
+                                // Struct payload is wider than the inline slot: box the
+                                // (already-owned) struct on the heap, pointer in p1.
                                 let size = self.types.struct_llvm(name).size_of().unwrap();
                                 let boxed = self.malloc_bytes(size);
                                 self.builder.build_store(boxed, v).unwrap();
@@ -3015,16 +3224,43 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
     ) -> Result<(BasicValueEnum<'ctx>, ZType), String> {
         let (arr, _) = self.lower_expr(arr_expr)?;
         let (len, data) = self.len_ptr_parts(arr.into_struct_value());
-        let (x, _) = self.lower_expr(value_expr)?;
+        let (x0, _) = self.lower_expr(value_expr)?;
+        // The new array owns the appended element.
+        let x = self.bind_owned(value_expr, x0, &elem);
         let elem_llvm = self.types.llvm(&elem);
         let elem_sz = self.elem_bytes(&elem);
-        let b = self.builder;
-        let new_len = b.build_int_add(len, self.i64t().const_int(1, false), "nlen").unwrap();
+        let new_len = self.builder.build_int_add(len, self.i64t().const_int(1, false), "nlen").unwrap();
         let buf = self.alloc_array_buf(new_len, elem_sz);
-        let old_bytes = b.build_int_mul(len, elem_sz, "obytes").unwrap();
-        self.memcpy_bytes(buf, data, old_bytes);
-        let end = unsafe { b.build_in_bounds_gep(elem_llvm, buf, &[len], "endp").unwrap() };
-        b.build_store(end, x).unwrap();
+        // Functional push doesn't consume the source, so the new buffer must own
+        // independent copies of managed elements (else both would free them).
+        if let Some(cf) = self.get_or_build_clone(&elem) {
+            let entry = self.builder.get_insert_block().unwrap();
+            let head = self.context.append_basic_block(self.llvm_fn, "pcp.head");
+            let body = self.context.append_basic_block(self.llvm_fn, "pcp.body");
+            let exit = self.context.append_basic_block(self.llvm_fn, "pcp.exit");
+            self.builder.build_unconditional_branch(head).unwrap();
+            self.builder.position_at_end(head);
+            let phi = self.builder.build_phi(self.i64t(), "i").unwrap();
+            phi.add_incoming(&[(&self.i64t().const_zero(), entry)]);
+            let i = phi.as_basic_value().into_int_value();
+            let c = self.builder.build_int_compare(IntPredicate::SLT, i, len, "c").unwrap();
+            self.builder.build_conditional_branch(c, body, exit).unwrap();
+            self.builder.position_at_end(body);
+            let sp = unsafe { self.builder.build_in_bounds_gep(elem_llvm, data, &[i], "sp").unwrap() };
+            let ev = self.builder.build_load(elem_llvm, sp, "ev").unwrap();
+            let cv = self.builder.build_call(cf, &[ev.into()], "cv").unwrap().try_as_basic_value().basic().unwrap();
+            let dp = unsafe { self.builder.build_in_bounds_gep(elem_llvm, buf, &[i], "dp").unwrap() };
+            self.builder.build_store(dp, cv).unwrap();
+            let nx = self.builder.build_int_add(i, self.i64t().const_int(1, false), "nx").unwrap();
+            phi.add_incoming(&[(&nx, self.builder.get_insert_block().unwrap())]);
+            self.builder.build_unconditional_branch(head).unwrap();
+            self.builder.position_at_end(exit);
+        } else {
+            let old_bytes = self.builder.build_int_mul(len, elem_sz, "obytes").unwrap();
+            self.memcpy_bytes(buf, data, old_bytes);
+        }
+        let end = unsafe { self.builder.build_in_bounds_gep(elem_llvm, buf, &[len], "endp").unwrap() };
+        self.builder.build_store(end, x).unwrap();
         Ok((self.make_len_ptr(new_len, buf).into(), ZType::Array(Box::new(elem))))
     }
 
@@ -3052,7 +3288,10 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             .into_struct_value();
         let (len, ptr) = self.len_ptr_parts(arr);
         let cap = self.array_cap(ptr);
-        let (v, _) = self.lower_expr(value_arg)?;
+        let (v0, _) = self.lower_expr(value_arg)?;
+        // The array owns the appended element (existing elements stay owned by
+        // this same buffer; grow MOVES them — memcpy then frees only the buffer).
+        let v = self.bind_owned(value_arg, v0, &elem);
 
         // len < cap → append in place; else grow to max(1, cap*2) and copy.
         let cur = self.builder.get_insert_block().unwrap();

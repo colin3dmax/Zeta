@@ -205,6 +205,53 @@ fn main() -> Int {
 }
 
 #[test]
+fn string_locals_are_dropped() {
+    // Strings are now value-managed: heap strings (concat) are freed at scope
+    // exit via the generated @__drop_Str. Correct result + a free is emitted.
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let a: String = string_concat(\"foo\", \"bar\");
+  let b: String = string_concat(a, \"!\");
+  return string_len(b);
+}";
+    assert_eq!(check(src), 7);
+    assert!(ir_of(src).contains("call void @free("));
+}
+
+#[test]
+fn string_array_managed_no_corruption() {
+    // A string array's element strings are cloned in / dropped — building one and
+    // iterating it must stay correct with no double-free/UAF (the differential
+    // check + the no-crash run are the gate).
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let mut parts: StringArray = string_array_empty();
+  parts = string_array_push(parts, string_concat(\"a\", \"b\"));
+  parts = string_array_push(parts, \"cde\");
+  let mut total: Int = 0;
+  for p in parts {
+    total = total + string_len(p);
+  }
+  return total;
+}";
+    assert_eq!(check(src), 5);
+}
+
+#[test]
+fn tuple_with_string_managed() {
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let t: (Int, String) = (3, string_concat(\"xy\", \"z\"));
+  return t.0 + string_len(t.1);
+}";
+    assert_eq!(check(src), 6);
+    assert!(ir_of(src).contains("call void @free("));
+}
+
+#[test]
 fn loop_array_assigned_outward_stays_correct() {
     // The body-local array is deep-copied into the outer var on assignment, then
     // the body-local is freed — the outer copy must remain valid.
