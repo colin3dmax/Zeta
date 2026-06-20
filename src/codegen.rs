@@ -578,10 +578,14 @@ fn array_struct_type(context: &Context) -> StructType {
     )
 }
 
-/// The `{ ptr fn, ptr env }` value type used for all closures.
+/// The `{ ptr fn, ptr env, ptr drop_thunk, ptr clone_thunk }` value type used for
+/// all closures. `fn`/`env` are the call ABI (indices 0/1, unchanged); the two
+/// thunks carry the per-lambda capture layout so a type-level closure drop/clone
+/// can deep-free / deep-copy the heap environment without knowing the captures.
+/// Both thunks are null for a zero/undef closure (then drop/clone are no-ops).
 fn closure_struct_type(context: &Context) -> StructType {
     let ptr = context.ptr_type(inkwell::AddressSpace::default());
-    context.struct_type(&[ptr.into(), ptr.into()], false)
+    context.struct_type(&[ptr.into(), ptr.into(), ptr.into(), ptr.into()], false)
 }
 
 /// Unify a generic parameter type STRING against a concrete `ZType`, binding any
@@ -1482,6 +1486,9 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                     None => false,
                 })
             }
+            // A closure always owns a heap environment (malloc'd at the lambda site),
+            // so it always needs drop — its drop-thunk frees the env (+ captures).
+            ZType::Closure(_, _) => true,
             _ => false,
         }
     }
@@ -1629,6 +1636,24 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                     self.builder.build_unconditional_branch(end).unwrap();
                 }
                 self.builder.position_at_end(default);
+                self.builder.build_unconditional_branch(end).unwrap();
+                self.builder.position_at_end(end);
+            }
+            // `{fn, env, drop_thunk, clone_thunk}`: delegate to the per-lambda drop
+            // thunk (which drops captures + frees env). Guard the null thunk of a
+            // zero/undef closure.
+            ZType::Closure(_, _) => {
+                let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                let sv = v.into_struct_value();
+                let env = self.builder.build_extract_value(sv, 1, "cenv").unwrap().into_pointer_value();
+                let thunk = self.builder.build_extract_value(sv, 2, "cdrop").unwrap().into_pointer_value();
+                let is_null = self.builder.build_is_null(thunk, "tn").unwrap();
+                let do_blk = self.context.append_basic_block(func, "cd.do");
+                let end = self.context.append_basic_block(func, "cd.end");
+                self.builder.build_conditional_branch(is_null, end, do_blk).unwrap();
+                self.builder.position_at_end(do_blk);
+                let fn_ty = self.context.void_type().fn_type(&[ptr_ty.into()], false);
+                self.builder.build_indirect_call(fn_ty, thunk, &[env.into()], "").unwrap();
                 self.builder.build_unconditional_branch(end).unwrap();
                 self.builder.position_at_end(end);
             }
@@ -1794,6 +1819,33 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 self.builder.build_unconditional_branch(end).unwrap();
                 self.builder.position_at_end(end);
                 self.builder.build_load(enum_ty, slot, "eres").unwrap()
+            }
+            // Deep-copy via the per-lambda clone thunk (mallocs a fresh env, clones
+            // captures). fn/drop/clone pointers carry over; only env is duplicated.
+            ZType::Closure(_, _) => {
+                let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                let sv = v.into_struct_value();
+                let env = self.builder.build_extract_value(sv, 1, "cenv").unwrap().into_pointer_value();
+                let thunk = self.builder.build_extract_value(sv, 3, "cclone").unwrap().into_pointer_value();
+                let is_null = self.builder.build_is_null(thunk, "tn").unwrap();
+                let call_blk = self.context.append_basic_block(func, "cc.call");
+                let null_blk = self.context.append_basic_block(func, "cc.null");
+                let merge = self.context.append_basic_block(func, "cc.merge");
+                self.builder.build_conditional_branch(is_null, null_blk, call_blk).unwrap();
+                self.builder.position_at_end(call_blk);
+                let fn_ty = ptr_ty.fn_type(&[ptr_ty.into()], false);
+                let ne = self.builder.build_indirect_call(fn_ty, thunk, &[env.into()], "ce").unwrap()
+                    .try_as_basic_value().basic().unwrap().into_pointer_value();
+                self.builder.build_unconditional_branch(merge).unwrap();
+                let call_end = self.builder.get_insert_block().unwrap();
+                self.builder.position_at_end(null_blk);
+                self.builder.build_unconditional_branch(merge).unwrap();
+                self.builder.position_at_end(merge);
+                let phi = self.builder.build_phi(ptr_ty, "newenv").unwrap();
+                phi.add_incoming(&[(&ne, call_end), (&env, null_blk)]);
+                let new_env = phi.as_basic_value().into_pointer_value();
+                let r = self.builder.build_insert_value(sv, new_env, 1, "cl1").unwrap();
+                r.into_struct_value().into()
             }
             _ => v,
         }
@@ -2597,7 +2649,9 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             self.builder.position_at_end(block);
         }
 
-        // Allocate the environment and copy captured values into it by value.
+        // Allocate the environment and CLONE captured values into it, so the env
+        // owns its heap independently of the enclosing locals (both get dropped —
+        // a shared buffer would double-free). Non-managed captures clone to a copy.
         let env_size = env_ty
             .size_of()
             .ok_or_else(|| "env type has no size".to_string())?;
@@ -2605,14 +2659,19 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         for (index, (cap_name, cap_ty, slot)) in captures.iter().enumerate() {
             let llvm_ty = self.types.llvm(cap_ty);
             let val = self.builder.build_load(llvm_ty, *slot, cap_name).unwrap();
+            let owned = self.clone_value(val, cap_ty);
             let field_ptr = self
                 .builder
                 .build_struct_gep(env_ty, env_mem, index as u32, "capst")
                 .map_err(|_| "env store GEP failed".to_string())?;
-            self.builder.build_store(field_ptr, val).unwrap();
+            self.builder.build_store(field_ptr, owned).unwrap();
         }
 
-        // Build the closure value { fn_ptr, env_ptr }.
+        // Per-lambda env thunks (carry the capture layout for type-level drop/clone).
+        let drop_thunk = self.build_env_drop_thunk(&name, env_ty, &captures)?;
+        let clone_thunk = self.build_env_clone_thunk(&name, env_ty, env_size, &captures)?;
+
+        // Build the closure value { fn_ptr, env_ptr, drop_thunk, clone_thunk }.
         let clo_ty = closure_struct_type(self.context);
         let fn_ptr = lifted.as_global_value().as_pointer_value();
         let clo = self
@@ -2622,9 +2681,80 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         let clo = self
             .builder
             .build_insert_value(clo, env_mem, 1, "clo_env")
+            .unwrap();
+        let clo = self
+            .builder
+            .build_insert_value(clo, drop_thunk, 2, "clo_drop")
+            .unwrap();
+        let clo = self
+            .builder
+            .build_insert_value(clo, clone_thunk, 3, "clo_clone")
             .unwrap()
             .into_struct_value();
         Ok((clo.into(), ZType::Closure(param_ztys, Box::new(ret_zty))))
+    }
+
+    /// Generate `void @<lambda>_dropenv(ptr env)`: drop each managed capture, then
+    /// free the environment buffer. Returned as a function pointer for the closure
+    /// value's drop-thunk slot.
+    fn build_env_drop_thunk(
+        &self,
+        lambda: &str,
+        env_ty: StructType<'ctx>,
+        captures: &[(String, ZType, PointerValue<'ctx>)],
+    ) -> Result<PointerValue<'ctx>, String> {
+        let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+        let fn_ty = self.context.void_type().fn_type(&[ptr_ty.into()], false);
+        let func = self.module.add_function(&format!("{lambda}_dropenv"), fn_ty, None);
+        let saved = self.builder.get_insert_block();
+        let entry = self.context.append_basic_block(func, "entry");
+        self.builder.position_at_end(entry);
+        let env = func.get_nth_param(0).unwrap().into_pointer_value();
+        for (index, (_, cap_ty, _)) in captures.iter().enumerate() {
+            if let Some(df) = self.get_or_build_drop(cap_ty) {
+                let fp = self.builder.build_struct_gep(env_ty, env, index as u32, "df").unwrap();
+                let v = self.builder.build_load(self.types.llvm(cap_ty), fp, "dv").unwrap();
+                self.builder.build_call(df, &[v.into()], "").unwrap();
+            }
+        }
+        self.builder.build_call(self.free, &[env.into()], "").unwrap();
+        self.builder.build_return(None).unwrap();
+        if let Some(b) = saved {
+            self.builder.position_at_end(b);
+        }
+        Ok(func.as_global_value().as_pointer_value())
+    }
+
+    /// Generate `ptr @<lambda>_cloneenv(ptr env)`: malloc a fresh environment and
+    /// deep-clone each capture into it; return the new env pointer.
+    fn build_env_clone_thunk(
+        &self,
+        lambda: &str,
+        env_ty: StructType<'ctx>,
+        env_size: IntValue<'ctx>,
+        captures: &[(String, ZType, PointerValue<'ctx>)],
+    ) -> Result<PointerValue<'ctx>, String> {
+        let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+        let fn_ty = ptr_ty.fn_type(&[ptr_ty.into()], false);
+        let func = self.module.add_function(&format!("{lambda}_cloneenv"), fn_ty, None);
+        let saved = self.builder.get_insert_block();
+        let entry = self.context.append_basic_block(func, "entry");
+        self.builder.position_at_end(entry);
+        let old = func.get_nth_param(0).unwrap().into_pointer_value();
+        let new_env = self.malloc_bytes(env_size);
+        for (index, (_, cap_ty, _)) in captures.iter().enumerate() {
+            let llvm_ty = self.types.llvm(cap_ty);
+            let ofp = self.builder.build_struct_gep(env_ty, old, index as u32, "cof").unwrap();
+            let v = self.builder.build_load(llvm_ty, ofp, "cov").unwrap();
+            let cloned = self.clone_value(v, cap_ty);
+            let nfp = self.builder.build_struct_gep(env_ty, new_env, index as u32, "cnf").unwrap();
+            self.builder.build_store(nfp, cloned).unwrap();
+        }
+        self.builder.build_return(Some(&new_env)).unwrap();
+        if let Some(b) = saved {
+            self.builder.position_at_end(b);
+        }
+        Ok(func.as_global_value().as_pointer_value())
     }
 
     /// Call a closure held in local `slot`: load `{ fn_ptr, env_ptr }`, then invoke

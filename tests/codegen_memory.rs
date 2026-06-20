@@ -303,6 +303,46 @@ fn main() -> Int {
 }
 
 #[test]
+fn closure_capturing_string_dropped_each_iteration() {
+    // Each iteration captures a heap String into a closure env (cloned in), calls
+    // it, then both `s` and the closure go out of scope. The closure's drop-thunk
+    // drops the captured copy + frees the env; `s` frees its own. No double-free.
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let mut total: Int = 0;
+  let mut i: Int = 0;
+  while i < 50 {
+    let s: String = string_concat(\"ab\", \"c\");
+    let f = || string_len(s);
+    total = total + f();
+    i = i + 1;
+  }
+  return total;
+}";
+    assert_eq!(check(src), 150);
+    assert!(ir_of(src).contains("call void @free("));
+}
+
+#[test]
+fn closure_capturing_string_escapes_then_dropped() {
+    // A closure that captures a String is RETURNED (its env outlives the maker's
+    // `s`). The caller drops the closure at scope exit → env String + env freed.
+    let src = "\
+import std.core;
+fn make() -> fn() -> Int {
+  let s: String = string_concat(\"hello\", \"!\");
+  return || string_len(s);
+}
+fn main() -> Int {
+  let f: fn() -> Int = make();
+  return f();
+}";
+    assert_eq!(check(src), 6);
+    assert!(ir_of(src).contains("call void @free("));
+}
+
+#[test]
 fn loop_array_assigned_outward_stays_correct() {
     // The body-local array is deep-copied into the outer var on assignment, then
     // the body-local is freed — the outer copy must remain valid.

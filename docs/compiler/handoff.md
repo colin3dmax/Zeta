@@ -107,9 +107,23 @@ index.html(能力清单)。**未部署**。
     codegen 递归把它推过边界 → 偶发 SIGSEGV/SIGBUS。**证据**:ASan 对生成代码(clang 编译 run/mir-dump/
     ast-dump 各模式)全程干净、digest 始终一致;改用 64 MiB 大栈线程跑 codegen_selfhost_run 后连跑 5 次零
     flake。**经验**:并行 harness 下自举前端的偶发 SEGV 优先怀疑栈溢出(RUST_MIN_STACK=64M 一测便知),
-    别先假设堆错误。Enum payload / Closure env 的释放可同法推进(needs_drop 已对 Tuple/Struct 递归,
-    Enum/Closure 待补对应分支)。门禁:全 llvm 套件 53 suite 0 失败、fixpoint 4/4(144s)。
-11. **COW + move 优化(性能,#74 之后)**:绑定从「clone」改「共享+refcount+写时拷」(Swift/Nim),
+    别先假设堆错误。门禁:全 llvm 套件 53 suite 0 失败、fixpoint 4/4(144s)。
+10c. **#74 值语义内存 v7 ✅(commit c5a55d4)= Enum payload 管理**:emit_drop/clone_body 加 Enum 臂,
+    按 tag switch 处理活跃变体 payload —— Str/Array 重建 `{len,ptr}` 调其 drop/clone;Struct payload
+    堆装箱(p1),drop 先 load+drop 托管字段再 free 装箱、clone malloc 新箱深拷。needs_drop(Enum) 按变体
+    递归(Struct payload 恒装箱 ⇒ 即使无托管字段也需 free)。**关键**:match 的 Str/Struct/Array payload
+    绑定改为统一 clone_value(此前 Str 共享 p1、Struct/Array 浅拷)→ 绑定与 enum 各自独立所有,杜绝
+    double-free。门禁:codegen_memory 15、codegen_enum 20、fixpoint 4/4(error handling 走 Option/Result
+    重度验证)、ASan 零堆错误。
+10d. **#74 值语义内存 v8 ✅(commit 5044476)= Closure env 管理,全语言零泄漏**:闭包表示
+    `{fn,env}`→`{fn,env,drop_thunk,clone_thunk}`(调用 ABI 0/1 不变)。每 lambda 站点生成
+    `@<lambda>_dropenv`(逐捕获 drop+free env)/`@<lambda>_cloneenv`(malloc 新 env+逐捕获深拷)两枚
+    thunk 携带捕获布局;类型级 @__drop/clone_Closure 仅从值取 thunk 委派(null 守卫零值闭包)——解决
+    「env 布局是 per-lambda 非 per-type」的根本难点。捕获改 clone 进 env(此前浅拷共享 → double-free
+    隐患)。fixpoint 安全:arena_frontend 无 lambda,闭包构造路径不触发。**至此 array/string/tuple/
+    struct/enum/closure 全聚合值语义 + 确定性 Drop,全语言零泄漏。** 门禁:codegen_closure 8 / closure 9
+    / codegen_memory 17、全 llvm 50 suite 0 失败、fixpoint 4/4(143s)、ASan 对捕获 String 闭包零堆错误。
+11. **COW + move 优化(性能,#74 之后,下一步)**:绑定从「clone」改「共享+refcount+写时拷」(Swift/Nim),
     砍掉值语义的冗余拷贝;无环 ⇒ refcount 无需环收集器。这是「无别名 ⇒ 可超典型 C」性能红利的兑现处。
 12. 其它候选:#77 P4 并发 / #78 P5 FFI;ev_expr 解释器补全(FloatArray 现已有,blocker 或已解)。
 13. 远端:`git push`(本会话各提交)+ 官网重部署(`tools/deploy-website.sh`)。
