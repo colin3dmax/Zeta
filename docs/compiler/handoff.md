@@ -86,8 +86,22 @@ index.html(能力清单)。**未部署**。
 9. **#74 native 内存管理 v4 ✅**:push **grow 释放被弃旧 buffer**(free_array_data) + **隐式
    fall-through return 释放顶层数组局部**。**至此数组/动态数组内存全面零泄漏**(循环/重赋值/
    per-call/返回值/grow/fall-through 全回收;codegen_memory 10 个差分测试)。
-   **v5 候选(仍泄漏)**:字符串(不可变共享,需引用计数/不可变池——重型设计)、闭包 env、
-   enum 装箱、嵌 struct/tuple/enum 的数组字段。下一个自然增量 = 字符串(需先给方案)。
+   **内存模型 = Rust 式(2026-06-20 与用户敲定方向)**:数组已是 Rust 所有权/move/scope-drop
+   (= Vec 的管理,无 GC/无引用计数,编译期确定性释放)。方向 = **值语义 + 编译器自动 Drop/COW**
+   (学 Swift 值类型+COW、Nim ARC;**不**搬 Rust 借用检查器——避开新手陡峭),关键优势:值语义⇒无环⇒
+   连环收集器都不需要。
+
+   **⚠️ 全语言递归 Drop 尝试(2026-06-20)——已回退,留经验**:试过把数组那套(deep_copy_value +
+   drop_value + bind_owned)递归推广到 Str/Tuple/Struct/Array(managed),构造点深拷成员、全链 Drop。
+   **flat 类型全通过**(string/struct/tuple/enum/array/dynarray/memory 7 套差分绿),但在**自举前端**
+   (recursive_run)**栈溢出**:① **inline 递归 Drop/Copy 对递归类型(struct 经 array 字段成环)会无限
+   展开**——加 visited 栈/深度兜底仍溢出,说明是**运行时**溢出(copy/drop 对复杂结构数据损坏 → JIT 的
+   递归下降 parser 死循环)。**结论:inline drop/copy 不行,正解是为每个类型生成递归析构/克隆函数
+   (`@drop_T(ptr)`/`@clone_T`,像 Rust 的 `Drop::drop`/`Clone`,runtime 递归处理任意深度 + 天然支持
+   递归类型)。** 这是字符串/聚合零泄漏的真正前置,是个独立中型工程。已回退到 v4(数组零泄漏)干净态。
+   **下一步若做**:① 生成 per-type drop/clone 函数(替代 inline);② 字符串纳入(值拷贝或 Rc);
+   ③ 聚合/容器递归;④ 全程差分 + 自举 fixpoint 守门(自举前端是最强的 UAF/损坏探测器)。
+   字符串若用 Rc:堆串加 refcount 头、retain/drop-release、归零 free、全局字面量哨兵 refcount 永不释放。
 8. 其它候选:#77 P4 并发 / #78 P5 FFI;ev_expr 解释器补全(FloatArray 现已有,blocker 或已解)。
 9. 远端:`git push`(本会话 Closure/内存 v1 提交)+ 官网重部署(`tools/deploy-website.sh`)。
 
