@@ -130,9 +130,16 @@ index.html(能力清单)。**未部署**。
     未共享 no-op),杜绝别名破坏值语义。**效果**:大数组反复传值(arena 式)O(n)→O(1) —— 微基准 4000
     元素传值 10 万次 65ms→1ms(~65x);非共享负载中性。门禁:既有别名测试 + cow_inplace_push_on_shared
     / cow_share_in_loop、ASan 零堆错误(含 realloc-while-shared)、全 llvm 50 suite 0 失败、fixpoint 4/4。
-11. **后续性能(可选)**:① string COW(需先解决字符串字面量是全局常量、不可 rc/free 的问题 ——
-    可用哨兵 rc 或 tagged ptr 区分静态/堆);② move-on-last-use(免掉非共享绑定的 rc 簿记,需 MIR 活跃性
-    分析);③ struct/tuple 大聚合的 COW。当前 array COW 已兑现「无别名 ⇒ 共享传值 O(1)」的主要红利。
+10f. **#74 性能 v10 ✅(commit c49b2da)= 字符串 COW(纯引用计数)**:字符串不可变 ⇒ 共享天然安全、
+    无写时拷,纯 refcount。堆串加 8B rc 头(起始 1);**字面量发射为全局 `{i64 STATIC_RC, [bytes,NUL]}`,
+    哨兵 rc=i64::MIN**,clone/drop 一律跳过 → 全局常量永不 bump/free(解决「字面量是全局不可 free」难题)。
+    clone=rc++(哨兵 no-op)、drop=rc--free-if-0;concat/byte_slice/int_to_string 改 alloc_str_buf。
+    效果:大串传值 O(n)→O(1)(微基准 4096 字符×10万 9ms→2ms);小串负载中性(selfhost_perf 267≈265)。
+    门禁:string_literal_bound_in_loop / string_shared_by_refcount_balances、ASan 零堆错误、全 llvm 50
+    suite 0 失败、fixpoint 4/4。**至此 array + string 两大高频类型都走 COW；值语义共享传值 O(1)。**
+11. **后续性能(可选)**:① move-on-last-use(免掉非共享绑定的 rc 簿记,需 MIR 活跃性分析);② 小字符串
+    优化 SSO(≤15B 内联,免堆分配,缓解小串 rc 开销);③ struct/tuple 大聚合的 COW。array+string COW 已
+    兑现「无别名 ⇒ 共享传值 O(1)」的主要红利。
 12. 其它候选:#77 P4 并发 / #78 P5 FFI;ev_expr 解释器补全(FloatArray 现已有,blocker 或已解)。
 13. 远端:`git push`(本会话各提交)+ 官网重部署(`tools/deploy-website.sh`)。
 

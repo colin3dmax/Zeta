@@ -588,6 +588,11 @@ fn closure_struct_type(context: &Context) -> StructType {
     context.struct_type(&[ptr.into(), ptr.into(), ptr.into(), ptr.into()], false)
 }
 
+/// Sentinel refcount stored in a string literal's global header: clone/drop skip
+/// any string whose refcount equals this, so the static global is never bumped or
+/// freed. Heap strings start at rc = 1 and can never reach this value.
+const STATIC_STR_RC: u64 = 0x8000_0000_0000_0000; // i64::MIN
+
 /// Unify a generic parameter type STRING against a concrete `ZType`, binding any
 /// type parameters it names into `subst` (recursing through tuple/function types).
 fn unify_ztype(
@@ -1446,6 +1451,41 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         self.builder.build_int_compare(IntPredicate::EQ, dec, self.i64t().const_zero(), "rcz").unwrap()
     }
 
+    /// Allocate a heap STRING buffer of `n` bytes with an 8-byte refcount header
+    /// (rc = 1). Returns the bytes pointer (header is one i64 before it). Strings
+    /// are immutable, so sharing is pure refcount with no copy-on-write.
+    fn alloc_str_buf(&self, n: IntValue<'ctx>) -> PointerValue<'ctx> {
+        let b = self.builder;
+        let total = b.build_int_add(self.i64t().const_int(8, false), n, "strtot").unwrap();
+        let base = self.malloc_bytes(total);
+        b.build_store(base, self.i64t().const_int(1, false)).unwrap();
+        unsafe {
+            b.build_in_bounds_gep(self.context.i8_type(), base, &[self.i64t().const_int(8, false)], "strbytes")
+                .unwrap()
+        }
+    }
+
+    /// Free a heap string buffer (recover the base 8 bytes before the data ptr).
+    fn free_str_data(&self, data: PointerValue<'ctx>) {
+        let back = self.i64t().const_int((-8i64) as u64, true);
+        let base = unsafe {
+            self.builder
+                .build_in_bounds_gep(self.context.i8_type(), data, &[back], "strbase")
+                .unwrap()
+        };
+        self.builder.build_call(self.free, &[base.into()], "").unwrap();
+    }
+
+    /// Pointer to a string buffer's refcount field (8 bytes before the data ptr).
+    fn str_rc_ptr(&self, data: PointerValue<'ctx>) -> PointerValue<'ctx> {
+        let back = self.i64t().const_int((-8i64) as u64, true);
+        unsafe {
+            self.builder
+                .build_in_bounds_gep(self.context.i8_type(), data, &[back], "strrc")
+                .unwrap()
+        }
+    }
+
     /// Allocate a slot of `ty` at the TOP of the entry block (mem2reg-friendly).
     fn entry_alloca(&self, name: &str, ty: BasicTypeEnum<'ctx>) -> PointerValue<'ctx> {
         let saved = self.builder.get_insert_block();
@@ -1598,12 +1638,32 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
     fn emit_drop_body(&self, v: BasicValueEnum<'ctx>, zt: &ZType, func: FunctionValue<'ctx>) {
         match zt {
             ZType::Str => {
-                let ptr = self
+                // Refcount drop: decrement and free only at zero. Static literals
+                // (sentinel rc) are skipped entirely — never decremented or freed.
+                let data = self
                     .builder
                     .build_extract_value(v.into_struct_value(), 1, "sd")
                     .unwrap()
                     .into_pointer_value();
-                self.builder.build_call(self.free, &[ptr.into()], "").unwrap();
+                let rc_ptr = self.str_rc_ptr(data);
+                let rc = self.builder.build_load(self.i64t(), rc_ptr, "sdrc").unwrap().into_int_value();
+                let is_static = self
+                    .builder
+                    .build_int_compare(IntPredicate::EQ, rc, self.i64t().const_int(STATIC_STR_RC, false), "sdstat")
+                    .unwrap();
+                let live = self.context.append_basic_block(func, "sd.live");
+                let free_blk = self.context.append_basic_block(func, "sd.free");
+                let done = self.context.append_basic_block(func, "sd.done");
+                self.builder.build_conditional_branch(is_static, done, live).unwrap();
+                self.builder.position_at_end(live);
+                let dec = self.builder.build_int_sub(rc, self.i64t().const_int(1, false), "sddec").unwrap();
+                self.builder.build_store(rc_ptr, dec).unwrap();
+                let is_zero = self.builder.build_int_compare(IntPredicate::EQ, dec, self.i64t().const_zero(), "sdz").unwrap();
+                self.builder.build_conditional_branch(is_zero, free_blk, done).unwrap();
+                self.builder.position_at_end(free_blk);
+                self.free_str_data(data);
+                self.builder.build_unconditional_branch(done).unwrap();
+                self.builder.position_at_end(done);
             }
             ZType::Array(elem) => {
                 let sv = v.into_struct_value();
@@ -1767,12 +1827,25 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
     ) -> BasicValueEnum<'ctx> {
         match zt {
             ZType::Str => {
+                // Immutable string → share by refcount (no copy). Bump rc unless the
+                // buffer is a static literal (sentinel rc, left untouched).
                 let sv = v.into_struct_value();
-                let len = self.builder.build_extract_value(sv, 0, "sl").unwrap().into_int_value();
-                let src = self.builder.build_extract_value(sv, 1, "ss").unwrap().into_pointer_value();
-                let buf = self.malloc_bytes(len);
-                self.memcpy_bytes(buf, src, len);
-                self.make_len_ptr(len, buf).into()
+                let data = self.builder.build_extract_value(sv, 1, "ss").unwrap().into_pointer_value();
+                let rc_ptr = self.str_rc_ptr(data);
+                let rc = self.builder.build_load(self.i64t(), rc_ptr, "src").unwrap().into_int_value();
+                let is_static = self
+                    .builder
+                    .build_int_compare(IntPredicate::EQ, rc, self.i64t().const_int(STATIC_STR_RC, false), "sstat")
+                    .unwrap();
+                let inc_blk = self.context.append_basic_block(func, "sc.inc");
+                let cont = self.context.append_basic_block(func, "sc.cont");
+                self.builder.build_conditional_branch(is_static, cont, inc_blk).unwrap();
+                self.builder.position_at_end(inc_blk);
+                let inc = self.builder.build_int_add(rc, self.i64t().const_int(1, false), "srci").unwrap();
+                self.builder.build_store(rc_ptr, inc).unwrap();
+                self.builder.build_unconditional_branch(cont).unwrap();
+                self.builder.position_at_end(cont);
+                v
             }
             ZType::Array(elem) => {
                 let sv = v.into_struct_value();
@@ -3298,11 +3371,25 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 Ok((value, *elem))
             }
             MirExpr::String(text) => {
-                // Immutable bytes → a private global constant; the value is
-                // `{ byte_len, ptr-to-global }`. `build_global_string_ptr` appends a
-                // NUL, but `len` excludes it (matches the interpreter's byte count).
-                let global = self.builder.build_global_string_ptr(text, "str").unwrap();
-                let data = global.as_pointer_value();
+                // Immutable bytes → a private global `{ i64 STATIC_RC, [bytes, NUL] }`
+                // mirroring the heap string layout (refcount header + data), so the
+                // SAME clone/drop refcount path handles literals: the sentinel rc makes
+                // them never bump/free. The value is `{ byte_len, ptr-to-bytes }`; `len`
+                // excludes the NUL (matches the interpreter's byte count).
+                let i8t = self.context.i8_type();
+                let mut bytes: Vec<_> = text.bytes().map(|byte| i8t.const_int(byte as u64, false)).collect();
+                bytes.push(i8t.const_zero());
+                let byte_arr = i8t.const_array(&bytes);
+                let header = self.i64t().const_int(STATIC_STR_RC, false);
+                let init = self.context.const_struct(&[header.into(), byte_arr.into()], false);
+                let global = self.module.add_global(init.get_type(), None, "str");
+                global.set_initializer(&init);
+                global.set_constant(true);
+                global.set_linkage(inkwell::module::Linkage::Private);
+                let data = self
+                    .builder
+                    .build_struct_gep(init.get_type(), global.as_pointer_value(), 1, "strbytes")
+                    .unwrap();
                 let len = self.i64t().const_int(text.len() as u64, false);
                 Ok((self.make_len_ptr(len, data).into(), ZType::Str))
             }
@@ -3412,7 +3499,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let (la, pa) = self.len_ptr_parts(a.into_struct_value());
                 let (lb, pb) = self.len_ptr_parts(bv.into_struct_value());
                 let total = b.build_int_add(la, lb, "clen").unwrap();
-                let buf = self.malloc_bytes(total);
+                let buf = self.alloc_str_buf(total);
                 self.memcpy_bytes(buf, pa, la);
                 let i8t = self.context.i8_type();
                 let tail = unsafe { b.build_in_bounds_gep(i8t, buf, &[la], "tail").unwrap() };
@@ -3429,7 +3516,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let len = self.lower_int(&args[2])?;
                 let i8t = self.context.i8_type();
                 let src = unsafe { b.build_in_bounds_gep(i8t, data, &[start], "slcsrc").unwrap() };
-                let buf = self.malloc_bytes(len);
+                let buf = self.alloc_str_buf(len);
                 self.memcpy_bytes(buf, src, len);
                 Ok(Some((self.make_len_ptr(len, buf).into(), ZType::Str)))
             }
@@ -3439,7 +3526,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let n = self.lower_int(&args[0])?;
                 let fmt = b.build_global_string_ptr("%lld", "fmt").unwrap().as_pointer_value();
                 let cap = self.i64t().const_int(24, false);
-                let buf = self.malloc_bytes(cap);
+                let buf = self.alloc_str_buf(cap);
                 let written = b
                     .build_call(self.snprintf, &[buf.into(), cap.into(), fmt.into(), n.into()], "snp")
                     .unwrap()

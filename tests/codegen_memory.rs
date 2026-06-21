@@ -383,6 +383,50 @@ fn main() -> Int {
 }
 
 #[test]
+fn string_literal_bound_in_loop_is_not_freed() {
+    // A string literal is a static global (sentinel refcount). Binding it to a local
+    // and dropping that local each iteration must NOT free the global — the refcount
+    // path skips the sentinel. A wrong free would corrupt/crash (caught differentially
+    // and by ASan).
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let mut total: Int = 0;
+  let mut i: Int = 0;
+  while i < 1000 {
+    let s: String = \"hello\";
+    total = total + string_len(s);
+    i = i + 1;
+  }
+  return total;
+}";
+    assert_eq!(check(src), 5000);
+}
+
+#[test]
+fn string_shared_by_refcount_balances() {
+    // A heap string shared by three owners (refcount bumps) must be freed exactly
+    // once when the last owner drops. Correct result + no double-free.
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let a: String = string_concat(\"foo\", \"bar\");
+  let b: String = a;
+  let c: String = a;
+  let mut total: Int = 0;
+  let mut i: Int = 0;
+  while i < 100 {
+    let d: String = a;
+    total = total + string_len(d);
+    i = i + 1;
+  }
+  return total + string_len(a) + string_len(b) + string_len(c);
+}";
+    // 100*6 + 6 + 6 + 6 = 618.
+    assert_eq!(check(src), 618);
+}
+
+#[test]
 fn loop_array_assigned_outward_stays_correct() {
     // The body-local array is deep-copied into the outer var on assignment, then
     // the body-local is freed — the outer copy must remain valid.
