@@ -1,6 +1,6 @@
 use crate::ast::{
-    BinaryOp, EnumDecl, EnumVariant, Expr, Field, Function, Item, MatchArm, Module, Param, Pattern,
-    Stmt, StructDecl, StructExprField, UnaryOp,
+    BinaryOp, EnumDecl, EnumVariant, Expr, Field, Function, ImplBlock, Item, MatchArm, Module,
+    Param, Pattern, Stmt, StructDecl, StructExprField, TraitDecl, TraitMethod, UnaryOp,
 };
 use crate::diagnostic::{Diagnostic, Span};
 use crate::lexer::{Keyword, Symbol, Token, TokenKind};
@@ -82,10 +82,19 @@ impl Parser {
         if self.consume_keyword(Keyword::Fn).is_some() {
             return self.parse_function(exported, reloadable).map(Item::Function);
         }
+        // `trait` / `impl` are contextual identifiers (not reserved keywords), so
+        // the lexer/token-kind numbering stays identical and self-hosting parity
+        // is untouched — same precedent as `reloadable`.
+        if self.consume_contextual("trait") {
+            return self.parse_trait(exported).map(Item::Trait);
+        }
+        if self.consume_contextual("impl") {
+            return self.parse_impl(exported).map(Item::Impl);
+        }
 
         Err(self.error_here(
             "PARSE_EXPECTED_ITEM",
-            "expected module, import, export, struct, enum, or fn",
+            "expected module, import, export, struct, enum, trait, impl, or fn",
         ))
     }
 
@@ -152,6 +161,92 @@ impl Parser {
             name_span,
             type_params,
             variants,
+        })
+    }
+
+    fn parse_trait(&mut self, exported: bool) -> Result<TraitDecl, Diagnostic> {
+        let (name, name_span) = self.expect_ident_span("expected trait name")?;
+        let type_params = self.parse_type_params()?;
+        self.expect_symbol(Symbol::LBrace, "expected `{` after trait name")?;
+        let mut methods = Vec::new();
+        while !self.check_symbol(Symbol::RBrace) && !self.at_eof() {
+            if self.consume_keyword(Keyword::Fn).is_none() {
+                return Err(self.error_here(
+                    "PARSE_EXPECTED_TRAIT_METHOD",
+                    "expected `fn` for trait method signature",
+                ));
+            }
+            let (method_name, method_name_span) = self.expect_ident_span("expected method name")?;
+            let method_type_params = self.parse_type_params()?;
+            self.expect_symbol(Symbol::LParen, "expected `(` after method name")?;
+            let params = self.parse_params()?;
+            self.expect_symbol(Symbol::RParen, "expected `)` after method parameters")?;
+            let (return_type, return_type_span) = if self.consume_symbol(Symbol::Arrow).is_some() {
+                let (ty, ty_span) =
+                    self.parse_type_annotation("expected return type after `->`")?;
+                (Some(ty), Some(ty_span))
+            } else {
+                (None, None)
+            };
+            self.expect_symbol(
+                Symbol::Semicolon,
+                "expected `;` after trait method signature",
+            )?;
+            methods.push(TraitMethod {
+                name: method_name,
+                name_span: method_name_span,
+                type_params: method_type_params,
+                params,
+                return_type,
+                return_type_span,
+            });
+        }
+        self.expect_symbol(Symbol::RBrace, "expected `}` after trait methods")?;
+        Ok(TraitDecl {
+            exported,
+            name,
+            name_span,
+            type_params,
+            methods,
+        })
+    }
+
+    fn parse_impl(&mut self, exported: bool) -> Result<ImplBlock, Diagnostic> {
+        let type_params = self.parse_type_params()?;
+        // The trait reference may carry generic args (`Container<T>`), so parse it
+        // as a type annotation; it stops at the `for` keyword. Later slices strip
+        // to the base name via `type_syntax::base_name` for dispatch.
+        let (trait_name, trait_name_span) =
+            self.parse_type_annotation("expected trait name in impl")?;
+        if self.consume_keyword(Keyword::For).is_none() {
+            return Err(self.error_here(
+                "PARSE_EXPECTED_FOR",
+                "expected `for` in impl header",
+            ));
+        }
+        let (target_type, target_type_span) =
+            self.parse_type_annotation("expected target type after `for`")?;
+        self.expect_symbol(Symbol::LBrace, "expected `{` after impl header")?;
+        let mut methods = Vec::new();
+        while !self.check_symbol(Symbol::RBrace) && !self.at_eof() {
+            let fn_exported = self.consume_keyword(Keyword::Export).is_some();
+            if self.consume_keyword(Keyword::Fn).is_none() {
+                return Err(self.error_here(
+                    "PARSE_EXPECTED_IMPL_METHOD",
+                    "expected `fn` for impl method",
+                ));
+            }
+            methods.push(self.parse_function(fn_exported, false)?);
+        }
+        self.expect_symbol(Symbol::RBrace, "expected `}` after impl methods")?;
+        Ok(ImplBlock {
+            exported,
+            type_params,
+            trait_name,
+            trait_name_span,
+            target_type,
+            target_type_span,
+            methods,
         })
     }
 
@@ -1097,6 +1192,18 @@ impl Parser {
             Some(TokenKind::Keyword(Keyword::Fn))
         );
         if is_reloadable_ident && followed_by_fn {
+            self.pos += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Consume the current token if it is the identifier `name`. Used for
+    /// contextual keywords (`trait`, `impl`) that stay lexically plain
+    /// identifiers to avoid perturbing token-kind numbering / self-hosting parity.
+    fn consume_contextual(&mut self, name: &str) -> bool {
+        if matches!(self.peek_kind(), TokenKind::Ident(found) if found == name) {
             self.pos += 1;
             true
         } else {

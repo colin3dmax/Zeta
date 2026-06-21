@@ -294,6 +294,103 @@ fn main() {
 }
 
 #[test]
+fn dumps_trait_declaration() {
+    let dump = zeta::dump_ast(
+        r#"
+trait Show {
+  fn show(self: Self) -> String;
+  fn rank(self: Self, base: Int) -> Int;
+}
+"#,
+    )
+    .expect("source should parse");
+
+    assert_eq!(
+        dump,
+        "\
+Module
+  Trait name=Show exported=false
+    Method name=show
+      Param name=self type=Self
+      Return type=String
+    Method name=rank
+      Param name=self type=Self
+      Param name=base type=Int
+      Return type=Int
+"
+    );
+}
+
+#[test]
+fn dumps_impl_block_with_method_bodies() {
+    let dump = zeta::dump_ast(
+        r#"
+impl Show for Point {
+  fn show(self: Self) -> String {
+    return "point";
+  }
+}
+"#,
+    )
+    .expect("source should parse");
+
+    assert_eq!(
+        dump,
+        "\
+Module
+  Impl trait=Show target=Point exported=false
+    Method name=show
+      Param name=self type=Self
+      Return type=String
+      Return
+        String \"point\"
+"
+    );
+}
+
+#[test]
+fn dumps_generic_trait_and_impl() {
+    // `trait`/`impl` are contextual identifiers, so generic args on the trait
+    // reference (`Container<T>`) and target (`Box<T>`) round-trip in the dump.
+    let dump = zeta::dump_ast(
+        r#"
+export trait Container<T> {
+  fn get(self: Self, i: Int) -> T;
+}
+
+impl<T> Container<T> for Box<T> {
+  fn get(self: Self, i: Int) -> T {
+    return self.value;
+  }
+}
+"#,
+    )
+    .expect("source should parse");
+
+    assert!(dump.contains("Trait name=Container exported=true"));
+    assert!(dump.contains("Impl trait=Container<T> target=Box<T> exported=false"));
+}
+
+#[test]
+fn trait_and_impl_are_contextual_not_reserved() {
+    // Because `trait`/`impl` stay plain identifiers, they remain usable as
+    // ordinary names elsewhere — guarding self-hosting token parity.
+    let dump = zeta::dump_ast(
+        r#"
+fn main() -> Int {
+  let trait: Int = 1;
+  let impl: Int = 2;
+  return trait + impl;
+}
+"#,
+    )
+    .expect("source should parse");
+
+    assert!(dump.contains("Let name=trait type=Int"));
+    assert!(dump.contains("Let name=impl type=Int"));
+}
+
+#[test]
 fn repl_parses_interactive_lines() {
     let binary = env!("CARGO_BIN_EXE_zeta");
     let mut child = std::process::Command::new(binary)

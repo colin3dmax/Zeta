@@ -197,6 +197,9 @@ fn validate_declared_types(
                 }
                 validate_stmt_types(&function.body, structs, enums, &function.type_params, diagnostics);
             }
+            // Slice 1 carries trait/impl syntax only; dispatch + type validation
+            // (including `Self` resolution) land in a later slice.
+            Item::Trait(_) | Item::Impl(_) => {}
             Item::ModuleDecl { .. } | Item::Import { .. } => {}
         }
     }

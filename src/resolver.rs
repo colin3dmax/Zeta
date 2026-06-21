@@ -829,6 +829,9 @@ fn item_name(item: &Item) -> Option<(&str, Span)> {
         Item::Struct(decl) => Some((&decl.name, decl.name_span)),
         Item::Enum(decl) => Some((&decl.name, decl.name_span)),
         Item::Function(function) => Some((&function.name, function.name_span)),
+        Item::Trait(decl) => Some((&decl.name, decl.name_span)),
+        // `impl` blocks contribute no top-level name themselves.
+        Item::Impl(_) => None,
         Item::ModuleDecl { .. } | Item::Import { .. } => None,
     }
 }

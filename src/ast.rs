@@ -21,6 +21,8 @@ pub enum Item {
     Struct(StructDecl),
     Enum(EnumDecl),
     Function(Function),
+    Trait(TraitDecl),
+    Impl(ImplBlock),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,6 +90,48 @@ pub struct Param {
     pub name_span: Span,
     pub ty: String,
     pub ty_span: Span,
+}
+
+/// A `trait` declaration — an interface of method signatures. Dispatch is via
+/// UFCS free-function lowering (`trait Show { fn show(self: Self) -> String; }`),
+/// so a method is just a function whose first parameter is the receiver. Slice 1
+/// only carries the syntax/AST/dump; typecheck + codegen dispatch come later.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraitDecl {
+    pub exported: bool,
+    pub name: String,
+    pub name_span: Span,
+    /// Generic type parameters `trait Iterator<T> { ... }` (empty for non-generic).
+    pub type_params: Vec<String>,
+    pub methods: Vec<TraitMethod>,
+}
+
+/// A method signature inside a `trait` (no body). The receiver is written
+/// explicitly as a normal parameter (`self: Self`); `Self` is treated as an
+/// opaque type name resolved per `impl` in a later slice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraitMethod {
+    pub name: String,
+    pub name_span: Span,
+    pub type_params: Vec<String>,
+    pub params: Vec<Param>,
+    pub return_type: Option<String>,
+    pub return_type_span: Option<Span>,
+}
+
+/// An `impl Trait for Type { ... }` block. Methods are full functions (with
+/// bodies) reusing the regular function grammar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImplBlock {
+    pub exported: bool,
+    /// Generic parameters over the whole block: `impl<T> Trait for Box<T> { ... }`.
+    pub type_params: Vec<String>,
+    pub trait_name: String,
+    pub trait_name_span: Span,
+    /// The implementing type as written, e.g. `Point` or `Box<T>`.
+    pub target_type: String,
+    pub target_type_span: Span,
+    pub methods: Vec<Function>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -354,6 +398,45 @@ impl Item {
                 }
                 for stmt in &function.body {
                     stmt.dump(indent + 1, out);
+                }
+            }
+            Item::Trait(decl) => {
+                out.push_str(&format!(
+                    "{pad}Trait name={} exported={}\n",
+                    decl.name, decl.exported
+                ));
+                for method in &decl.methods {
+                    out.push_str(&format!("{pad}  Method name={}\n", method.name));
+                    for param in &method.params {
+                        out.push_str(&format!(
+                            "{pad}    Param name={} type={}\n",
+                            param.name, param.ty
+                        ));
+                    }
+                    if let Some(return_type) = &method.return_type {
+                        out.push_str(&format!("{pad}    Return type={return_type}\n"));
+                    }
+                }
+            }
+            Item::Impl(impl_block) => {
+                out.push_str(&format!(
+                    "{pad}Impl trait={} target={} exported={}\n",
+                    impl_block.trait_name, impl_block.target_type, impl_block.exported
+                ));
+                for function in &impl_block.methods {
+                    out.push_str(&format!("{pad}  Method name={}\n", function.name));
+                    for param in &function.params {
+                        out.push_str(&format!(
+                            "{pad}    Param name={} type={}\n",
+                            param.name, param.ty
+                        ));
+                    }
+                    if let Some(return_type) = &function.return_type {
+                        out.push_str(&format!("{pad}    Return type={return_type}\n"));
+                    }
+                    for stmt in &function.body {
+                        stmt.dump(indent + 2, out);
+                    }
                 }
             }
         }

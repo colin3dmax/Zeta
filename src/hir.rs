@@ -70,6 +70,29 @@ fn dump_item(item: &Item, indent: usize, out: &mut String) {
                 dump_stmt(stmt, indent + 2, out);
             }
         }
+        Item::Trait(decl) => {
+            out.push_str(&format!(
+                "{pad}trait {} visibility={}\n",
+                decl.name,
+                visibility(decl.exported)
+            ));
+            for method in &decl.methods {
+                let return_type = method.return_type.as_deref().unwrap_or("Unit");
+                out.push_str(&format!("{pad}  method {} -> {return_type}\n", method.name));
+            }
+        }
+        Item::Impl(impl_block) => {
+            out.push_str(&format!(
+                "{pad}impl {} for {} visibility={}\n",
+                impl_block.trait_name,
+                impl_block.target_type,
+                visibility(impl_block.exported)
+            ));
+            for function in &impl_block.methods {
+                let return_type = function.return_type.as_deref().unwrap_or("Unit");
+                out.push_str(&format!("{pad}  method {} -> {return_type}\n", function.name));
+            }
+        }
     }
 }
 
