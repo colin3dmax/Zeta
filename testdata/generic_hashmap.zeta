@@ -1,0 +1,123 @@
+import std.core;
+
+trait Hash { fn hash(self: Self) -> Int; }
+trait Eq { fn eq(self: Self, other: Self) -> Bool; }
+
+impl Hash for Int { fn hash(self: Self) -> Int { return self; } }
+impl Eq for Int { fn eq(self: Self, other: Self) -> Bool { return self == other; } }
+
+impl Hash for String {
+  fn hash(self: Self) -> Int {
+    let mut h: Int = 5381;
+    let mut i: Int = 0;
+    let n: Int = string_len(self);
+    while i < n {
+      h = h * 33 + string_byte_at(self, i);
+      i = i + 1;
+    }
+    return h;
+  }
+}
+impl Eq for String { fn eq(self: Self, other: Self) -> Bool { return self == other; } }
+
+struct HashMap<K, V> {
+  keys: Array<K>,
+  values: Array<V>,
+  used: Array<Bool>,
+  size: Int,
+  cap: Int,
+}
+
+fn imod(a: Int, m: Int) -> Int {
+  let r: Int = a % m;
+  if r < 0 { return r + m; }
+  return r;
+}
+
+fn hashmap_new<K: Hash + Eq, V>(seed_key: K, seed_val: V) -> HashMap<K, V> {
+  let cap: Int = 8;
+  return HashMap {
+    keys: array_repeat(seed_key, cap),
+    values: array_repeat(seed_val, cap),
+    used: array_repeat(false, cap),
+    size: 0,
+    cap: cap,
+  };
+}
+
+fn hashmap_grow<K: Hash + Eq, V>(m: HashMap<K, V>, seed_key: K, seed_val: V) -> HashMap<K, V> {
+  let newcap: Int = m.cap * 2;
+  let mut nk: Array<K> = array_repeat(seed_key, newcap);
+  let mut nv: Array<V> = array_repeat(seed_val, newcap);
+  let mut nu: Array<Bool> = array_repeat(false, newcap);
+  let mut i: Int = 0;
+  while i < m.cap {
+    if m.used[i] {
+      let mut j: Int = imod(hash(m.keys[i]), newcap);
+      while nu[j] {
+        j = imod(j + 1, newcap);
+      }
+      nk[j] = m.keys[i];
+      nv[j] = m.values[i];
+      nu[j] = true;
+    }
+    i = i + 1;
+  }
+  return HashMap { keys: nk, values: nv, used: nu, size: m.size, cap: newcap };
+}
+
+fn hashmap_insert<K: Hash + Eq, V>(m: HashMap<K, V>, key: K, value: V) -> HashMap<K, V> {
+  let mut map: HashMap<K, V> = m;
+  if map.size * 4 >= map.cap * 3 {
+    map = hashmap_grow(map, key, value);
+  }
+  let mut j: Int = imod(hash(key), map.cap);
+  while map.used[j] {
+    if eq(map.keys[j], key) {
+      map.values[j] = value;
+      return map;
+    }
+    j = imod(j + 1, map.cap);
+  }
+  map.keys[j] = key;
+  map.values[j] = value;
+  map.used[j] = true;
+  map.size = map.size + 1;
+  return map;
+}
+
+fn hashmap_get<K: Hash + Eq, V>(m: HashMap<K, V>, key: K, default: V) -> V {
+  let mut j: Int = imod(hash(key), m.cap);
+  let mut steps: Int = 0;
+  while m.used[j] {
+    if eq(m.keys[j], key) {
+      return m.values[j];
+    }
+    j = imod(j + 1, m.cap);
+    steps = steps + 1;
+    if steps >= m.cap {
+      return default;
+    }
+  }
+  return default;
+}
+
+fn main() -> Int {
+  let mut h: HashMap<String, Int> = hashmap_new("", 0);
+  h = hashmap_insert(h, "one", 1);
+  h = hashmap_insert(h, "two", 2);
+  h = hashmap_insert(h, "three", 3);
+  h = hashmap_insert(h, "two", 22);
+  // trigger growth: insert many keys
+  h = hashmap_insert(h, "a", 10);
+  h = hashmap_insert(h, "b", 20);
+  h = hashmap_insert(h, "c", 30);
+  h = hashmap_insert(h, "d", 40);
+  h = hashmap_insert(h, "e", 50);
+  let r1: Int = hashmap_get(h, "one", 0 - 1);
+  let r2: Int = hashmap_get(h, "two", 0 - 1);
+  let r3: Int = hashmap_get(h, "three", 0 - 1);
+  let r4: Int = hashmap_get(h, "missing", 0 - 1);
+  let r5: Int = hashmap_get(h, "e", 0 - 1);
+  return r1 + r2 + r3 + r4 + r5 + h.size;
+}
