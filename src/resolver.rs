@@ -54,6 +54,9 @@ pub fn resolve_with_imports_functions_enums_and_ambiguous(
     let mut functions = function_names(module);
     functions.extend(external_functions.iter().cloned());
     functions.extend(standard_function_names(module));
+    // Trait method names are callable via UFCS (dispatched per-backend to an
+    // `impl`'s `{method}${TargetBase}`), so accept them as known call targets.
+    functions.extend(module.trait_method_names());
     let mut top_level_names = top_level_names(module);
     let mut enum_variants = enum_variants(module);
     for standard_enum in standard_enum_variants(module) {

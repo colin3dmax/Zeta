@@ -322,6 +322,22 @@ pub enum UnaryOp {
 }
 
 impl Module {
+    /// Names of every method declared by a `trait` item. These are the
+    /// free-function names that dispatch via UFCS to a matching `impl`
+    /// (`{method}${TargetBase}`); the resolver, typecheck, MIR verifier and the
+    /// interpreter all consult this set to accept and route such calls.
+    pub fn trait_method_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        for item in &self.items {
+            if let Item::Trait(decl) = item {
+                for method in &decl.methods {
+                    names.push(method.name.clone());
+                }
+            }
+        }
+        names
+    }
+
     pub fn dump(&self) -> String {
         let mut out = String::from("Module\n");
         for item in &self.items {

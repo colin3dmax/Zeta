@@ -6,6 +6,11 @@ use std::collections::{HashMap, HashSet};
 pub struct Program {
     pub enums: Vec<MirEnum>,
     pub functions: Vec<MirFunction>,
+    /// Names of trait methods (from `trait` items). A call to one of these
+    /// dispatches by the first argument's concrete type to the flattened impl
+    /// function `{method}${TargetBase}`; the verifier and interpreter consult
+    /// this set to accept and route such calls.
+    pub trait_methods: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -249,6 +254,7 @@ pub fn lower_with_external_enum_variants(
                 _ => None,
             })
             .collect(),
+        trait_methods: module.trait_method_names(),
     }
 }
 
@@ -1002,6 +1008,10 @@ struct MirVerifier<'a> {
     /// `p` here is treated as a wildcard during type checking (generics are
     /// monomorphized away before native codegen).
     type_params: HashSet<String>,
+    /// Trait method names — calls to these dispatch by receiver type at
+    /// runtime/codegen, so the verifier checks their arguments leniently rather
+    /// than flagging the unmangled name as unknown.
+    trait_methods: HashSet<String>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -1039,6 +1049,7 @@ impl<'a> MirVerifier<'a> {
                     )
                 })
                 .collect(),
+            trait_methods: program.trait_methods.iter().cloned().collect(),
             diagnostics: Vec::new(),
         }
     }
@@ -1600,6 +1611,15 @@ impl<'a> MirVerifier<'a> {
                     );
                 }
                 return *ret;
+            }
+            // A trait method call (`show(p)`) dispatches by receiver type to a
+            // flattened impl (`show$Point`) at runtime/codegen; check the
+            // arguments but treat the result leniently (Unknown is a wildcard).
+            if self.trait_methods.contains(callee) {
+                for arg in args {
+                    self.verify_expr(arg, locals);
+                }
+                return MirType::Unknown;
             }
             self.error(
                 "MIR_UNKNOWN_FUNCTION",

@@ -212,6 +212,58 @@ fn run_executes_std_core_option_and_result_int() {
 }
 
 #[test]
+fn trait_method_dispatches_by_receiver_type() {
+    let value = zeta::run_source(
+        r#"
+trait Show {
+  fn show(self: Self) -> Int;
+}
+struct Point { x: Int, y: Int }
+struct Circle { r: Int }
+impl Show for Point {
+  fn show(self: Self) -> Int { return self.x + self.y; }
+}
+impl Show for Circle {
+  fn show(self: Self) -> Int { return self.r * self.r; }
+}
+fn main() -> Int {
+  let p: Point = Point { x: 3, y: 4 };
+  let c: Circle = Circle { r: 5 };
+  return show(p) + show(c);
+}
+"#,
+    )
+    .expect("trait dispatch program should run");
+    assert_eq!(value.to_string(), "32");
+}
+
+#[test]
+fn trait_method_without_matching_impl_errors() {
+    // No `impl Show for Circle`, so dispatching `show(c)` fails at runtime.
+    let diagnostics = zeta::run_source(
+        r#"
+trait Show {
+  fn show(self: Self) -> Int;
+}
+struct Point { x: Int, y: Int }
+struct Circle { r: Int }
+impl Show for Point {
+  fn show(self: Self) -> Int { return self.x; }
+}
+fn main() -> Int {
+  let c: Circle = Circle { r: 5 };
+  return show(c);
+}
+"#,
+    )
+    .expect_err("missing impl should error");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RUNTIME_NO_IMPL"),
+        "expected RUNTIME_NO_IMPL, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn mir_interpreter_executes_lowered_program() {
     let source = include_str!("../testdata/run_mut.zeta");
     let module = zeta::parse_source(source).expect("source should parse");

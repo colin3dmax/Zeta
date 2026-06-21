@@ -245,6 +245,7 @@ fn combined_program(
     let mut program = Program {
         enums: Vec::new(),
         functions: Vec::new(),
+        trait_methods: Vec::new(),
     };
     for parsed in modules {
         let current_module = module_decl(&parsed.module).map(|(name, _)| name.to_string());
@@ -266,6 +267,7 @@ fn combined_program(
         );
         program.enums.extend(lowered.enums);
         program.functions.extend(lowered.functions);
+        program.trait_methods.extend(lowered.trait_methods);
     }
     program
 }

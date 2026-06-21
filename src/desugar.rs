@@ -31,6 +31,10 @@ enum TryKind {
 /// function that does not return `Option`/`Result` (the only forms the operator
 /// dispatches on).
 pub fn desugar_try(module: &mut Module) -> Result<(), Vec<Diagnostic>> {
+    // Flatten `impl` blocks into mangled free functions first, so the new
+    // functions also pass through `?`-desugaring below and are seen as ordinary
+    // functions by resolve / typecheck / mir / codegen / runtime.
+    flatten_impls(module);
     let mut diagnostics = Vec::new();
     for item in &mut module.items {
         if let Item::Function(function) = item {
@@ -48,6 +52,70 @@ pub fn desugar_try(module: &mut Module) -> Result<(), Vec<Diagnostic>> {
     } else {
         Err(diagnostics)
     }
+}
+
+/// Lower every `impl Trait for Type { fn m(...) {...} }` into top-level
+/// functions named `{m}${base_of(Type)}` (the `dispatch_name` convention), with
+/// the receiver type `Self` substituted by the concrete target type. UFCS calls
+/// `m(recv, ..)` resolve to these per-backend by the receiver's runtime/static
+/// type. `impl` items are removed; `trait` items stay (they declare the
+/// dispatchable method names consulted downstream).
+fn flatten_impls(module: &mut Module) {
+    let mut generated: Vec<Item> = Vec::new();
+    for item in &module.items {
+        let Item::Impl(impl_block) = item else {
+            continue;
+        };
+        let target = impl_block.target_type.as_str();
+        let base = crate::type_syntax::base_name(target);
+        for method in &impl_block.methods {
+            let mut function = method.clone();
+            function.name = crate::type_syntax::dispatch_name(&method.name, base);
+            for param in &mut function.params {
+                param.ty = subst_self(&param.ty, target);
+            }
+            if let Some(return_type) = &function.return_type {
+                function.return_type = Some(subst_self(return_type, target));
+            }
+            // An `impl<T> Trait for Box<T>` keeps `T` opaque in the method body:
+            // prepend the block's generic params so the existing monomorphization
+            // machinery treats them as type variables.
+            if !impl_block.type_params.is_empty() {
+                let mut type_params = impl_block.type_params.clone();
+                type_params.extend(function.type_params.iter().cloned());
+                function.type_params = type_params;
+            }
+            generated.push(Item::Function(function));
+        }
+    }
+    if generated.is_empty() {
+        return;
+    }
+    module.items.retain(|item| !matches!(item, Item::Impl(_)));
+    module.items.extend(generated);
+}
+
+/// Replace the type identifier `Self` (whole-token, ASCII type strings) with the
+/// concrete `target` type string. Handles `Self`, `Option<Self>`, `(Self, Int)`,
+/// etc.
+fn subst_self(ty: &str, target: &str) -> String {
+    let bytes = ty.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut out = String::with_capacity(ty.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let at_word = ty[i..].starts_with("Self")
+            && (i == 0 || !is_ident(bytes[i - 1]))
+            && (i + 4 == bytes.len() || !is_ident(bytes[i + 4]));
+        if at_word {
+            out.push_str(target);
+            i += 4;
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    out
 }
 
 fn try_kind_of_return(return_type: &str) -> Option<TryKind> {

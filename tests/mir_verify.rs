@@ -30,6 +30,7 @@ fn verifier_accepts_lowered_run_corpus() {
 #[test]
 fn verifier_rejects_unknown_store_target() {
     let program = Program {
+        trait_methods: vec![],
         enums: vec![],
         functions: vec![MirFunction {
             reloadable: false,
@@ -54,6 +55,7 @@ fn verifier_rejects_unknown_store_target() {
 #[test]
 fn verifier_rejects_break_outside_loop() {
     let program = Program {
+        trait_methods: vec![],
         enums: vec![],
         functions: vec![MirFunction {
             reloadable: false,
@@ -72,6 +74,7 @@ fn verifier_rejects_break_outside_loop() {
 #[test]
 fn verifier_rejects_continue_outside_loop() {
     let program = Program {
+        trait_methods: vec![],
         enums: vec![],
         functions: vec![MirFunction {
             reloadable: false,
@@ -90,6 +93,7 @@ fn verifier_rejects_continue_outside_loop() {
 #[test]
 fn verifier_rejects_return_type_mismatch() {
     let program = Program {
+        trait_methods: vec![],
         enums: vec![],
         functions: vec![MirFunction {
             reloadable: false,
@@ -108,6 +112,7 @@ fn verifier_rejects_return_type_mismatch() {
 #[test]
 fn verifier_rejects_call_argument_type_mismatch() {
     let program = Program {
+        trait_methods: vec![],
         enums: vec![],
         functions: vec![
             MirFunction {
@@ -149,6 +154,7 @@ fn verifier_rejects_call_argument_type_mismatch() {
 #[test]
 fn verifier_rejects_missing_return_for_non_unit_function() {
     let program = Program {
+        trait_methods: vec![],
         enums: vec![],
         functions: vec![MirFunction {
             reloadable: false,
@@ -172,6 +178,7 @@ fn verifier_rejects_missing_return_for_non_unit_function() {
 #[test]
 fn verifier_accepts_if_else_when_both_paths_return() {
     let program = Program {
+        trait_methods: vec![],
         enums: vec![],
         functions: vec![MirFunction {
             reloadable: false,
@@ -193,6 +200,7 @@ fn verifier_accepts_if_else_when_both_paths_return() {
 #[test]
 fn verifier_rejects_if_without_returning_else_path() {
     let program = Program {
+        trait_methods: vec![],
         enums: vec![],
         functions: vec![MirFunction {
             reloadable: false,
@@ -220,6 +228,7 @@ fn verifier_rejects_if_without_returning_else_path() {
 #[test]
 fn verifier_accepts_match_when_all_arms_return_and_wildcard_covers_default() {
     let program = Program {
+        trait_methods: vec![],
         enums: vec![],
         functions: vec![MirFunction {
             reloadable: false,
@@ -249,6 +258,7 @@ fn verifier_accepts_match_when_all_arms_return_and_wildcard_covers_default() {
 #[test]
 fn verifier_accepts_exhaustive_enum_match_when_all_arms_return() {
     let program = Program {
+        trait_methods: vec![],
         enums: vec![MirEnum {
             name: "ResultTag".to_string(),
             type_params: vec![],
@@ -303,6 +313,7 @@ fn verifier_accepts_exhaustive_enum_match_when_all_arms_return() {
 #[test]
 fn verifier_accepts_exhaustive_bool_match_when_all_arms_return() {
     let program = Program {
+        trait_methods: vec![],
         enums: vec![],
         functions: vec![MirFunction {
             reloadable: false,
@@ -332,6 +343,7 @@ fn verifier_accepts_exhaustive_bool_match_when_all_arms_return() {
 #[test]
 fn verifier_rejects_non_exhaustive_enum_match_without_trailing_return() {
     let program = Program {
+        trait_methods: vec![],
         enums: vec![MirEnum {
             name: "ResultTag".to_string(),
             type_params: vec![],

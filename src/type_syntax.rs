@@ -117,6 +117,16 @@ pub fn base_name(name: &str) -> &str {
     }
 }
 
+/// The mangled free-function name a trait method lowers to for a given
+/// implementing type. UFCS dispatch routes a call `method(recv, ..)` to
+/// `dispatch_name(method, base_name(recv_type))`. Mirrors the `$` convention
+/// generic monomorphization uses (`id$Int`); the single source of truth shared
+/// by the impl flattener (desugar) and the per-backend dispatchers
+/// (runtime / codegen).
+pub fn dispatch_name(method: &str, target_base: &str) -> String {
+    format!("{method}${target_base}")
+}
+
 /// If `name` is a function type string `fn(P0, P1, ...) -> R`, return its
 /// parameter type strings and return type string. Returns `None` otherwise.
 pub fn fn_parts(name: &str) -> Option<(Vec<&str>, &str)> {

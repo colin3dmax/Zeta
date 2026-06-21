@@ -679,6 +679,9 @@ fn function_semantics_differ(a: &MirFunction, b: &MirFunction) -> bool {
 struct MirRuntime {
     functions: HashMap<String, Rc<MirFunction>>,
     enum_variants: HashMap<String, HashMap<String, Option<String>>>,
+    /// Trait method names — a call to one dispatches by the first argument's
+    /// runtime type to the flattened impl `{method}${TypeBase}`.
+    trait_methods: HashSet<String>,
     loop_steps: usize,
     // `Load` sites (keyed by `MirExpr` node address) whose value is dead
     // immediately afterwards — the interpreter MOVES (removes) these out of
@@ -715,7 +718,44 @@ impl MirRuntime {
                     )
                 })
                 .collect(),
+            trait_methods: program.trait_methods.iter().cloned().collect(),
             loop_steps: 0,
+        }
+    }
+
+    /// Bind already-evaluated `arg_values` to `function`'s parameters and run its
+    /// body. Shared by trait-method dispatch in both the MIR and AST call paths.
+    fn run_function_with_args(
+        &mut self,
+        function: &Rc<MirFunction>,
+        arg_values: Vec<Value>,
+        name: &str,
+    ) -> Result<Value, Diagnostic> {
+        if function.params.len() != arg_values.len() {
+            return Err(runtime_error(
+                "RUNTIME_CALL_ARITY",
+                format!(
+                    "function `{name}` expects {} arguments, found {}",
+                    function.params.len(),
+                    arg_values.len()
+                ),
+            ));
+        }
+        let mut call_locals = HashMap::new();
+        for (param, value) in function.params.iter().zip(arg_values) {
+            call_locals.insert(param.name.clone(), value);
+        }
+        match self.eval_stmts(&function.body, &mut call_locals)? {
+            Control::Return(value) => Ok(value),
+            Control::Continue => Ok(Value::Unit),
+            Control::BreakLoop => Err(runtime_error(
+                "RUNTIME_BREAK_OUTSIDE_LOOP",
+                "`break` reached function boundary",
+            )),
+            Control::ContinueLoop => Err(runtime_error(
+                "RUNTIME_CONTINUE_OUTSIDE_LOOP",
+                "`continue` reached function boundary",
+            )),
         }
     }
 
@@ -1174,6 +1214,26 @@ impl MirRuntime {
                             arg_values.push(self.eval_expr(arg, locals)?);
                         }
                         return self.apply_closure(&closure, arg_values);
+                    }
+                    // Trait-method UFCS dispatch: route `m(recv, ..)` to the
+                    // flattened impl `m$<TypeBase>` selected by the receiver's
+                    // runtime type.
+                    if self.trait_methods.contains(callee) && !args.is_empty() {
+                        let mut arg_values = Vec::with_capacity(args.len());
+                        for arg in args {
+                            arg_values.push(self.eval_expr(arg, locals)?);
+                        }
+                        let base = value_type_base(&arg_values[0]);
+                        let mangled = crate::type_syntax::dispatch_name(callee, &base);
+                        let Some(function) = self.functions.get(&mangled).cloned() else {
+                            return Err(runtime_error(
+                                "RUNTIME_NO_IMPL",
+                                format!(
+                                    "no implementation of trait method `{callee}` for type `{base}`"
+                                ),
+                            ));
+                        };
+                        return self.run_function_with_args(&function, arg_values, &mangled);
                     }
                     return Err(runtime_error(
                         "RUNTIME_UNKNOWN_FUNCTION",
@@ -2093,6 +2153,23 @@ fn index_array_value(base: Value, index: Value) -> Result<Value, Diagnostic> {
             ),
         )
     })
+}
+
+/// The base type name used to dispatch a trait method on `value` — matches the
+/// `base_name` of an `impl`'s target type (`impl Show for Point` ⇒ `"Point"`).
+fn value_type_base(value: &Value) -> String {
+    match value {
+        Value::Int(_) => "Int".to_string(),
+        Value::Float(_) => "Float".to_string(),
+        Value::String(_) => "String".to_string(),
+        Value::Bool(_) => "Bool".to_string(),
+        Value::Struct { ty, .. } => ty.clone(),
+        Value::Enum { ty, .. } => ty.clone(),
+        Value::Array(_) => "Array".to_string(),
+        Value::Tuple(_) => "Tuple".to_string(),
+        Value::Closure(_) => "Fn".to_string(),
+        Value::Unit => "Unit".to_string(),
+    }
 }
 
 fn is_std_builtin(callee: &str) -> bool {

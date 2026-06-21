@@ -643,6 +643,23 @@ fn zty_mangle(zt: &ZType) -> String {
     }
 }
 
+/// The base type name used to dispatch a trait method on a value of ZType `zt`.
+/// Matches the interpreter's `value_type_base` and the `base_name` of an impl's
+/// target so native and the oracle agree. (Bool folds into `Int` here, so trait
+/// impls on `Bool` receivers are not dispatched natively — a rare case.)
+fn zty_base_name(zt: &ZType) -> String {
+    match zt {
+        ZType::Int => "Int".to_string(),
+        ZType::Float => "Float".to_string(),
+        ZType::Str => "String".to_string(),
+        ZType::Struct(name) => name.clone(),
+        ZType::Enum(name) => name.clone(),
+        ZType::Array(_) => "Array".to_string(),
+        ZType::Tuple(_) => "Tuple".to_string(),
+        ZType::Closure(..) => "Fn".to_string(),
+    }
+}
+
 /// Mangled name for a monomorphized instance, e.g. `id$Int`, `pair$Int_Bool`.
 fn mangle_instance(callee: &str, arg_ztys: &[ZType]) -> String {
     let parts: Vec<String> = arg_ztys.iter().map(zty_mangle).collect();
@@ -1159,6 +1176,9 @@ fn build_module<'ctx>(
         .map(|f| (f.name.clone(), f))
         .collect();
     let specialized: RefCell<HashMap<String, FunctionValue>> = RefCell::new(HashMap::new());
+    // Trait method names — a call to one dispatches by the receiver's static
+    // ZType base to the flattened impl `{method}${TypeBase}` (a concrete fn).
+    let trait_methods: HashSet<String> = program.trait_methods.iter().cloned().collect();
 
     // Pass 1: declare every concrete function with its typed signature.
     let mut functions: HashMap<String, FunctionValue> = HashMap::new();
@@ -1195,6 +1215,7 @@ fn build_module<'ctx>(
             types,
             functions: &functions,
             generics: &generics,
+            trait_methods: &trait_methods,
             specialized: &specialized,
             malloc,
             free,
@@ -1302,6 +1323,9 @@ struct FnLower<'a, 'ctx> {
     /// Generic function bodies, by name (excluded from the concrete passes).
     /// Calls to these are monomorphized on demand at the call site.
     generics: &'a HashMap<String, &'a MirFunction>,
+    /// Trait method names — a call to one dispatches by the first argument's
+    /// ZType base to a flattened impl function `{method}${TypeBase}`.
+    trait_methods: &'a HashSet<String>,
     /// Cache of monomorphized instances: mangled name → lifted LLVM function.
     /// Shared (RefCell) across all `FnLower`s so each (generic, type args) pair
     /// is generated once and reused.
@@ -2753,6 +2777,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 types: self.types,
                 functions: self.functions,
                 generics: self.generics,
+                trait_methods: self.trait_methods,
                 specialized: self.specialized,
                 malloc: self.malloc,
                 free: self.free,
@@ -2958,6 +2983,35 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
     /// ZTypes ARE the concrete parameter types), derive the type-parameter
     /// substitution to resolve the return type, generate (or reuse) the
     /// specialized instance, and call it.
+    /// Lower a trait-method call `m(recv, ..)`: lower the receiver to learn its
+    /// concrete ZType, route to the flattened impl `m$<TypeBase>` (a concrete
+    /// function), and call it with the receiver reused as the first argument.
+    fn lower_trait_dispatch_call(
+        &mut self,
+        callee: &str,
+        args: &[MirExpr],
+    ) -> Result<(BasicValueEnum<'ctx>, ZType), String> {
+        let (recv_v, recv_t) = self.lower_expr(&args[0])?;
+        let base = zty_base_name(&recv_t);
+        let mangled = crate::type_syntax::dispatch_name(callee, &base);
+        let function = self.functions.get(&mangled).copied().ok_or_else(|| {
+            format!("no implementation of trait method `{callee}` for type `{base}`")
+        })?;
+        let mut argv = Vec::with_capacity(args.len());
+        argv.push(self.bind_owned(&args[0], recv_v, &recv_t).into());
+        for arg in &args[1..] {
+            let (v, vt) = self.lower_expr(arg)?;
+            argv.push(self.bind_owned(arg, v, &vt).into());
+        }
+        let call = self.builder.build_call(function, &argv, "tcall").unwrap();
+        let ret = self.types.returns.get(&mangled).cloned().unwrap_or(ZType::Int);
+        let value = call
+            .try_as_basic_value()
+            .basic()
+            .ok_or_else(|| format!("`{mangled}` returned no value"))?;
+        Ok((value, ret))
+    }
+
     fn lower_generic_call(
         &mut self,
         callee: &str,
@@ -3076,6 +3130,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 types: self.types,
                 functions: self.functions,
                 generics: self.generics,
+                trait_methods: self.trait_methods,
                 specialized: self.specialized,
                 malloc: self.malloc,
                 free: self.free,
@@ -3177,6 +3232,11 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 // types at this site, then call the specialized instance.
                 if self.generics.contains_key(callee) {
                     return self.lower_generic_call(callee, args);
+                }
+                // Trait-method UFCS dispatch: route `m(recv, ..)` to the flattened
+                // impl `m$<TypeBase>` selected by the receiver's static ZType.
+                if self.trait_methods.contains(callee) && !args.is_empty() {
+                    return self.lower_trait_dispatch_call(callee, args);
                 }
                 // Indirect call: `callee` is a local holding a closure value.
                 if let Some((slot, ZType::Closure(param_ztys, ret_zty))) =

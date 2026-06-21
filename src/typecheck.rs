@@ -1850,7 +1850,7 @@ fn function_signatures(
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
 ) -> HashMap<String, FunctionSignature> {
-    module
+    let mut signatures: HashMap<String, FunctionSignature> = module
         .items
         .iter()
         .filter_map(|item| match item {
@@ -1881,7 +1881,37 @@ fn function_signatures(
             )),
             _ => None,
         })
-        .collect()
+        .collect();
+    // Register each trait method as a UFCS-callable function. `Self` (plus any
+    // method generics) is an opaque type parameter, so a call `show(p)` unifies
+    // `Self` against `p`'s concrete type and yields the declared return type —
+    // the actual `impl` body is dispatched per-backend at runtime/codegen.
+    for item in &module.items {
+        if let Item::Trait(decl) = item {
+            for method in &decl.methods {
+                let mut type_params = vec!["Self".to_string()];
+                type_params.extend(method.type_params.iter().cloned());
+                let params = method
+                    .params
+                    .iter()
+                    .map(|param| parse_type_with_params(&param.ty, structs, enums, &type_params))
+                    .collect();
+                let return_type = method
+                    .return_type
+                    .as_deref()
+                    .map(|ty| parse_type_with_params(ty, structs, enums, &type_params))
+                    .unwrap_or(Type::Unit);
+                signatures
+                    .entry(method.name.clone())
+                    .or_insert(FunctionSignature {
+                        type_params,
+                        params,
+                        return_type,
+                    });
+            }
+        }
+    }
+    signatures
 }
 
 fn struct_types(module: &Module) -> HashMap<String, StructType> {
