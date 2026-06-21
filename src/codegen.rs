@@ -3620,6 +3620,16 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let r = b.build_select(gt, a, c, "max").unwrap().into_int_value();
                 Ok(Some((r.into(), ZType::Int)))
             }
+            "int_pow" => {
+                let base = self.lower_int(&args[0])?;
+                let exp = self.lower_int(&args[1])?;
+                Ok(Some((self.gen_int_pow(base, exp).into(), ZType::Int)))
+            }
+            "string_to_int" => {
+                let (s, _) = self.lower_expr(&args[0])?;
+                let r = self.gen_string_to_int(s.into_struct_value());
+                Ok(Some((r.into(), ZType::Int)))
+            }
             "string_index_of" => {
                 let (s, _) = self.lower_expr(&args[0])?;
                 let (sub, _) = self.lower_expr(&args[1])?;
@@ -4017,6 +4027,163 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
 
     /// Byte index of the first occurrence of `sub` in `s`, or -1 (empty `sub` → 0).
     /// Mirrors `runtime::byte_index_of` exactly so native == interpreter.
+    /// `int_pow(base, exp)`: exp<0 ⇒ 0, else product of `base` `exp` times
+    /// (result starts at 1; i64 multiply wraps). Mirrors the interpreter loop.
+    fn gen_int_pow(&self, base: IntValue<'ctx>, exp: IntValue<'ctx>) -> IntValue<'ctx> {
+        let b = self.builder;
+        let i64t = self.i64t();
+        let res = self.entry_alloca("powres", i64t.into());
+        let i = self.entry_alloca("powi", i64t.into());
+        let is_neg = b
+            .build_int_compare(IntPredicate::SLT, exp, i64t.const_zero(), "expneg")
+            .unwrap();
+        let neg = self.context.append_basic_block(self.llvm_fn, "pow.neg");
+        let init = self.context.append_basic_block(self.llvm_fn, "pow.init");
+        let head = self.context.append_basic_block(self.llvm_fn, "pow.head");
+        let body = self.context.append_basic_block(self.llvm_fn, "pow.body");
+        let done = self.context.append_basic_block(self.llvm_fn, "pow.done");
+
+        b.build_conditional_branch(is_neg, neg, init).unwrap();
+        b.position_at_end(neg);
+        b.build_store(res, i64t.const_zero()).unwrap();
+        b.build_unconditional_branch(done).unwrap();
+
+        b.position_at_end(init);
+        b.build_store(res, i64t.const_int(1, false)).unwrap();
+        b.build_store(i, i64t.const_zero()).unwrap();
+        b.build_unconditional_branch(head).unwrap();
+
+        b.position_at_end(head);
+        let iv = b.build_load(i64t, i, "i").unwrap().into_int_value();
+        let cond = b
+            .build_int_compare(IntPredicate::SLT, iv, exp, "iltexp")
+            .unwrap();
+        b.build_conditional_branch(cond, body, done).unwrap();
+
+        b.position_at_end(body);
+        let r = b.build_load(i64t, res, "r").unwrap().into_int_value();
+        let r2 = b.build_int_mul(r, base, "rmul").unwrap();
+        b.build_store(res, r2).unwrap();
+        let i2 = b
+            .build_int_add(iv, i64t.const_int(1, false), "i2")
+            .unwrap();
+        b.build_store(i, i2).unwrap();
+        b.build_unconditional_branch(head).unwrap();
+
+        b.position_at_end(done);
+        b.build_load(i64t, res, "powval").unwrap().into_int_value()
+    }
+
+    /// `string_to_int(s)`: optional leading `-` then ASCII digits; any non-digit
+    /// (or empty / lone `-`) ⇒ 0. i64 arithmetic wraps. Byte-for-byte equivalent
+    /// to the interpreter's `parse_decimal_i64`.
+    fn gen_string_to_int(&self, s: inkwell::values::StructValue<'ctx>) -> IntValue<'ctx> {
+        let b = self.builder;
+        let i64t = self.i64t();
+        let i8t = self.context.i8_type();
+        let (len, data) = self.len_ptr_parts(s);
+        let res = self.entry_alloca("s2ires", i64t.into());
+        let sign = self.entry_alloca("s2isign", i64t.into());
+        let valid = self.entry_alloca("s2ivalid", i64t.into());
+        let start = self.entry_alloca("s2istart", i64t.into());
+        let idx = self.entry_alloca("s2ii", i64t.into());
+        b.build_store(res, i64t.const_zero()).unwrap();
+        b.build_store(sign, i64t.const_int(1, false)).unwrap();
+        b.build_store(valid, i64t.const_int(1, false)).unwrap();
+        b.build_store(start, i64t.const_zero()).unwrap();
+
+        let chk = self.context.append_basic_block(self.llvm_fn, "s2i.chkminus");
+        let setminus = self.context.append_basic_block(self.llvm_fn, "s2i.setminus");
+        let afterminus = self.context.append_basic_block(self.llvm_fn, "s2i.afterminus");
+        let emptyblk = self.context.append_basic_block(self.llvm_fn, "s2i.empty");
+        let loopinit = self.context.append_basic_block(self.llvm_fn, "s2i.init");
+        let head = self.context.append_basic_block(self.llvm_fn, "s2i.head");
+        let body = self.context.append_basic_block(self.llvm_fn, "s2i.body");
+        let done = self.context.append_basic_block(self.llvm_fn, "s2i.done");
+
+        // First byte `-` ⇒ sign=-1, start=1 (guarded by len>0).
+        let has_len = b
+            .build_int_compare(IntPredicate::SGT, len, i64t.const_zero(), "haslen")
+            .unwrap();
+        b.build_conditional_branch(has_len, chk, afterminus).unwrap();
+        b.position_at_end(chk);
+        let c0 = b
+            .build_load(i8t, data, "c0")
+            .unwrap()
+            .into_int_value();
+        let c0w = b.build_int_z_extend(c0, i64t, "c0w").unwrap();
+        let is_minus = b
+            .build_int_compare(IntPredicate::EQ, c0w, i64t.const_int(45, false), "isminus")
+            .unwrap();
+        b.build_conditional_branch(is_minus, setminus, afterminus).unwrap();
+        b.position_at_end(setminus);
+        b.build_store(start, i64t.const_int(1, false)).unwrap();
+        b.build_store(sign, i64t.const_all_ones()).unwrap(); // -1
+        b.build_unconditional_branch(afterminus).unwrap();
+
+        b.position_at_end(afterminus);
+        let startv = b.build_load(i64t, start, "startv").unwrap().into_int_value();
+        // start >= len ⇒ empty / lone `-` ⇒ result 0.
+        let empty = b
+            .build_int_compare(IntPredicate::SGE, startv, len, "empty")
+            .unwrap();
+        b.build_conditional_branch(empty, emptyblk, loopinit).unwrap();
+        b.position_at_end(emptyblk);
+        b.build_store(valid, i64t.const_zero()).unwrap();
+        b.build_unconditional_branch(done).unwrap();
+
+        b.position_at_end(loopinit);
+        b.build_store(idx, startv).unwrap();
+        b.build_unconditional_branch(head).unwrap();
+
+        b.position_at_end(head);
+        let iv = b.build_load(i64t, idx, "iv").unwrap().into_int_value();
+        let cond = b
+            .build_int_compare(IntPredicate::SLT, iv, len, "iltlen")
+            .unwrap();
+        b.build_conditional_branch(cond, body, done).unwrap();
+
+        b.position_at_end(body);
+        let ptr = unsafe { b.build_in_bounds_gep(i8t, data, &[iv], "cptr").unwrap() };
+        let cb = b.build_load(i8t, ptr, "cb").unwrap().into_int_value();
+        let ci = b.build_int_z_extend(cb, i64t, "ci").unwrap();
+        let ge0 = b
+            .build_int_compare(IntPredicate::SGE, ci, i64t.const_int(48, false), "ge0")
+            .unwrap();
+        let le9 = b
+            .build_int_compare(IntPredicate::SLE, ci, i64t.const_int(57, false), "le9")
+            .unwrap();
+        let isdigit = b.build_and(ge0, le9, "isdigit").unwrap();
+        let isdig_i64 = b.build_int_z_extend(isdigit, i64t, "isdigw").unwrap();
+        let v = b.build_load(i64t, valid, "v").unwrap().into_int_value();
+        let v2 = b.build_and(v, isdig_i64, "v2").unwrap();
+        b.build_store(valid, v2).unwrap();
+        let r = b.build_load(i64t, res, "ra").unwrap().into_int_value();
+        let r10 = b
+            .build_int_mul(r, i64t.const_int(10, false), "r10")
+            .unwrap();
+        let digit = b
+            .build_int_sub(ci, i64t.const_int(48, false), "digit")
+            .unwrap();
+        let r2 = b.build_int_add(r10, digit, "racc").unwrap();
+        b.build_store(res, r2).unwrap();
+        let i2 = b.build_int_add(iv, i64t.const_int(1, false), "i2").unwrap();
+        b.build_store(idx, i2).unwrap();
+        b.build_unconditional_branch(head).unwrap();
+
+        b.position_at_end(done);
+        let v = b.build_load(i64t, valid, "vf").unwrap().into_int_value();
+        let resf = b.build_load(i64t, res, "resf").unwrap().into_int_value();
+        let signf = b.build_load(i64t, sign, "signf").unwrap().into_int_value();
+        let signed = b.build_int_mul(signf, resf, "signed").unwrap();
+        let isvalid = b
+            .build_int_compare(IntPredicate::NE, v, i64t.const_zero(), "isvalid")
+            .unwrap();
+        b.build_select(isvalid, signed, i64t.const_zero(), "s2ival")
+            .unwrap()
+            .into_int_value()
+    }
+
     fn gen_index_of(
         &self,
         s: inkwell::values::StructValue<'ctx>,

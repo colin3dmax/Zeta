@@ -144,6 +144,16 @@ const STD_CORE_FUNCTIONS: &[StandardFunction] = &[
         return_type: Some("Int"),
     },
     StandardFunction {
+        name: "int_pow",
+        params: &["Int", "Int"],
+        return_type: Some("Int"),
+    },
+    StandardFunction {
+        name: "string_to_int",
+        params: &["String"],
+        return_type: Some("Int"),
+    },
+    StandardFunction {
         name: "string_index_of",
         params: &["String", "String"],
         return_type: Some("Int"),

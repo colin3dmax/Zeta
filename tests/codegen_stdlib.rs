@@ -41,6 +41,26 @@ fn int_abs_min_max() {
 }
 
 #[test]
+fn int_pow_cases() {
+    assert_eq!(check(&prog("  return int_pow(2, 10);")), 1024);
+    assert_eq!(check(&prog("  return int_pow(3, 0);")), 1);
+    assert_eq!(check(&prog("  return int_pow(5, 1);")), 5);
+    assert_eq!(check(&prog("  return int_pow(2, 0 - 3);")), 0); // negative exponent → 0
+    assert_eq!(check(&prog("  return int_pow(0 - 2, 3);")), -8);
+}
+
+#[test]
+fn string_to_int_cases() {
+    assert_eq!(check(&prog("  return string_to_int(\"42\");")), 42);
+    assert_eq!(check(&prog("  return string_to_int(\"-17\");")), -17);
+    assert_eq!(check(&prog("  return string_to_int(\"0\");")), 0);
+    assert_eq!(check(&prog("  return string_to_int(\"\");")), 0); // empty → 0
+    assert_eq!(check(&prog("  return string_to_int(\"-\");")), 0); // lone minus → 0
+    assert_eq!(check(&prog("  return string_to_int(\"12x3\");")), 0); // non-digit → 0
+    assert_eq!(check(&prog("  return string_to_int(\"007\");")), 7);
+}
+
+#[test]
 fn string_index_of_and_contains() {
     assert_eq!(check(&prog("  return string_index_of(\"hello world\", \"wor\");")), 6);
     assert_eq!(check(&prog("  return string_index_of(\"hello\", \"xyz\");")), -1);

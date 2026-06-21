@@ -2155,6 +2155,34 @@ fn index_array_value(base: Value, index: Value) -> Result<Value, Diagnostic> {
     })
 }
 
+/// Parse a decimal integer like the `string_to_int` builtin: optional leading
+/// `-`, then ASCII digits. Any non-digit (or empty / lone `-`) yields 0. All
+/// arithmetic wraps (i64), matching the native codegen's `gen_string_to_int`.
+fn parse_decimal_i64(bytes: &[u8]) -> i64 {
+    let (sign, start) = if !bytes.is_empty() && bytes[0] == b'-' {
+        (-1i64, 1usize)
+    } else {
+        (1i64, 0usize)
+    };
+    if start >= bytes.len() {
+        return 0;
+    }
+    let mut result = 0i64;
+    let mut valid = true;
+    for &c in &bytes[start..] {
+        if !c.is_ascii_digit() {
+            valid = false;
+        }
+        let digit = (c as i64).wrapping_sub('0' as i64);
+        result = result.wrapping_mul(10).wrapping_add(digit);
+    }
+    if valid {
+        sign.wrapping_mul(result)
+    } else {
+        0
+    }
+}
+
 /// The base type name used to dispatch a trait method on `value` — matches the
 /// `base_name` of an `impl`'s target type (`impl Show for Point` ⇒ `"Point"`).
 fn value_type_base(value: &Value) -> String {
@@ -2183,6 +2211,8 @@ fn is_std_builtin(callee: &str) -> bool {
             | "int_abs"
             | "int_min"
             | "int_max"
+            | "int_pow"
+            | "string_to_int"
             | "string_index_of"
             | "string_contains"
             | "string_repeat"
@@ -2359,6 +2389,32 @@ fn eval_std_builtin(callee: &str, args: Vec<Value>) -> Result<Value, Diagnostic>
                 return Err(runtime_error("RUNTIME_STD_TYPE", "int_max expects Int, Int"));
             };
             Ok(Value::Int(a.max(b)))
+        }
+        "int_pow" => {
+            let [base, exp]: [Value; 2] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            let (Value::Int(base), Value::Int(exp)) = (base, exp) else {
+                return Err(runtime_error("RUNTIME_STD_TYPE", "int_pow expects Int, Int"));
+            };
+            let mut result = 0i64;
+            if exp >= 0 {
+                result = 1;
+                let mut i = 0i64;
+                while i < exp {
+                    result = result.wrapping_mul(base);
+                    i += 1;
+                }
+            }
+            Ok(Value::Int(result))
+        }
+        "string_to_int" => {
+            let [s]: [Value; 1] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            let Value::String(s) = s else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "string_to_int expects String",
+                ));
+            };
+            Ok(Value::Int(parse_decimal_i64(s.as_bytes())))
         }
         "string_index_of" => {
             let [s, sub]: [Value; 2] = expect_arity(callee, args)?.try_into().ok().unwrap();
