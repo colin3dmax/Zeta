@@ -129,6 +129,36 @@ const STD_CORE_FUNCTIONS: &[StandardFunction] = &[
         return_type: Some("String"),
     },
     StandardFunction {
+        name: "int_abs",
+        params: &["Int"],
+        return_type: Some("Int"),
+    },
+    StandardFunction {
+        name: "int_min",
+        params: &["Int", "Int"],
+        return_type: Some("Int"),
+    },
+    StandardFunction {
+        name: "int_max",
+        params: &["Int", "Int"],
+        return_type: Some("Int"),
+    },
+    StandardFunction {
+        name: "string_index_of",
+        params: &["String", "String"],
+        return_type: Some("Int"),
+    },
+    StandardFunction {
+        name: "string_contains",
+        params: &["String", "String"],
+        return_type: Some("Bool"),
+    },
+    StandardFunction {
+        name: "string_repeat",
+        params: &["String", "Int"],
+        return_type: Some("String"),
+    },
+    StandardFunction {
         name: "ascii_is_digit",
         params: &["Int"],
         return_type: Some("Bool"),

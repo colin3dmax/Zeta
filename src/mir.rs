@@ -1654,6 +1654,11 @@ impl<'a> MirVerifier<'a> {
             "string_byte_slice" => (&["String", "Int", "Int"][..], MirType::named("String")),
             "string_concat" => (&["String", "String"][..], MirType::named("String")),
             "int_to_string" => (&["Int"][..], MirType::named("String")),
+            "int_abs" => (&["Int"][..], MirType::named("Int")),
+            "int_min" | "int_max" => (&["Int", "Int"][..], MirType::named("Int")),
+            "string_index_of" => (&["String", "String"][..], MirType::named("Int")),
+            "string_contains" => (&["String", "String"][..], MirType::named("Bool")),
+            "string_repeat" => (&["String", "Int"][..], MirType::named("String")),
             "ascii_is_digit" | "ascii_is_alpha" | "ascii_is_alnum" | "ascii_is_whitespace" => {
                 (&["Int"][..], MirType::named("Bool"))
             }

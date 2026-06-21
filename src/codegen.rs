@@ -3537,6 +3537,51 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let len = b.build_int_s_extend(written, self.i64t(), "len64").unwrap();
                 Ok(Some((self.make_len_ptr(len, buf).into(), ZType::Str)))
             }
+            "int_abs" => {
+                let n = self.lower_int(&args[0])?;
+                let neg = b.build_int_neg(n, "neg").unwrap();
+                let isneg = b
+                    .build_int_compare(IntPredicate::SLT, n, self.i64t().const_zero(), "isneg")
+                    .unwrap();
+                let r = b.build_select(isneg, neg, n, "abs").unwrap().into_int_value();
+                Ok(Some((r.into(), ZType::Int)))
+            }
+            "int_min" => {
+                let a = self.lower_int(&args[0])?;
+                let c = self.lower_int(&args[1])?;
+                let lt = b.build_int_compare(IntPredicate::SLT, a, c, "lt").unwrap();
+                let r = b.build_select(lt, a, c, "min").unwrap().into_int_value();
+                Ok(Some((r.into(), ZType::Int)))
+            }
+            "int_max" => {
+                let a = self.lower_int(&args[0])?;
+                let c = self.lower_int(&args[1])?;
+                let gt = b.build_int_compare(IntPredicate::SGT, a, c, "gt").unwrap();
+                let r = b.build_select(gt, a, c, "max").unwrap().into_int_value();
+                Ok(Some((r.into(), ZType::Int)))
+            }
+            "string_index_of" => {
+                let (s, _) = self.lower_expr(&args[0])?;
+                let (sub, _) = self.lower_expr(&args[1])?;
+                let idx = self.gen_index_of(s.into_struct_value(), sub.into_struct_value());
+                Ok(Some((idx.into(), ZType::Int)))
+            }
+            "string_contains" => {
+                let (s, _) = self.lower_expr(&args[0])?;
+                let (sub, _) = self.lower_expr(&args[1])?;
+                let idx = self.gen_index_of(s.into_struct_value(), sub.into_struct_value());
+                let found = self
+                    .builder
+                    .build_int_compare(IntPredicate::SGE, idx, self.i64t().const_zero(), "found")
+                    .unwrap();
+                Ok(Some((self.bool_to_i64(found).into(), ZType::Int)))
+            }
+            "string_repeat" => {
+                let (s, _) = self.lower_expr(&args[0])?;
+                let n = self.lower_int(&args[1])?;
+                let v = self.gen_repeat(s.into_struct_value(), n);
+                Ok(Some((v.into(), ZType::Str)))
+            }
             // Growable arrays. bool arrays share the Int (i64) element repr; string
             // arrays carry `{len,ptr}` elements (stride from the element type).
             "int_array_empty" | "bool_array_empty" => Ok(Some(self.lower_array_empty(ZType::Int))),
@@ -3908,6 +3953,116 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             .build_int_compare(IntPredicate::EQ, cmp, self.context.i32_type().const_zero(), "cmp0")
             .unwrap();
         bld.build_and(len_eq, cmp0, "streq").unwrap()
+    }
+
+    /// Byte index of the first occurrence of `sub` in `s`, or -1 (empty `sub` → 0).
+    /// Mirrors `runtime::byte_index_of` exactly so native == interpreter.
+    fn gen_index_of(
+        &self,
+        s: inkwell::values::StructValue<'ctx>,
+        sub: inkwell::values::StructValue<'ctx>,
+    ) -> IntValue<'ctx> {
+        let i64t = self.i64t();
+        let (slen, sdata) = self.len_ptr_parts(s);
+        let (sublen, subdata) = self.len_ptr_parts(sub);
+        let res = self.entry_alloca("ixres", i64t.into());
+
+        let is_empty = self.builder.build_int_compare(IntPredicate::EQ, sublen, i64t.const_zero(), "subempty").unwrap();
+        let empty_blk = self.context.append_basic_block(self.llvm_fn, "io.empty");
+        let chk_len = self.context.append_basic_block(self.llvm_fn, "io.chklen");
+        let too_long = self.context.append_basic_block(self.llvm_fn, "io.toolong");
+        let setup = self.context.append_basic_block(self.llvm_fn, "io.setup");
+        let head = self.context.append_basic_block(self.llvm_fn, "io.head");
+        let body = self.context.append_basic_block(self.llvm_fn, "io.body");
+        let next = self.context.append_basic_block(self.llvm_fn, "io.next");
+        let found = self.context.append_basic_block(self.llvm_fn, "io.found");
+        let done = self.context.append_basic_block(self.llvm_fn, "io.done");
+
+        self.builder.build_conditional_branch(is_empty, empty_blk, chk_len).unwrap();
+        self.builder.position_at_end(empty_blk);
+        self.builder.build_store(res, i64t.const_zero()).unwrap();
+        self.builder.build_unconditional_branch(done).unwrap();
+
+        self.builder.position_at_end(chk_len);
+        let longer = self.builder.build_int_compare(IntPredicate::SGT, sublen, slen, "sublong").unwrap();
+        self.builder.build_conditional_branch(longer, too_long, setup).unwrap();
+        self.builder.position_at_end(too_long);
+        self.builder.build_store(res, i64t.const_all_ones()).unwrap(); // -1
+        self.builder.build_unconditional_branch(done).unwrap();
+
+        self.builder.position_at_end(setup);
+        let last = self.builder.build_int_sub(slen, sublen, "last").unwrap();
+        self.builder.build_unconditional_branch(head).unwrap();
+
+        self.builder.position_at_end(head);
+        let phi = self.builder.build_phi(i64t, "i").unwrap();
+        phi.add_incoming(&[(&i64t.const_zero(), setup)]);
+        let i = phi.as_basic_value().into_int_value();
+        let in_range = self.builder.build_int_compare(IntPredicate::SLE, i, last, "inrange").unwrap();
+        // Exhausted (i > last) → reuse the `too_long` block, which stores -1.
+        self.builder.build_conditional_branch(in_range, body, too_long).unwrap();
+
+        self.builder.position_at_end(body);
+        let i8t = self.context.i8_type();
+        let ptr = unsafe { self.builder.build_in_bounds_gep(i8t, sdata, &[i], "sptr").unwrap() };
+        let cmp = self
+            .builder
+            .build_call(self.memcmp, &[ptr.into(), subdata.into(), sublen.into()], "mc")
+            .unwrap()
+            .try_as_basic_value()
+            .basic()
+            .unwrap()
+            .into_int_value();
+        let eq = self.builder.build_int_compare(IntPredicate::EQ, cmp, self.context.i32_type().const_zero(), "eq0").unwrap();
+        self.builder.build_conditional_branch(eq, found, next).unwrap();
+
+        self.builder.position_at_end(found);
+        self.builder.build_store(res, i).unwrap();
+        self.builder.build_unconditional_branch(done).unwrap();
+
+        self.builder.position_at_end(next);
+        let i2 = self.builder.build_int_add(i, i64t.const_int(1, false), "i2").unwrap();
+        phi.add_incoming(&[(&i2, next)]);
+        self.builder.build_unconditional_branch(head).unwrap();
+
+        self.builder.position_at_end(done);
+        self.builder.build_load(i64t, res, "ixval").unwrap().into_int_value()
+    }
+
+    /// `s` repeated `n` times (n<0 → empty) as a fresh heap string.
+    fn gen_repeat(
+        &self,
+        s: inkwell::values::StructValue<'ctx>,
+        n: IntValue<'ctx>,
+    ) -> inkwell::values::StructValue<'ctx> {
+        let i64t = self.i64t();
+        let (slen, sdata) = self.len_ptr_parts(s);
+        let neg = self.builder.build_int_compare(IntPredicate::SLT, n, i64t.const_zero(), "neg").unwrap();
+        let count = self.builder.build_select(neg, i64t.const_zero(), n, "count").unwrap().into_int_value();
+        let total = self.builder.build_int_mul(slen, count, "rtot").unwrap();
+        let buf = self.alloc_str_buf(total);
+
+        let head = self.context.append_basic_block(self.llvm_fn, "rp.head");
+        let body = self.context.append_basic_block(self.llvm_fn, "rp.body");
+        let exit = self.context.append_basic_block(self.llvm_fn, "rp.exit");
+        let entry = self.builder.get_insert_block().unwrap();
+        self.builder.build_unconditional_branch(head).unwrap();
+        self.builder.position_at_end(head);
+        let phi = self.builder.build_phi(i64t, "k").unwrap();
+        phi.add_incoming(&[(&i64t.const_zero(), entry)]);
+        let k = phi.as_basic_value().into_int_value();
+        let cond = self.builder.build_int_compare(IntPredicate::SLT, k, count, "rcond").unwrap();
+        self.builder.build_conditional_branch(cond, body, exit).unwrap();
+        self.builder.position_at_end(body);
+        let off = self.builder.build_int_mul(k, slen, "roff").unwrap();
+        let i8t = self.context.i8_type();
+        let dst = unsafe { self.builder.build_in_bounds_gep(i8t, buf, &[off], "rdst").unwrap() };
+        self.memcpy_bytes(dst, sdata, slen);
+        let k2 = self.builder.build_int_add(k, i64t.const_int(1, false), "k2").unwrap();
+        phi.add_incoming(&[(&k2, self.builder.get_insert_block().unwrap())]);
+        self.builder.build_unconditional_branch(head).unwrap();
+        self.builder.position_at_end(exit);
+        self.make_len_ptr(total, buf)
     }
 
     fn lower_logical(

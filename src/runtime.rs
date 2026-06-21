@@ -2103,6 +2103,12 @@ fn is_std_builtin(callee: &str) -> bool {
             | "string_byte_slice"
             | "string_concat"
             | "int_to_string"
+            | "int_abs"
+            | "int_min"
+            | "int_max"
+            | "string_index_of"
+            | "string_contains"
+            | "string_repeat"
             | "ascii_is_digit"
             | "ascii_is_alpha"
             | "ascii_is_alnum"
@@ -2120,6 +2126,27 @@ fn is_std_builtin(callee: &str) -> bool {
             | "path_basename"
             | "diagnostic_format"
     )
+}
+
+/// Byte index of the first occurrence of `needle` in `haystack`, or -1. An empty
+/// needle matches at 0. Native codegen mirrors this exact naive scan so the
+/// differential oracle holds.
+fn byte_index_of(haystack: &[u8], needle: &[u8]) -> i64 {
+    if needle.is_empty() {
+        return 0;
+    }
+    if needle.len() > haystack.len() {
+        return -1;
+    }
+    let last = haystack.len() - needle.len();
+    let mut i = 0;
+    while i <= last {
+        if &haystack[i..i + needle.len()] == needle {
+            return i as i64;
+        }
+        i += 1;
+    }
+    -1
 }
 
 fn eval_std_builtin(callee: &str, args: Vec<Value>) -> Result<Value, Diagnostic> {
@@ -2234,6 +2261,58 @@ fn eval_std_builtin(callee: &str, args: Vec<Value>) -> Result<Value, Diagnostic>
                 ));
             };
             Ok(Value::String(value.to_string()))
+        }
+        "int_abs" => {
+            let [v]: [Value; 1] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            let Value::Int(v) = v else {
+                return Err(runtime_error("RUNTIME_STD_TYPE", "int_abs expects Int"));
+            };
+            Ok(Value::Int(v.wrapping_abs()))
+        }
+        "int_min" => {
+            let [a, b]: [Value; 2] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            let (Value::Int(a), Value::Int(b)) = (a, b) else {
+                return Err(runtime_error("RUNTIME_STD_TYPE", "int_min expects Int, Int"));
+            };
+            Ok(Value::Int(a.min(b)))
+        }
+        "int_max" => {
+            let [a, b]: [Value; 2] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            let (Value::Int(a), Value::Int(b)) = (a, b) else {
+                return Err(runtime_error("RUNTIME_STD_TYPE", "int_max expects Int, Int"));
+            };
+            Ok(Value::Int(a.max(b)))
+        }
+        "string_index_of" => {
+            let [s, sub]: [Value; 2] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            let (Value::String(s), Value::String(sub)) = (s, sub) else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "string_index_of expects String, String",
+                ));
+            };
+            Ok(Value::Int(byte_index_of(s.as_bytes(), sub.as_bytes())))
+        }
+        "string_contains" => {
+            let [s, sub]: [Value; 2] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            let (Value::String(s), Value::String(sub)) = (s, sub) else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "string_contains expects String, String",
+                ));
+            };
+            Ok(Value::Bool(byte_index_of(s.as_bytes(), sub.as_bytes()) >= 0))
+        }
+        "string_repeat" => {
+            let [s, n]: [Value; 2] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            let (Value::String(s), Value::Int(n)) = (s, n) else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "string_repeat expects String, Int",
+                ));
+            };
+            let count = if n < 0 { 0 } else { n as usize };
+            Ok(Value::String(s.repeat(count)))
         }
         "ascii_is_digit" => eval_ascii_predicate(callee, args, |byte| byte.is_ascii_digit()),
         "ascii_is_alpha" => eval_ascii_predicate(callee, args, |byte| byte.is_ascii_alphabetic()),

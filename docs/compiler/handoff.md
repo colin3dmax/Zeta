@@ -139,7 +139,14 @@ index.html(能力清单)。**未部署**。
     效果:大串传值 O(n)→O(1)(微基准 4096 字符×10万 9ms→2ms);小串负载中性(selfhost_perf 267≈265)。
     门禁:string_literal_bound_in_loop / string_shared_by_refcount_balances、ASan 零堆错误、全 llvm 50
     suite 0 失败、fixpoint 4/4。**至此 array + string 两大高频类型都走 COW；值语义共享传值 O(1)。**
-11. **后续性能(可选)**:① move-on-last-use(免掉非共享绑定的 rc 簿记,需 MIR 活跃性分析);② 小字符串
+10g. **stdlib 补齐 ✅(commit 6733522)= 6 个常用内置**:int_abs/int_min/int_max + string_index_of/
+    string_contains/string_repeat。每个全链:std_api 签名 + runtime 解释器 + **mir.rs 内置类型表(易漏的第二处!)**
+    + native codegen,差分门禁。string_index_of 朴素扫描 memcmp,与 `runtime::byte_index_of` 逐字节对齐;
+    repeat 复用 alloc_str_buf(COW 头)。**坑:加内置要同时改 std_api + runtime(is_std_builtin+eval)+ mir
+    类型表 + codegen 四处**;**且新内置名不能与 arena_frontend 自定义函数撞名**(string_starts_with 因此排除,
+    否则前端 call 的 lowering 变化破坏 fixpoint)。
+11. **后续性能/补齐(可选)**:① trait/接口系统(类型系统最大缺口,UFCS 自由函数派发 + 单态化,多片工程);
+    ② 标准库继续扩(string_to_int/split、HashMap 需 trait 前置);③ move-on-last-use(免非共享绑定 rc 簿记);④ 小字符串
     优化 SSO(≤15B 内联,免堆分配,缓解小串 rc 开销);③ struct/tuple 大聚合的 COW。array+string COW 已
     兑现「无别名 ⇒ 共享传值 O(1)」的主要红利。
 12. 其它候选:#77 P4 并发 / #78 P5 FFI;ev_expr 解释器补全(FloatArray 现已有,blocker 或已解)。
