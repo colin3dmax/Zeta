@@ -50,6 +50,43 @@ fn int_pow_cases() {
 }
 
 #[test]
+fn generic_array_push_and_repeat() {
+    // array_push grows a generic array; array_repeat fills one. Element type is
+    // inferred from the argument and monomorphized.
+    let src = "\
+fn build<T>(seed: T, a: T, b: T) -> Array<T> {
+  let xs: Array<T> = array_repeat(seed, 0);
+  let xs2: Array<T> = array_push(xs, a);
+  return array_push(xs2, b);
+}
+fn main() -> Int {
+  let nums: Array<Int> = build(0, 7, 9);
+  let filled: Array<Int> = array_repeat(5, 3);
+  return nums[0] + nums[1] + nums.len + filled[2] + filled.len;
+}";
+    // 7 + 9 + 2 + 5 + 3 = 26
+    assert_eq!(check(src), 26);
+}
+
+#[test]
+fn generic_array_managed_elements() {
+    // String elements exercise the per-slot clone / consumed-seed drop paths.
+    let src = "\
+import std.core;
+fn build<T>(seed: T, a: T) -> Array<T> {
+  let xs: Array<T> = array_repeat(seed, 0);
+  return array_push(xs, a);
+}
+fn main() -> Int {
+  let words: Array<String> = build(\"x\", \"hello\");
+  let filled: Array<String> = array_repeat(\"ab\", 4);
+  return string_len(words[0]) + words.len + string_len(filled[3]) + filled.len;
+}";
+    // len("hello")=5 + 1 + len("ab")=2 + 4 = 12
+    assert_eq!(check(src), 12);
+}
+
+#[test]
 fn string_to_int_cases() {
     assert_eq!(check(&prog("  return string_to_int(\"42\");")), 42);
     assert_eq!(check(&prog("  return string_to_int(\"-17\");")), -17);

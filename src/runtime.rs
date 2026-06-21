@@ -2213,6 +2213,8 @@ fn is_std_builtin(callee: &str) -> bool {
             | "int_max"
             | "int_pow"
             | "string_to_int"
+            | "array_push"
+            | "array_repeat"
             | "string_index_of"
             | "string_contains"
             | "string_repeat"
@@ -2457,6 +2459,30 @@ fn eval_std_builtin(callee: &str, args: Vec<Value>) -> Result<Value, Diagnostic>
             let []: [Value; 0] = expect_arity(callee, args)?.try_into().ok().unwrap();
             Ok(Value::Array(Rc::new(Vec::new())))
         }
+        "array_push" => {
+            // Generic push: the interpreter is dynamically typed, so any element
+            // value is accepted (codegen monomorphizes by the array's ZType).
+            let [array, value]: [Value; 2] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            let Value::Array(mut values) = array else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "array_push expects array as first argument",
+                ));
+            };
+            Rc::make_mut(&mut values).push(value);
+            Ok(Value::Array(values))
+        }
+        "array_repeat" => {
+            let [value, count]: [Value; 2] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            let Value::Int(count) = count else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "array_repeat expects Int count",
+                ));
+            };
+            let n = if count < 0 { 0 } else { count as usize };
+            Ok(Value::Array(Rc::new(vec![value; n])))
+        }
         "int_array_push" => eval_array_push(callee, args, "Int"),
         "string_array_push" => eval_array_push(callee, args, "String"),
         "bool_array_push" => eval_array_push(callee, args, "Bool"),
@@ -2640,6 +2666,7 @@ fn expect_arity(callee: &str, args: Vec<Value>) -> Result<Vec<Value>, Diagnostic
         "ascii_is_digit" | "ascii_is_alpha" | "ascii_is_alnum" | "ascii_is_whitespace" => 1,
         "int_array_empty" | "string_array_empty" | "bool_array_empty" | "float_array_empty" => 0,
         "int_array_push" | "string_array_push" | "bool_array_push" | "float_array_push" => 2,
+        "array_push" | "array_repeat" => 2,
         _ => args.len(),
     };
     if args.len() != expected {

@@ -1588,6 +1588,29 @@ impl<'a> MirVerifier<'a> {
         if let Some(return_type) = self.verify_std_call(callee, args, locals) {
             return return_type;
         }
+        // Generic array intrinsics: element type flows from an argument.
+        if callee == "array_push" {
+            // array_push(arr, x) -> arr's (array) type.
+            let arr_ty = args
+                .first()
+                .map(|a| self.verify_expr(a, locals))
+                .unwrap_or(MirType::Unknown);
+            for arg in args.iter().skip(1) {
+                self.verify_expr(arg, locals);
+            }
+            return arr_ty;
+        }
+        if callee == "array_repeat" {
+            // array_repeat(value, count) -> Array<value type>.
+            let elem = args
+                .first()
+                .map(|v| self.verify_expr(v, locals))
+                .unwrap_or(MirType::Unknown);
+            for arg in args.iter().skip(1) {
+                self.verify_expr(arg, locals);
+            }
+            return MirType::Array(Box::new(elem));
+        }
         let Some(function) = self.functions.get(callee).copied() else {
             // Indirect call through a local of function type.
             if let Some(MirType::Fn(params, ret)) = locals.get(callee).cloned() {

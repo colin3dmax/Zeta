@@ -126,6 +126,9 @@ pub fn check_with_external_items(
             .entry(function.name.clone())
             .or_insert_with(|| external_function_signature(function, &structs, &enums));
     }
+    for (name, sig) in generic_array_builtin_signatures() {
+        functions.entry(name).or_insert(sig);
+    }
     validate_declared_types(module, &structs, &enums, &mut diagnostics);
     for item in &module.items {
         if let Item::Function(function) = item {
@@ -330,6 +333,39 @@ fn is_builtin_type_name(name: &str) -> bool {
         "Int" | "Float" | "String" | "Bool" | "Unit" | "IntArray" | "StringArray" | "BoolArray"
             | "FloatArray"
     )
+}
+
+/// Generic array intrinsics whose element type is inferred from an argument
+/// (so they fit the bottom-up monomorphization the way `array_empty()` cannot):
+/// `array_push(Array<E>, E) -> Array<E>` and `array_repeat(E, Int) -> Array<E>`
+/// (count 0 yields a typed empty array). These unblock generic containers.
+pub fn is_generic_array_builtin(name: &str) -> bool {
+    matches!(name, "array_push" | "array_repeat")
+}
+
+fn generic_array_builtin_signatures() -> Vec<(String, FunctionSignature)> {
+    let e = || Type::Named("E".to_string());
+    let arr = || Type::Array(Box::new(e()));
+    vec![
+        (
+            "array_push".to_string(),
+            FunctionSignature {
+                type_params: vec!["E".to_string()],
+                params: vec![arr(), e()],
+                return_type: arr(),
+                bounds: Vec::new(),
+            },
+        ),
+        (
+            "array_repeat".to_string(),
+            FunctionSignature {
+                type_params: vec!["E".to_string()],
+                params: vec![e(), Type::Int],
+                return_type: arr(),
+                bounds: Vec::new(),
+            },
+        ),
+    ]
 }
 
 fn external_function_signature(

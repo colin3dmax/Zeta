@@ -3098,6 +3098,11 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         // A generic aggregate instantiation (`Box<T>` / `Option<Int>`): substitute
         // its arguments and monomorphize the concrete instance.
         if let Some((base, arg_strs)) = crate::type_syntax::generic_parts(ty_str) {
+            if base == "Array" && arg_strs.len() == 1 {
+                return Ok(ZType::Array(Box::new(
+                    self.resolve_generic_ztype(arg_strs[0], subst)?,
+                )));
+            }
             if self.types.is_generic_struct(base) || self.types.is_generic_enum(base) {
                 let args = arg_strs
                     .iter()
@@ -3683,6 +3688,17 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             "float_array_push" => {
                 Ok(Some(self.lower_array_push(&args[0], &args[1], ZType::Float)?))
             }
+            // Generic array intrinsics: the element ZType is read from the lowered
+            // argument (the array for push, the seed for repeat), so they work for
+            // any monomorphized element type.
+            "array_push" => {
+                let (arr, arr_zt) = self.lower_expr(&args[0])?;
+                let ZType::Array(elem) = arr_zt else {
+                    return Err("array_push expects an array first argument".into());
+                };
+                Ok(Some(self.lower_array_push_with(arr, &args[1], *elem)?))
+            }
+            "array_repeat" => Ok(Some(self.lower_array_repeat(&args[0], &args[1])?)),
             // ascii predicates: Int byte → Bool (i64 0/1). Out-of-[0,255] inputs
             // fall outside every range/equality, yielding 0 — matching the
             // interpreter's explicit `(0..=255)` guard.
@@ -3768,6 +3784,17 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         elem: ZType,
     ) -> Result<(BasicValueEnum<'ctx>, ZType), String> {
         let (arr, _) = self.lower_expr(arr_expr)?;
+        self.lower_array_push_with(arr, value_expr, elem)
+    }
+
+    /// Functional push given an already-lowered array value (used by the generic
+    /// `array_push`, which lowers the array once to learn its element ZType).
+    fn lower_array_push_with(
+        &mut self,
+        arr: BasicValueEnum<'ctx>,
+        value_expr: &MirExpr,
+        elem: ZType,
+    ) -> Result<(BasicValueEnum<'ctx>, ZType), String> {
         let (len, data) = self.len_ptr_parts(arr.into_struct_value());
         let (x0, _) = self.lower_expr(value_expr)?;
         // The new array owns the appended element.
@@ -3807,6 +3834,79 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         let end = unsafe { self.builder.build_in_bounds_gep(elem_llvm, buf, &[len], "endp").unwrap() };
         self.builder.build_store(end, x).unwrap();
         Ok((self.make_len_ptr(new_len, buf).into(), ZType::Array(Box::new(elem))))
+    }
+
+    /// `array_repeat(value, count)` → `{n, buf}` of `n = max(count, 0)` independent
+    /// copies of `value` (the element ZType is read from `value`). Managed elements
+    /// are cloned per slot; the consumed seed is dropped once. Matches the
+    /// interpreter's `vec![value; n]`.
+    fn lower_array_repeat(
+        &mut self,
+        value_expr: &MirExpr,
+        count_expr: &MirExpr,
+    ) -> Result<(BasicValueEnum<'ctx>, ZType), String> {
+        let (v0, elem) = self.lower_expr(value_expr)?;
+        // An independent, owned seed (clone if it aliases a local).
+        let seed = self.bind_owned(value_expr, v0, &elem);
+        let count = self.lower_int(count_expr)?;
+        let zero = self.i64t().const_zero();
+        let is_neg = self
+            .builder
+            .build_int_compare(IntPredicate::SLT, count, zero, "rneg")
+            .unwrap();
+        let n = self
+            .builder
+            .build_select(is_neg, zero, count, "rn")
+            .unwrap()
+            .into_int_value();
+        let elem_llvm = self.types.llvm(&elem);
+        let elem_sz = self.elem_bytes(&elem);
+        let buf = self.alloc_array_buf(n, elem_sz);
+        let clone_fn = self.get_or_build_clone(&elem);
+        // Loop i in 0..n: store an (independent) copy of the seed at buf[i].
+        let entry = self.builder.get_insert_block().unwrap();
+        let head = self.context.append_basic_block(self.llvm_fn, "rep.head");
+        let body = self.context.append_basic_block(self.llvm_fn, "rep.body");
+        let exit = self.context.append_basic_block(self.llvm_fn, "rep.exit");
+        self.builder.build_unconditional_branch(head).unwrap();
+        self.builder.position_at_end(head);
+        let phi = self.builder.build_phi(self.i64t(), "i").unwrap();
+        phi.add_incoming(&[(&zero, entry)]);
+        let i = phi.as_basic_value().into_int_value();
+        let c = self
+            .builder
+            .build_int_compare(IntPredicate::SLT, i, n, "c")
+            .unwrap();
+        self.builder.build_conditional_branch(c, body, exit).unwrap();
+        self.builder.position_at_end(body);
+        let slot = unsafe {
+            self.builder
+                .build_in_bounds_gep(elem_llvm, buf, &[i], "rp")
+                .unwrap()
+        };
+        let stored = match clone_fn {
+            Some(cf) => self
+                .builder
+                .build_call(cf, &[seed.into()], "rc")
+                .unwrap()
+                .try_as_basic_value()
+                .basic()
+                .unwrap(),
+            None => seed,
+        };
+        self.builder.build_store(slot, stored).unwrap();
+        let nx = self
+            .builder
+            .build_int_add(i, self.i64t().const_int(1, false), "nx")
+            .unwrap();
+        phi.add_incoming(&[(&nx, self.builder.get_insert_block().unwrap())]);
+        self.builder.build_unconditional_branch(head).unwrap();
+        self.builder.position_at_end(exit);
+        // The seed itself was consumed by the repeat — drop the managed original.
+        if let Some(df) = self.get_or_build_drop(&elem) {
+            self.builder.build_call(df, &[seed.into()], "rdrop").unwrap();
+        }
+        Ok((self.make_len_ptr(n, buf).into(), ZType::Array(Box::new(elem))))
     }
 
     /// In-place `name = push(name, value)`: append into `name`'s buffer, growing

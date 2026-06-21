@@ -57,6 +57,9 @@ pub fn resolve_with_imports_functions_enums_and_ambiguous(
     // Trait method names are callable via UFCS (dispatched per-backend to an
     // `impl`'s `{method}${TargetBase}`), so accept them as known call targets.
     functions.extend(module.trait_method_names());
+    // Generic array intrinsics (`array_push`/`array_repeat`) are always callable.
+    functions.insert("array_push".to_string());
+    functions.insert("array_repeat".to_string());
     let mut top_level_names = top_level_names(module);
     let mut enum_variants = enum_variants(module);
     for standard_enum in standard_enum_variants(module) {
