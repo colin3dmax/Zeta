@@ -123,8 +123,16 @@ index.html(能力清单)。**未部署**。
     隐患)。fixpoint 安全:arena_frontend 无 lambda,闭包构造路径不触发。**至此 array/string/tuple/
     struct/enum/closure 全聚合值语义 + 确定性 Drop,全语言零泄漏。** 门禁:codegen_closure 8 / closure 9
     / codegen_memory 17、全 llvm 50 suite 0 失败、fixpoint 4/4(143s)、ASan 对捕获 String 闭包零堆错误。
-11. **COW + move 优化(性能,#74 之后,下一步)**:绑定从「clone」改「共享+refcount+写时拷」(Swift/Nim),
-    砍掉值语义的冗余拷贝;无环 ⇒ refcount 无需环收集器。这是「无别名 ⇒ 可超典型 C」性能红利的兑现处。
+10e. **#74 性能 v9 ✅(commit d015d03)= 数组 COW(refcount + 写时拷)**:数组 buffer 头 {cap}→{cap,rc}
+    (16B,rc 起始 1)。clone:标量数组 rc++ 返回同 buffer(O(1) 共享);托管元素数组仍深拷(rc 恒 1、
+    元素堆独立)。drop:rc--,仅 rc→0 才 drop 元素+free。**写时拷**:就地变异点(`a[i]=v`、就地 push
+    `xs=push(xs,v)`)先 `cow_make_unique`(rc>1 则深拷独占副本保留 cap、原 buffer 减一引用、写回 slot;
+    未共享 no-op),杜绝别名破坏值语义。**效果**:大数组反复传值(arena 式)O(n)→O(1) —— 微基准 4000
+    元素传值 10 万次 65ms→1ms(~65x);非共享负载中性。门禁:既有别名测试 + cow_inplace_push_on_shared
+    / cow_share_in_loop、ASan 零堆错误(含 realloc-while-shared)、全 llvm 50 suite 0 失败、fixpoint 4/4。
+11. **后续性能(可选)**:① string COW(需先解决字符串字面量是全局常量、不可 rc/free 的问题 ——
+    可用哨兵 rc 或 tagged ptr 区分静态/堆);② move-on-last-use(免掉非共享绑定的 rc 簿记,需 MIR 活跃性
+    分析);③ struct/tuple 大聚合的 COW。当前 array COW 已兑现「无别名 ⇒ 共享传值 O(1)」的主要红利。
 12. 其它候选:#77 P4 并发 / #78 P5 FFI;ev_expr 解释器补全(FloatArray 现已有,blocker 或已解)。
 13. 远端:`git push`(本会话各提交)+ 官网重部署(`tools/deploy-website.sh`)。
 

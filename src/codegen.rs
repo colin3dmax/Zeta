@@ -1389,21 +1389,29 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
     /// in-place `push` can grow amortized-O(1) (see [`array_cap`]).
     fn alloc_array_buf(&self, cap: IntValue<'ctx>, elem_size: IntValue<'ctx>) -> PointerValue<'ctx> {
         let b = self.builder;
-        let header = self.i64t().const_int(8, false);
+        // 16-byte header: `[ i64 cap | i64 refcount ]`. Refcount starts at 1 so the
+        // buffer is uniquely owned; clone bumps it (O(1) share) and drop decrements,
+        // freeing only at zero. In-place mutation copies-on-write when shared.
+        let header = self.i64t().const_int(16, false);
         let elem_bytes = b.build_int_mul(cap, elem_size, "capbytes").unwrap();
         let total = b.build_int_add(header, elem_bytes, "totbytes").unwrap();
         let base = self.malloc_bytes(total);
         b.build_store(base, cap).unwrap();
+        let rc_ptr = unsafe {
+            b.build_in_bounds_gep(self.context.i8_type(), base, &[self.i64t().const_int(8, false)], "rcslot")
+                .unwrap()
+        };
+        b.build_store(rc_ptr, self.i64t().const_int(1, false)).unwrap();
         unsafe {
             b.build_in_bounds_gep(self.context.i8_type(), base, &[header], "elems")
                 .unwrap()
         }
     }
 
-    /// Read the capacity header stored 8 bytes before the elements pointer.
+    /// Read the capacity header stored 16 bytes before the elements pointer.
     fn array_cap(&self, elems: PointerValue<'ctx>) -> IntValue<'ctx> {
         let b = self.builder;
-        let back = self.i64t().const_int((-8i64) as u64, true);
+        let back = self.i64t().const_int((-16i64) as u64, true);
         let hdr = unsafe {
             b.build_in_bounds_gep(self.context.i8_type(), elems, &[back], "caphdr")
                 .unwrap()
@@ -1411,23 +1419,31 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         b.build_load(self.i64t(), hdr, "cap").unwrap().into_int_value()
     }
 
-    /// Deep-copy an `{len, data}` array value into a fresh capacity-headed buffer
-    /// (cap = len), memcpy the elements (stride = `elem`'s size), return `{len,
-    /// newdata}`.
-    fn deep_copy_array(
-        &self,
-        arr: inkwell::values::StructValue<'ctx>,
-        elem: &ZType,
-    ) -> inkwell::values::StructValue<'ctx> {
-        let b = self.builder;
-        let len = b.build_extract_value(arr, 0, "len").unwrap().into_int_value();
-        let src = b.build_extract_value(arr, 1, "data").unwrap().into_pointer_value();
-        let elem_size = self.elem_bytes(elem);
-        let bytes = b.build_int_mul(len, elem_size, "bytes").unwrap();
-        let dst = self.alloc_array_buf(len, elem_size);
-        b.build_call(self.memcpy, &[dst.into(), src.into(), bytes.into()], "cp")
-            .unwrap();
-        self.make_len_ptr(len, dst)
+    /// Pointer to the refcount field (8 bytes before the elements pointer).
+    fn array_rc_ptr(&self, elems: PointerValue<'ctx>) -> PointerValue<'ctx> {
+        let back = self.i64t().const_int((-8i64) as u64, true);
+        unsafe {
+            self.builder
+                .build_in_bounds_gep(self.context.i8_type(), elems, &[back], "rchdr")
+                .unwrap()
+        }
+    }
+
+    /// Increment an array buffer's refcount (share it). Returns nothing.
+    fn array_rc_inc(&self, elems: PointerValue<'ctx>) {
+        let rc_ptr = self.array_rc_ptr(elems);
+        let rc = self.builder.build_load(self.i64t(), rc_ptr, "rc").unwrap().into_int_value();
+        let inc = self.builder.build_int_add(rc, self.i64t().const_int(1, false), "rci").unwrap();
+        self.builder.build_store(rc_ptr, inc).unwrap();
+    }
+
+    /// Decrement an array buffer's refcount; return the i1 `rc == 0` (caller frees).
+    fn array_rc_dec_is_zero(&self, elems: PointerValue<'ctx>) -> IntValue<'ctx> {
+        let rc_ptr = self.array_rc_ptr(elems);
+        let rc = self.builder.build_load(self.i64t(), rc_ptr, "rc").unwrap().into_int_value();
+        let dec = self.builder.build_int_sub(rc, self.i64t().const_int(1, false), "rcd").unwrap();
+        self.builder.build_store(rc_ptr, dec).unwrap();
+        self.builder.build_int_compare(IntPredicate::EQ, dec, self.i64t().const_zero(), "rcz").unwrap()
     }
 
     /// Allocate a slot of `ty` at the TOP of the entry block (mem2reg-friendly).
@@ -1494,15 +1510,62 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
     }
 
     /// Emit `free` for an array elements pointer: recover the malloc base
-    /// (`data - 8` capacity header, see [`alloc_array_buf`]) and free it.
+    /// (`data - 16` cap+refcount header, see [`alloc_array_buf`]) and free it.
     fn free_array_data(&self, data: PointerValue<'ctx>) {
-        let back = self.i64t().const_int((-8i64) as u64, true);
+        let back = self.i64t().const_int((-16i64) as u64, true);
         let base = unsafe {
             self.builder
                 .build_in_bounds_gep(self.context.i8_type(), data, &[back], "freebase")
                 .unwrap()
         };
         self.builder.build_call(self.free, &[base.into()], "").unwrap();
+    }
+
+    /// Copy-on-write: make the array in `slot` uniquely owned before an in-place
+    /// mutation. If its refcount is >1 (a clone shares the buffer), deep-copy the
+    /// buffer (preserving capacity), drop one reference from the shared original,
+    /// and store the unique copy back into `slot`. Returns the now-unique
+    /// `(len, data)`. Managed-element arrays are always rc==1 (clone deep-copies),
+    /// so they never hit the copy path; the scalar memcpy here is therefore sound.
+    fn cow_make_unique(&self, slot: PointerValue<'ctx>, elem: &ZType) -> (IntValue<'ctx>, PointerValue<'ctx>) {
+        let arr = self
+            .builder
+            .build_load(array_struct_type(self.context), slot, "cowarr")
+            .unwrap()
+            .into_struct_value();
+        let (len, data) = self.len_ptr_parts(arr);
+        let rc_ptr = self.array_rc_ptr(data);
+        let rc = self.builder.build_load(self.i64t(), rc_ptr, "cowrc").unwrap().into_int_value();
+        let shared = self
+            .builder
+            .build_int_compare(IntPredicate::SGT, rc, self.i64t().const_int(1, false), "cowsh")
+            .unwrap();
+        let entry = self.builder.get_insert_block().unwrap();
+        let copy_blk = self.context.append_basic_block(self.llvm_fn, "cow.copy");
+        let done = self.context.append_basic_block(self.llvm_fn, "cow.done");
+        self.builder.build_conditional_branch(shared, copy_blk, done).unwrap();
+
+        self.builder.position_at_end(copy_blk);
+        let cap = self.array_cap(data);
+        let elem_size = self.elem_bytes(elem);
+        let newbuf = self.alloc_array_buf(cap, elem_size);
+        let bytes = self.builder.build_int_mul(len, elem_size, "cowbytes").unwrap();
+        self.memcpy_bytes(newbuf, data, bytes);
+        // rc > 1 here, so after this decrement the original still has an owner.
+        let dec = self.builder.build_int_sub(rc, self.i64t().const_int(1, false), "cowdec").unwrap();
+        self.builder.build_store(rc_ptr, dec).unwrap();
+        let newval = self.make_len_ptr(len, newbuf);
+        self.builder.build_store(slot, newval).unwrap();
+        self.builder.build_unconditional_branch(done).unwrap();
+        let copy_end = self.builder.get_insert_block().unwrap();
+
+        self.builder.position_at_end(done);
+        let phi = self
+            .builder
+            .build_phi(self.context.ptr_type(inkwell::AddressSpace::default()), "cowptr")
+            .unwrap();
+        phi.add_incoming(&[(&data, entry), (&newbuf, copy_end)]);
+        (len, phi.as_basic_value().into_pointer_value())
     }
 
     /// Get (or generate once) the `void @__drop_T(T)` destructor for a managed
@@ -1546,6 +1609,14 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let sv = v.into_struct_value();
                 let len = self.builder.build_extract_value(sv, 0, "al").unwrap().into_int_value();
                 let data = self.builder.build_extract_value(sv, 1, "ad").unwrap().into_pointer_value();
+                // Refcount drop: decrement; only the last owner (rc → 0) drops the
+                // elements and frees the buffer. Shared buffers (managed elements are
+                // always rc==1 since clone deep-copies them) just lose a reference.
+                let is_zero = self.array_rc_dec_is_zero(data);
+                let free_blk = self.context.append_basic_block(func, "ad.free");
+                let done = self.context.append_basic_block(func, "ad.done");
+                self.builder.build_conditional_branch(is_zero, free_blk, done).unwrap();
+                self.builder.position_at_end(free_blk);
                 if let Some(df) = self.get_or_build_drop(elem) {
                     // for i in 0..len: @__drop_elem(load data[i])
                     let elem_llvm = self.types.llvm(elem);
@@ -1570,6 +1641,8 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                     self.builder.position_at_end(exit);
                 }
                 self.free_array_data(data);
+                self.builder.build_unconditional_branch(done).unwrap();
+                self.builder.position_at_end(done);
             }
             ZType::Tuple(elems) => {
                 let sv = v.into_struct_value();
@@ -1703,6 +1776,16 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             }
             ZType::Array(elem) => {
                 let sv = v.into_struct_value();
+                // Scalar elements: copy-on-write share — bump the refcount and hand
+                // back the SAME buffer (O(1), no deep copy). In-place mutation later
+                // makes a unique copy if the buffer is still shared.
+                if !self.needs_drop(elem) {
+                    let src = self.builder.build_extract_value(sv, 1, "cs").unwrap().into_pointer_value();
+                    self.array_rc_inc(src);
+                    return v;
+                }
+                // Managed elements: deep copy so each element heap is independent
+                // (kept rc==1, so it never aliases — element drop/clone stay simple).
                 let len = self.builder.build_extract_value(sv, 0, "cl").unwrap().into_int_value();
                 let src = self.builder.build_extract_value(sv, 1, "cs").unwrap().into_pointer_value();
                 let elem_size = self.elem_bytes(elem);
@@ -2388,18 +2471,9 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let ZType::Array(elem) = base_ty else {
                     return Err("index assignment on non-array".into());
                 };
-                // Load the {len, data} struct from the base slot, GEP into the
-                // (exclusively owned) heap buffer, and return the element ptr.
-                let arr = self
-                    .builder
-                    .build_load(array_struct_type(self.context), base_slot, "arr")
-                    .unwrap()
-                    .into_struct_value();
-                let data = self
-                    .builder
-                    .build_extract_value(arr, 1, "data")
-                    .unwrap()
-                    .into_pointer_value();
+                // Copy-on-write: writing an element mutates the buffer in place, so
+                // make it uniquely owned first (a no-op when not shared), then GEP.
+                let (_, data) = self.cow_make_unique(base_slot, &elem);
                 let idx = self.lower_int(index)?;
                 let elem_llvm = self.types.llvm(&elem);
                 let elem_ptr = unsafe {
@@ -3533,12 +3607,8 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         let elem_llvm = self.types.llvm(&elem);
         let elem_sz = self.elem_bytes(&elem);
 
-        let arr = self
-            .builder
-            .build_load(array_struct_type(self.context), slot, "arr")
-            .unwrap()
-            .into_struct_value();
-        let (len, ptr) = self.len_ptr_parts(arr);
+        // Copy-on-write: a shared buffer must become unique before we mutate it.
+        let (len, ptr) = self.cow_make_unique(slot, &elem);
         let cap = self.array_cap(ptr);
         let (v0, _) = self.lower_expr(value_arg)?;
         // The array owns the appended element (existing elements stay owned by

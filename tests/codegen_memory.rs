@@ -343,6 +343,46 @@ fn main() -> Int {
 }
 
 #[test]
+fn cow_inplace_push_on_shared_array_is_independent() {
+    // `b = a` shares a's buffer (refcount bump, no copy). An in-place push onto `a`
+    // must copy-on-write so `b` keeps the old contents — value semantics preserved.
+    let src = "\
+import std.core;
+fn main() -> Int {
+  let mut a: IntArray = int_array_empty();
+  a = int_array_push(a, 10);
+  a = int_array_push(a, 20);
+  let b: IntArray = a;
+  a = int_array_push(a, 30);
+  return a[2] * 100 + b[1] * 10 + b[0];
+}";
+    // a = [10,20,30], b stays [10,20] → 30*100 + 20*10 + 10 = 3210.
+    assert_eq!(check(src), 3210);
+}
+
+#[test]
+fn cow_share_in_loop_no_corruption() {
+    // Repeatedly share the array (cheap refcount bump) and drop the copy each
+    // iteration. Refcounts must balance (no premature free / leak) and the
+    // original stays intact and mutable via copy-on-write.
+    let src = "\
+fn main() -> Int {
+  let mut a: IntArray = [5, 6, 7];
+  let mut total: Int = 0;
+  let mut i: Int = 0;
+  while i < 100 {
+    let b: IntArray = a;
+    total = total + b[0] + b[2];
+    i = i + 1;
+  }
+  a[0] = 50;
+  return total + a[0];
+}";
+    // 100 * (5 + 7) + 50 = 1250.
+    assert_eq!(check(src), 1250);
+}
+
+#[test]
 fn loop_array_assigned_outward_stays_correct() {
     // The body-local array is deep-copied into the outer var on assignment, then
     // the body-local is freed — the outer copy must remain valid.
