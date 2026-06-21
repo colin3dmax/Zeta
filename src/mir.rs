@@ -984,10 +984,14 @@ fn parse_mir_type(name: &str) -> MirType {
     if let Some(parts) = crate::type_syntax::tuple_parts(name) {
         return MirType::Tuple(parts.iter().map(|p| parse_mir_type(p)).collect());
     }
-    // Generic instantiation `Box<Int>` is erased to its base name for the
-    // verifier (instantiation is checked leniently; native codegen reads the
-    // arguments separately to monomorphize).
-    if let Some((base, _)) = crate::type_syntax::generic_parts(name) {
+    // `Array<E>` is the generic array type (element may be a type parameter).
+    if let Some((base, args)) = crate::type_syntax::generic_parts(name) {
+        if base == "Array" && args.len() == 1 {
+            return MirType::Array(Box::new(parse_mir_type(args[0])));
+        }
+        // Other generic instantiations `Box<Int>` are erased to the base name for
+        // the verifier (checked leniently; native codegen reads the arguments
+        // separately to monomorphize).
         return parse_mir_type(base);
     }
     match name {

@@ -51,6 +51,20 @@ fn main() -> Int {
 }
 
 #[test]
+fn generic_array_field_and_param() {
+    // `Array<T>` field in a generic struct + a generic function over `Array<T>`,
+    // monomorphized to a concrete element layout per instantiation.
+    let src = "\
+struct Bag<T> { items: Array<T>, count: Int }
+fn first<T>(xs: Array<T>) -> T { return xs[0]; }
+fn main() -> Int {
+  let b: Bag<Int> = Bag { items: [10, 20, 30], count: 3 };
+  return first(b.items) + b.items[2] + b.count;
+}";
+    assert_eq!(check(src), 10 + 30 + 3);
+}
+
+#[test]
 fn generic_enum_option_some() {
     let src = "\
 enum Option<T> { Some(T), None }

@@ -298,6 +298,12 @@ fn validate_type_name(
     // Generic instantiation `Box<Int>`: validate the base aggregate name and each
     // argument type. The arguments are otherwise erased for type checking.
     if let Some((base, args)) = crate::type_syntax::generic_parts(name) {
+        // `Array<E>` is the built-in generic array type — only its element needs
+        // validating (`Array` is not a user-declared aggregate).
+        if base == "Array" && args.len() == 1 {
+            validate_type_name(args[0], span, structs, enums, type_params, diagnostics);
+            return;
+        }
         validate_type_name(base, span, structs, enums, type_params, diagnostics);
         for arg in args {
             validate_type_name(arg, span, structs, enums, type_params, diagnostics);
@@ -1778,6 +1784,16 @@ fn parse_type_with_params(
     // Generic instantiation: parse arguments WITH the params in scope, so e.g.
     // `Box<T>` in a generic function becomes `Generic("Box", [Named("T")])`.
     if let Some((base, args)) = crate::type_syntax::generic_parts(name) {
+        // `Array<E>` is the generic array type (`Array<Int>` ≡ `IntArray`); its
+        // element may itself be a type parameter for generic containers.
+        if base == "Array" && args.len() == 1 {
+            return Type::Array(Box::new(parse_type_with_params(
+                args[0],
+                structs,
+                enums,
+                type_params,
+            )));
+        }
         return Type::Generic(
             base.to_string(),
             args.iter()
@@ -2049,6 +2065,9 @@ fn parse_type(name: &str) -> Type {
     // Generic instantiation `Result<Int, String>` keeps its arguments so they can
     // be substituted into variant/field payloads at use sites.
     if let Some((base, args)) = crate::type_syntax::generic_parts(name) {
+        if base == "Array" && args.len() == 1 {
+            return Type::Array(Box::new(parse_type(args[0])));
+        }
         return Type::Generic(base.to_string(), args.iter().map(|a| parse_type(a)).collect());
     }
     match name {
@@ -2090,6 +2109,9 @@ fn parse_declared_type(
     // Generic instantiation `Result<Int, String>` keeps its arguments (each
     // resolved as a declared type) for substitution at use sites.
     if let Some((base, args)) = crate::type_syntax::generic_parts(name) {
+        if base == "Array" && args.len() == 1 {
+            return Type::Array(Box::new(parse_declared_type(args[0], structs, enums)));
+        }
         return Type::Generic(
             base.to_string(),
             args.iter()
@@ -2144,6 +2166,13 @@ fn expect_type(
                 return;
             }
         }
+    }
+    // Arrays are compatible iff their elements are — recurse so a type-parameter
+    // element (`Array<T>` in a generic container) stays lenient against a
+    // concrete `Array<Int>`.
+    if let (Type::Array(f), Type::Array(e)) = (found, expected) {
+        expect_type(f, e, code, span, diagnostics);
+        return;
     }
     // A generic type parameter (erased instantiation) is compatible with any
     // concrete type for assignment-like checks (let/return/call-arg/field/

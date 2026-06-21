@@ -23,6 +23,20 @@ fn check_err(source: &str) -> Vec<String> {
 }
 
 #[test]
+fn generic_array_param_and_struct_field() {
+    // `Array<T>` is the generic array type: generic functions/structs can hold,
+    // index, and pass typed arrays, with the element instantiated per call.
+    let src = "\
+struct Bag<T> { items: Array<T>, count: Int }
+fn first<T>(xs: Array<T>) -> T { return xs[0]; }
+fn main() -> Int {
+  let b: Bag<Int> = Bag { items: [10, 20, 30], count: 3 };
+  return first(b.items) + b.items[2] + b.count;
+}";
+    assert_eq!(run(src), Value::Int(10 + 30 + 3));
+}
+
+#[test]
 fn identity_int() {
     let src = "\
 fn id<T>(x: T) -> T { return x; }

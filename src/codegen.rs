@@ -401,6 +401,9 @@ impl<'ctx> Types<'ctx> {
             return Ok(ZType::Tuple(elems));
         }
         if let Some((base, arg_strs)) = crate::type_syntax::generic_parts(ann) {
+            if base == "Array" && arg_strs.len() == 1 {
+                return Ok(ZType::Array(Box::new(self.resolve_ann_ztype(arg_strs[0])?)));
+            }
             let args = arg_strs
                 .iter()
                 .map(|a| self.resolve_ann_ztype(a))
@@ -430,6 +433,11 @@ impl<'ctx> Types<'ctx> {
             return Ok(zt.clone());
         }
         if let Some((base, arg_strs)) = crate::type_syntax::generic_parts(ty_str) {
+            if base == "Array" && arg_strs.len() == 1 {
+                return Ok(ZType::Array(Box::new(
+                    self.resolve_template_type(arg_strs[0], subst)?,
+                )));
+            }
             if self.is_generic_struct(base) || self.is_generic_enum(base) {
                 let args = arg_strs
                     .iter()
@@ -619,6 +627,15 @@ fn unify_ztype(
                 unify_ztype(p, c, type_params, subst);
             }
             unify_ztype(ret, cret, type_params, subst);
+        }
+        return;
+    }
+    // `Array<E>` vs a concrete array: recurse to bind a type-parameter element.
+    if let Some((base, args)) = crate::type_syntax::generic_parts(generic_str) {
+        if base == "Array" && args.len() == 1 {
+            if let ZType::Array(elem) = concrete {
+                unify_ztype(args[0], elem, type_params, subst);
+            }
         }
     }
 }
