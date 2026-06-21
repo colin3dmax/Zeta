@@ -1,16 +1,18 @@
-# Zeta 交接文档(2026-06-18)
+# Zeta 交接文档(2026-06-21)
 
 > 跨会话接续的权威入口。详细分项见 `~/.claude/projects/-Users-colin-Work-Zeta/memory/`
 > (language-features / feature-backport-selfhost / self-hosting-progress / native-backend-progress;
 > 新会话自动加载 MEMORY.md 索引)。
 
 ## 0. 一句话状态
-P1–P4 语言扩展(Float/Tuple/Closure/Generics)在 **Rust 前端 + native** 全部完成;
-**自举前端 P1–P4 回灌全部完成**(Float/Tuple/Generics/Closure native emit 全链;仅 ev_expr 解释器复合值推迟);
-正沿 DevGame 路线推进"补齐与成熟语言差距"。**本会话完成:错误处理全链(#75)— native 单态化
-泛型 struct/enum(阶段A/B)+ 内置 Option/Result + `?` + typecheck 保留泛型实参(unwrap 值可算术);
-Closure 自举 emit 回灌(P1-P4 回灌全完成);native 内存管理 v1(#74,作用域释放数组局部修循环泄漏)。**
-**已 push 到 origin/main 并部署官网 zeta.jennieapp.com(本会话内);其后 Closure/内存 v1 提交待再次 push。**
+P1–P4 语言扩展(Float/Tuple/Closure/Generics)在 **Rust 前端 + native** 全部完成;**自举前端 P1–P4 回灌
+全完成**;错误处理全链(#75)打通。**native 内存管理(#74)已彻底完成:array/string/tuple/struct/enum/
+closure 全聚合值语义 + 编译器确定性 Drop,全语言零泄漏(生成式 per-type 递归 @__drop_T/@__clone_T)。
+性能:array + string 两大高频类型走 COW(引用计数 + 写时拷;字符串字面量哨兵),共享传值 O(n)→O(1),
+非共享中性。** 每片均过 selfhost_fixpoint 4/4(字节级自举一致)+ ASan 零堆错误 + 全 llvm 50 suite 0 失败。
+**全部已 push origin/main(最新 6d63b8b)。** 详见 §3 第 10–10f 条 + [[native-backend-progress]]。
+下一步候选(均可选,收益/风险比下降):move-on-last-use / SSO 小字符串内联 / struct-tuple COW;
+或回到 DevGame 路线 #77 并发 / #78 FFI。
 
 ## 1. 构建 / 测试命令
 ```bash
