@@ -11,6 +11,43 @@ fn main() {
 }
 
 #[test]
+fn check_accepts_satisfied_trait_bound() {
+    let source = r#"
+trait Show { fn show(self: Self) -> Int; }
+struct Point { x: Int, y: Int }
+impl Show for Point { fn show(self: Self) -> Int { return self.x + self.y; } }
+fn describe<T: Show>(item: T) -> Int { return show(item); }
+fn main() -> Int {
+  let p: Point = Point { x: 3, y: 4 };
+  return describe(p);
+}
+"#;
+    zeta::check_source(source).expect("satisfied bound should typecheck");
+}
+
+#[test]
+fn check_rejects_unsatisfied_trait_bound() {
+    let source = r#"
+trait Show { fn show(self: Self) -> Int; }
+struct Point { x: Int, y: Int }
+struct Circle { r: Int }
+impl Show for Point { fn show(self: Self) -> Int { return self.x; } }
+fn describe<T: Show>(item: T) -> Int { return show(item); }
+fn main() -> Int {
+  let c: Circle = Circle { r: 5 };
+  return describe(c);
+}
+"#;
+    let diagnostics = zeta::check_source(source).expect_err("unsatisfied bound should fail");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == "TYPE_TRAIT_BOUND_UNSATISFIED"),
+        "expected TYPE_TRAIT_BOUND_UNSATISFIED, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn check_rejects_return_type_mismatch() {
     let source = r#"
 fn main() -> Int {

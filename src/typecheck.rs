@@ -343,6 +343,7 @@ fn external_function_signature(
             .as_deref()
             .map(|ty| parse_declared_type(ty, structs, enums))
             .unwrap_or(Type::Unit),
+        bounds: Vec::new(),
     }
 }
 
@@ -1342,6 +1343,29 @@ fn infer_expr(
                     );
                 }
             }
+            // Verify each trait bound: the inferred type argument must have an
+            // `impl` of the bound's trait (i.e. a flattened `method$Base`
+            // function for every method the trait declares).
+            for (param, bound_trait, methods) in &signature.bounds {
+                let Some(arg_ty) = subst.get(param) else {
+                    continue;
+                };
+                let Some(base) = type_base_name(arg_ty) else {
+                    continue;
+                };
+                let missing = methods.iter().any(|method| {
+                    !functions.contains_key(&crate::type_syntax::dispatch_name(method, &base))
+                });
+                if missing {
+                    diagnostics.push(Diagnostic::new(
+                        "TYPE_TRAIT_BOUND_UNSATISFIED",
+                        format!(
+                            "type `{base}` does not implement trait `{bound_trait}` required by `{callee}`"
+                        ),
+                        *callee_span,
+                    ));
+                }
+            }
             if signature.type_params.is_empty() {
                 signature.return_type.clone()
             } else {
@@ -1716,6 +1740,11 @@ struct FunctionSignature {
     type_params: Vec<String>,
     params: Vec<Type>,
     return_type: Type,
+    /// Trait bounds: `(type-param, trait-name, trait-method-names)`. A call
+    /// verifies the inferred type argument has a flattened impl for every method
+    /// (i.e. an `impl` of the bound's trait exists for that type). Empty when
+    /// unbounded.
+    bounds: Vec<(String, String, Vec<String>)>,
 }
 
 /// Like [`parse_declared_type`] but treats any name in `type_params` as an opaque
@@ -1845,11 +1874,42 @@ struct Binding {
     mutable: bool,
 }
 
+/// The base type name used to look up a trait impl for a type argument — matches
+/// the interpreter's `value_type_base` / codegen's `zty_base_name` so trait-bound
+/// checking agrees with actual dispatch. `None` for types that cannot carry an
+/// impl (Range/Unit/Error).
+fn type_base_name(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Int => Some("Int".to_string()),
+        Type::Float => Some("Float".to_string()),
+        Type::String => Some("String".to_string()),
+        Type::Bool => Some("Bool".to_string()),
+        Type::Array(_) => Some("Array".to_string()),
+        Type::Tuple(_) => Some("Tuple".to_string()),
+        Type::Fn(_, _) => Some("Fn".to_string()),
+        Type::Named(name) => Some(name.clone()),
+        Type::Generic(base, _) => Some(base.clone()),
+        Type::Range | Type::Unit | Type::Error => None,
+    }
+}
+
 fn function_signatures(
     module: &Module,
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
 ) -> HashMap<String, FunctionSignature> {
+    // trait name → its declared method names, for resolving bounds.
+    let trait_methods: HashMap<String, Vec<String>> = module
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Trait(decl) => Some((
+                decl.name.clone(),
+                decl.methods.iter().map(|m| m.name.clone()).collect(),
+            )),
+            _ => None,
+        })
+        .collect();
     let mut signatures: HashMap<String, FunctionSignature> = module
         .items
         .iter()
@@ -1877,6 +1937,20 @@ fn function_signatures(
                             parse_type_with_params(ty, structs, enums, &function.type_params)
                         })
                         .unwrap_or(Type::Unit),
+                    bounds: function
+                        .type_param_bounds
+                        .iter()
+                        .map(|bound| {
+                            (
+                                bound.param.clone(),
+                                bound.trait_name.clone(),
+                                trait_methods
+                                    .get(&bound.trait_name)
+                                    .cloned()
+                                    .unwrap_or_default(),
+                            )
+                        })
+                        .collect(),
                 },
             )),
             _ => None,
@@ -1907,6 +1981,7 @@ fn function_signatures(
                         type_params,
                         params,
                         return_type,
+                        bounds: Vec::new(),
                     });
             }
         }

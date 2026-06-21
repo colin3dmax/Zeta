@@ -1,6 +1,6 @@
 use crate::ast::{
     BinaryOp, EnumDecl, EnumVariant, Expr, Field, Function, ImplBlock, Item, MatchArm, Module,
-    Param, Pattern, Stmt, StructDecl, StructExprField, TraitDecl, TraitMethod, UnaryOp,
+    Param, Pattern, Stmt, StructDecl, StructExprField, TraitBound, TraitDecl, TraitMethod, UnaryOp,
 };
 use crate::diagnostic::{Diagnostic, Span};
 use crate::lexer::{Keyword, Symbol, Token, TokenKind};
@@ -252,7 +252,7 @@ impl Parser {
 
     fn parse_function(&mut self, exported: bool, reloadable: bool) -> Result<Function, Diagnostic> {
         let (name, name_span) = self.expect_ident_span("expected function name")?;
-        let type_params = self.parse_type_params()?;
+        let (type_params, type_param_bounds) = self.parse_type_params_with_bounds()?;
         self.expect_symbol(Symbol::LParen, "expected `(` after function name")?;
         let params = self.parse_params()?;
         self.expect_symbol(Symbol::RParen, "expected `)` after parameters")?;
@@ -270,11 +270,49 @@ impl Parser {
             name,
             name_span,
             type_params,
+            type_param_bounds,
             params,
             return_type,
             return_type_span,
             body,
         })
+    }
+
+    /// Like [`Self::parse_type_params`] but also parses trait bounds
+    /// (`<T: Show, U: Clone + Eq>`). Returns the parameter names and the flat list
+    /// of bounds. Used for functions; struct/enum generics stay unbounded.
+    fn parse_type_params_with_bounds(
+        &mut self,
+    ) -> Result<(Vec<String>, Vec<TraitBound>), Diagnostic> {
+        if self.consume_symbol(Symbol::Lt).is_none() {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        let mut params = Vec::new();
+        let mut bounds = Vec::new();
+        loop {
+            let (name, name_span) = self.expect_ident_span("expected type parameter name")?;
+            if self.consume_symbol(Symbol::Colon).is_some() {
+                loop {
+                    let (trait_name, trait_name_span) =
+                        self.expect_ident_span("expected trait name in bound")?;
+                    bounds.push(TraitBound {
+                        param: name.clone(),
+                        param_span: name_span,
+                        trait_name,
+                        trait_name_span,
+                    });
+                    if self.consume_symbol(Symbol::Plus).is_none() {
+                        break;
+                    }
+                }
+            }
+            params.push(name);
+            if self.consume_symbol(Symbol::Comma).is_none() {
+                break;
+            }
+        }
+        self.expect_symbol(Symbol::Gt, "expected `>` after type parameters")?;
+        Ok((params, bounds))
     }
 
     /// Parse optional generic type parameters `<T, U>` after a function name.

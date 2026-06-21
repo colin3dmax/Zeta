@@ -391,6 +391,21 @@ fn main() -> Int {
 }
 
 #[test]
+fn dumps_generic_function_with_trait_bound() {
+    let dump = zeta::dump_ast(
+        r#"
+fn describe<T: Show>(item: T) -> Int {
+  return 0;
+}
+"#,
+    )
+    .expect("source should parse");
+
+    assert!(dump.contains("Function name=describe"));
+    assert!(dump.contains("Bound param=T trait=Show"));
+}
+
+#[test]
 fn repl_parses_interactive_lines() {
     let binary = env!("CARGO_BIN_EXE_zeta");
     let mut child = std::process::Command::new(binary)

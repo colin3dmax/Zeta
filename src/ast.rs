@@ -78,6 +78,10 @@ pub struct Function {
     /// non-generic function. Within the body these names act as opaque types;
     /// call sites infer them from argument types and monomorphize for native.
     pub type_params: Vec<String>,
+    /// Trait bounds on the type parameters: `fn f<T: Show>(...)`. Each pairs a
+    /// type-parameter name with a required trait. Call sites verify the inferred
+    /// type argument has an `impl` of that trait. Empty for unbounded generics.
+    pub type_param_bounds: Vec<TraitBound>,
     pub params: Vec<Param>,
     pub return_type: Option<String>,
     pub return_type_span: Option<Span>,
@@ -90,6 +94,15 @@ pub struct Param {
     pub name_span: Span,
     pub ty: String,
     pub ty_span: Span,
+}
+
+/// A trait bound `T: Show` on a generic type parameter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraitBound {
+    pub param: String,
+    pub param_span: Span,
+    pub trait_name: String,
+    pub trait_name_span: Span,
 }
 
 /// A `trait` declaration — an interface of method signatures. Dispatch is via
@@ -403,6 +416,12 @@ impl Item {
                     "{pad}Function name={} exported={}\n",
                     function.name, function.exported
                 ));
+                for bound in &function.type_param_bounds {
+                    out.push_str(&format!(
+                        "{pad}  Bound param={} trait={}\n",
+                        bound.param, bound.trait_name
+                    ));
+                }
                 for param in &function.params {
                     out.push_str(&format!(
                         "{pad}  Param name={} type={}\n",

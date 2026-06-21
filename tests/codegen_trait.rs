@@ -114,6 +114,36 @@ fn main() -> Int {
 }
 
 #[test]
+fn bounded_generic_dispatches_polymorphically() {
+    // describe<T: Show>(item){ show(item) } monomorphizes per call: show(item)
+    // dispatches to Point/Circle's impl by the concrete T. (3+4+1000)+(25+1000).
+    let result = check(
+        r#"
+trait Show {
+  fn show(self: Self) -> Int;
+}
+struct Point { x: Int, y: Int }
+struct Circle { r: Int }
+impl Show for Point {
+  fn show(self: Self) -> Int { return self.x + self.y; }
+}
+impl Show for Circle {
+  fn show(self: Self) -> Int { return self.r * self.r; }
+}
+fn describe<T: Show>(item: T) -> Int {
+  return show(item) + 1000;
+}
+fn main() -> Int {
+  let p: Point = Point { x: 3, y: 4 };
+  let c: Circle = Circle { r: 5 };
+  return describe(p) + describe(c);
+}
+"#,
+    );
+    assert_eq!(result, 2032);
+}
+
+#[test]
 fn trait_method_calls_another_trait_method() {
     // A trait method body can itself dispatch on its receiver's field.
     let result = check(
