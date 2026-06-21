@@ -1,172 +1,120 @@
 # Zeta 交接文档(2026-06-21)
 
-> 跨会话接续的权威入口。详细分项见 `~/.claude/projects/-Users-colin-Work-Zeta/memory/`
-> (language-features / feature-backport-selfhost / self-hosting-progress / native-backend-progress;
-> 新会话自动加载 MEMORY.md 索引)。
+> 跨会话接续的**权威入口**。新会话先读本文 + `~/.claude/projects/-Users-colin-Work-Zeta/memory/MEMORY.md`(自动加载的索引)。
+> 详细分项见 memory 下 language-features / feature-backport-selfhost / self-hosting-progress / native-backend-progress。
+> 最新提交:`1c64865`(全部已 push origin/main)。
+
+---
 
 ## 0. 一句话状态
-P1–P4 语言扩展(Float/Tuple/Closure/Generics)在 **Rust 前端 + native** 全部完成;**自举前端 P1–P4 回灌
-全完成**;错误处理全链(#75)打通。**native 内存管理(#74)已彻底完成:array/string/tuple/struct/enum/
-closure 全聚合值语义 + 编译器确定性 Drop,全语言零泄漏(生成式 per-type 递归 @__drop_T/@__clone_T)。
-性能:array + string 两大高频类型走 COW(引用计数 + 写时拷;字符串字面量哨兵),共享传值 O(n)→O(1),
-非共享中性。** 每片均过 selfhost_fixpoint 4/4(字节级自举一致)+ ASan 零堆错误 + 全 llvm 50 suite 0 失败。
-**全部已 push origin/main(最新 6d63b8b)。** 详见 §3 第 10–10f 条 + [[native-backend-progress]]。
-下一步候选(均可选,收益/风险比下降):move-on-last-use / SSO 小字符串内联 / struct-tuple COW;
-或回到 DevGame 路线 #77 并发 / #78 FFI。
+Zeta 是一门**能自举、有三后端(解释器 / LLVM native / WASM)、内存自动管理(值语义 + 确定性 Drop + COW)** 的真实语言,跑 **835+ 测试全绿**,自编译**字节级一致(fixpoint 4/4)**。
+**语言内核成熟;缺口在生态与系统能力:trait/接口、标准库广度、并发、FFI。**
 
-## 1. 构建 / 测试命令
+---
+
+## 1. 实现盘点(2026-06-21)
+
+| 维度 | 完成度 | 说明 |
+|---|---|---|
+| 编译器管线 | ~95% | lex→parse→resolve→HIR→typecheck→desugar→MIR→{解释器/native/wasm};自举闭环 |
+| 核心语言 | ~85% | 标量(Int/Float/Bool/String)、数组/元组/struct/enum/闭包、泛型单态化、错误处理 `?` |
+| 内存管理 | ~90% | 全聚合值语义 + 确定性 Drop 零泄漏;array/string COW;缺 SSO / move-opt |
+| 自举 | ~90% | native emit 全链 + fixpoint;ev_expr 解释器的复合值(Float/Tuple/Closure)推迟 |
+| 类型系统 | ~70% | 泛型单态化齐全;**无 trait/接口、无泛型约束** ← 最大结构性缺口 |
+| 标准库 | ~30% | 字符串/数组/整数工具 + 基础 IO;**无 Map/Set、无网络** |
+| 并发 | 0% | 无语言级并发(DevGame #77) |
+| FFI | 0% | 无 C 互操作(DevGame #78) |
+
+**语言构造(已实现)**:`if`/`while`/`for in`/C 式 `for`/`match`(+ 通配)/`break`/`continue`/`return`;
+算术·位·逻辑·比较·一元;`let`/赋值;数组字面量与索引读写(`a[i]`/`a[i]=v`/`a.len`);元组 `(a,b)`/`.N`;
+struct 字面量与字段;enum + payload;闭包 `|x| ...` + 捕获;泛型 `<T>`(函数 + struct/enum,native 单态化);
+`import`/`module`;`Option`/`Result` + `?`。
+**未实现**:trait/impl、方法调用语法 `x.f()`(目前只有自由函数调用 + 字段访问)、泛型约束、并发原语、FFI。
+
+**后端**:解释器 `run_mir`(差分 oracle);native MIR→LLVM22(inkwell,122 codegen fn,JIT + AOT 独立二进制 + 热替换);WASM(浏览器 playground)。
+
+**自举**:`testdata/selfhost/arena_frontend.zeta`(**11,533 行手写 Zeta**)实现整条前端;Stage2 达成(被自己的 codegen 编 native,与解释器逐字节对齐);**fixpoint 自编译字节一致**。
+
+**stdlib(std.core/std.io)**:string_len/byte_at/byte_slice/concat、int_to_string、**int_abs/min/max**、**string_index_of/contains/repeat**、ascii 谓词、{int,bool,string,float}_array_empty/push、file_read_to_string、path_join/basename、diagnostic_format。
+
+---
+
+## 2. 构建 / 测试命令
 ```bash
 cargo test                                          # 非 llvm(快)
-LLVM_SYS_221_PREFIX=/opt/homebrew/opt/llvm cargo test --release --features llvm   # native(LLVM 22)
-LLVM_SYS_221_PREFIX=/opt/homebrew/opt/llvm cargo test --release --features llvm --test selfhost_fixpoint -- --ignored   # 自举完整性 ~105-115s
+LLVM_SYS_221_PREFIX=/opt/homebrew/opt/llvm cargo test --release --features llvm          # native 全套件(LLVM 22)
+LLVM_SYS_221_PREFIX=/opt/homebrew/opt/llvm cargo test --release --features llvm --test selfhost_fixpoint -- --ignored   # 自举完整性门禁 ~145s
 ```
-**预存坑**:`selfhost_arena`/`selfhost_mir` 的 `all_stage1_parity_probes` mega-test 在 debug 栈溢出(超大输入+递归),与改动无关。
+- **ASan 验证生成代码无堆错误**(诊断内存问题的利器):
+  ```bash
+  # 用 emit_llvm_ir 出 .ll → sed 改 @main→@zmain → clang -fsanitize=address 链一个调 zmain 的 driver → 跑
+  /opt/homebrew/opt/llvm/bin/clang -fsanitize=address -g x.ll drv.c -o x && ./x
+  ```
+- **预存坑**:`selfhost_arena`/`selfhost_mir` 的 `all_stage1_parity_probes` mega-test 在 debug build 栈溢出(超大输入 + 深递归),与改动无关;release 正常。
+- **并行 harness 偶发 SIGSEGV 先怀疑栈溢出**,不要先假设堆错误:`RUST_MIN_STACK=67108864 cargo test ...` 一测便知(见 §5 教训)。
 
-## 2. 已完成
-### 2a. 语言扩展(src/ Rust 前端 + native codegen)
-- **Float**(f64):算术/比较;Int/Float 不混用;Mod/位运算仅 Int;native double/fadd/fcmp/fneg。
-- **Tuple**:`(a,b)`/`.N`(`t.1.0` 拆两索引)/`(Int,String)` 注解;native 匿名 struct。
-- **Closure**:`|x:Int| body`、按值捕获、`fn(T)->R`、间接调用;native 闭包转换(lift+heap env)。
-- **Generics**:`fn id<T>(x:T)->T` 实参推断;native 按需单态化(`id$Int`,含 transitive)。
-- **FloatArray**(887ff7f):数组元素类型扩 Float,全链+native。
-- **泛型 struct/enum**(389405d 语言层 + eba1963/0ecd7cd native):`Box<T>`/`Option<T>`/
-  `Result<T,E>` 全链 **+ native 单态化**。
-  - 语言层:实参擦除、type-param 当通配符(算术等操作数约束仍拒 T)。
-  - native:`ZType::Struct/Enum` 用 mangled 名(`Box$Int`/`Option$Int`)编码实参,
-    `Types` 区分实例表(RefCell 动态注册)与泛型模板;struct 按实例生成独立 LLVM
-    布局,enum 沿用统一 `{tag,p0,p1}`(payload 类型由实例驱动 encode/decode)。
-  - 阶段A(eba1963):值流推断,覆盖单函数内构造/match/字段访问。
-  - 阶段B(0ecd7cd):parser 保留泛型实参字符串,typecheck/mir 解码点 strip 到 base
-    (擦除语义不变),codegen `resolve_ann_ztype` 读实参 → 解锁**跨函数返回/参数**。
-  - 测试:`tests/codegen_generic_aggregates.rs`(10 个,native 对齐解释器 oracle)。
-  - 遗留边界:泛型字段 T 通配符,`Box<Int>` 塞 Float 值会在 native LLVM verify 报错。
+---
 
-### 2b. 回灌自举前端 `testdata/selfhost/arena_frontend.zeta`(10k+ 行手写编译器)
-- **Float/Tuple/Generics/Closure:native 全链回灌完成**(lexer→parser→dumps→emit LLVM),每个经
-  selfhost_arena/mir/llvm + **fixpoint 4/4** 验证。Closure emit = c38469b。
-- ev_expr 解释器的 Float/Tuple/Closure 推迟(值系统无 f64/复合槽,次要路径)。
+## 3. 本会话完成(2026-06-21):内存管理彻底完成 + COW + stdlib
 
-## 3. DevGame(zeta 项目)路线任务
-- #73 差距分析总览;#74 P1 内存管理(**v1 ✅ 01d52cb**:作用域释放数组局部修循环泄漏;
-  字符串/闭包env/enum装箱/逃逸/终止路径/顶层局部仍泄漏,待 v2);#75 P2 stdlib+错误处理;
-  #76 P3 泛型容器(FloatArray✅ + 泛型 struct/enum 语言层✅ + **native 单态化聚合✅** eba1963/0ecd7cd);
-  #77 P4 并发;#78 P5 FFI/跨平台。
-- **依赖链(记录在 #75/#76)**:错误处理(内置 Option/Result + `?`)硬前置 = native 单态化泛型
-  struct/enum —— **此前置现已解除**。`?` 另需类型导向脱糖。下一步可直接做内置 Option/Result + `?`。
-- **DevGame 访问**:项目级 `./.devgame/token.json`(6/4)已过期;用**全局** `~/.devgame/token.json`(有效)。
+按提交顺序(均过 fixpoint 4/4 + ASan + 全套件):
+
+| commit | 内容 |
+|---|---|
+| `849e8a3` | **struct 值语义 Drop**(needs_drop 按字段递归)+ 修自举测试栈溢出 flake |
+| `c5a55d4` | **enum payload Drop/Clone**(tag-switch;装箱 struct payload;match 绑定统一 clone 杜绝别名 double-free) |
+| `8c24ad1` | **closure env Drop/Clone**(fat-closure `{fn,env,drop_thunk,clone_thunk}` + per-lambda thunk) |
+| `d1e391e` | **数组 COW**(buffer 头 `{cap}`→`{cap,rc}` 16B;clone=rc++、drop=rc--free-if-0;就地变异前 `cow_make_unique`) |
+| `c49b2da` | **字符串 COW**(不可变⇒纯 refcount;堆串 8B rc 头;**字面量发射为带哨兵 rc=i64::MIN 的全局**,clone/drop 跳过) |
+| `6733522` | **stdlib 6 内置**:int_abs/min/max + string_index_of/contains/repeat |
+| `1c64865` | handoff 刷新(= 本文上一版) |
+
+**内存模型(已敲定并实现)**:**值语义 + 编译器自动 Drop/COW**(学 Swift 值类型 + COW、Nim ARC;**不**搬 Rust 借用检查器,避开新手陡峭)。
+- 生成式 per-type 递归 `@__drop_T`/`@__clone_T`(缓存,先于函数体插缓存以支持递归类型;**对数据递归而非类型结构 ⇒ 无 codegen 栈溢出**)。
+- 全聚合(array/string/tuple/struct/enum/closure)零泄漏。
+- COW:array(标量元素 rc 共享 + 写时拷)、string(不可变纯 rc);**共享传值 O(n)→O(1)**(微基准:4000 元素数组传值 10 万次 65ms→1ms;4096 字符串 9ms→2ms);非共享负载中性。
+- 值语义 ⇒ 无环 ⇒ 连环收集器都不需要。
+
+---
+
+## 4. 历史已完成(压缩)
+
+- **P1–P4 语言扩展**(Rust 前端 + native):Float(f64)、Tuple、Closure(lift+heap env)、Generics(按需单态化 `id$Int`)。
+- **泛型 struct/enum**(389405d 语言层 + eba1963 阶段A 值流推断 + 0ecd7cd 阶段B parser 保留实参全链):`Box<T>`/`Option<T>`/`Result<T,E>` native 单态化。`ZType::Struct/Enum` 用 mangled 名编码实参;enum 沿用统一 `{tag,p0,p1}`。
+- **错误处理全链(#75)**:内置泛型 `Option`/`Result`(std.core 仅引用时注入)+ `?` 运算符(`src/desugar.rs` pre-resolve 续延脱糖,无新 codegen)+ typecheck `Type::Generic` 保留实参(unwrap 值 `v+1` 可算术;真多态 `f<T>(x){x+1}` 仍拒,保安全)。
+- **自举回灌**:Float/Tuple/Generics/Closure native emit 全链回灌进 arena_frontend.zeta(各过 fixpoint)。ev_expr 解释器的复合值推迟(值系统无 f64/复合槽,次要路径)。
+- **热重载 / REPL / 模块系统 / 诊断(golden)/ 官网**(zeta.jennieapp.com:playground/tutorial/spec)。
+
+---
+
+## 5. 关键经验 / 坑(务必先读)
+
+1. **fixpoint 是硬门禁**:任何动到前端的改动必跑 `selfhost_fixpoint --ignored`。新特性的 emit 路径通常 fixpoint-safe(arena_frontend 不用新特性 → 其输出不变);但**改了既有内置/类型的 lowering 就危险**。
+2. **加内置要改四处**:`std_api.rs`(签名)+ `runtime.rs`(`is_std_builtin` + `eval_std_builtin`)+ **`mir.rs` 内置类型表(最易漏)** + `codegen.rs`(`lower_builtin`)。漏 mir 表 → `MIR_UNKNOWN_FUNCTION`。
+3. **新内置名先 grep 自举前端撞名**:`grep "fn <name>" testdata/selfhost/*.zeta`。撞名(如 `string_starts_with`,前端已自定义)会改变前端该 call 的 lowering → **破坏 fixpoint**,必须排除。
+4. **加标量/复合类型要改两个类型检查器**:`typecheck.rs` + `mir.rs` verifier,外加解释器(MIR/AST eval)、module_graph、native codegen。
+5. **并行 harness 偶发 SEGV = 栈溢出,不是堆错误**(本会话曾把它误诊为 struct double-free 折腾很久):~1 万行合并前端深递归(lower/run_mir/codegen)逼近 2 MiB 测试线程栈。修法:测试在 64 MiB 大栈线程跑(见 `tests/codegen_selfhost_run.rs`)。ASan 可证明生成代码无堆错误。
+6. **差分 oracle 纪律**:每个 native 行为必须与解释器逐位一致。新内置在 runtime 与 codegen 用**同一算法**(如 `string_index_of` ↔ `runtime::byte_index_of` 逐字节对齐)。
+7. **COW 实现要点**:array 头 16B(cap@0,rc@8,data@16,free 目标 data-16);string 头 8B(rc@-8,data,free data-8);**字符串字面量是全局常量**,用哨兵 rc=i64::MIN 让 clone/drop 跳过(永不 free)。就地变异(`a[i]=`、就地 push)前必须 `cow_make_unique`(rc>1 则深拷),否则别名破坏值语义。
+8. **泛型实现(阶段B)**:类型字符串贯穿全链(parser 产 `Result<Int, String>`);typecheck `Type::Generic(base,args)` 保留实参、match/字段访问代入;mir verifier `parse_mir_type` strip 到 base(type_param 当通配符,lenient);codegen `resolve_ann_ztype` 读实参单态化。`src/type_syntax.rs`(tuple_parts/fn_parts/split_top_level)是结构化类型串解析基础。codegen 按名查 struct/enum 时串可能带 `<...>`,先 `type_syntax::base_name`。
+
+---
+
+## 6. 下一步(推荐顺序)
+
+1. **trait / 接口系统**(类型系统最大缺口,也是 HashMap 等容器的前提)。本仓库**无方法调用语法**(`x.f()` 不解析,调用须 Name/path 目标)→ 设计应走 **UFCS 自由函数派发 + 单态化**:`trait Show { fn show(self)->String; }` / `impl Show for Point {...}` / `fn f<T: Show>(x:T){ show(x) }`。多片切片:① 词法/语法/AST/resolve + ast-dump(纯前端,fixpoint-safe,因 arena_frontend 不含 trait)→ ② 具体类型的派发(typecheck + codegen)→ ③ 泛型约束 + 单态化派发。
+2. **标准库继续扩**(低风险,马上可用):`string_to_int`/`string_split`/`string_to_upper`、`int_pow` 等(注意 §5.2/5.3);`HashMap`/`Set` 需 trait(hash/eq 派发)前置。
+3. **性能(可选)**:move-on-last-use(免非共享绑定的 rc 簿记,需 MIR 活跃性分析)、SSO 小字符串内联(≤15B 免堆)、struct/tuple 大聚合 COW。
+4. **DevGame 路线**:#77 并发 / #78 FFI;ev_expr 解释器补复合值。
+5. **官网重部署**(`tools/deploy-website.sh`,如内容有更新)。
+
+---
+
+## 7. DevGame 访问
+项目级 `./.devgame/token.json` 已过期;用**全局** `~/.devgame/token.json`(有效)。访问国内链路必须关代理:
 ```bash
 GT=$(node -e "process.stdout.write(require(require('os').homedir()+'/.devgame/token.json').token)")
 env -u http_proxy -u https_proxy -u all_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
   API_BASE=https://devgame.jennieapp.com PROJECT=zeta DEVGAME_TOKEN="$GT" \
-  node ~/.devgame/bin/update-task.mjs --id <N> --comment "..."   # 创建用 --create --subject .. --description-file ..
+  node ~/.devgame/bin/update-task.mjs --id <N> --comment "..."   # 创建:--create --subject .. --description-file ..
 ```
-
-## 4. 官网
-仓库内 `docs/*.html`。已更新(daf61e0):language-features.html(+4 节)、tutorial/index.html(课程 7-10)、
-index.html(能力清单)。**未部署**。
-
-## 5. 下一步(按依赖序)
-1. ~~#76 native 单态化泛型 struct/enum~~ **✅ 完成**(eba1963 阶段A + 0ecd7cd 阶段B)。
-2. ~~内置 Option/Result~~ **✅ 完成**(7f10a50):std.core 注入泛型 `Option<T>`/`Result<T,E>`,
-   仅在被引用时注入(legacy `OptionInt` 等无条件保留),保留名(本地同名→冲突)。
-3. ~~`?` 运算符~~ **✅ 完成**(6264d43):lexer `?` token + parser 后缀 `Expr::Try` +
-   pre-resolve 脱糖(`src/desugar.rs`,续延移入成功分支的 match,按返回类型分派 Ok/Err 或
-   Some/None)。复用现有 match/enum/return,无新 codegen。`?` 仅用于返回 `Option`/`Result` 的函数。
-4. ~~让 `?`/泛型 unwrap 值可算术~~ **✅ 完成**(44c10f6):typecheck 加 `Type::Generic`,
-   保留泛型实参;match 变体绑定与 struct 字段访问在具体 `Generic` 时代入实参 →
-   `Result<Int,String>` 的 `Ok(v)` 绑定 `v:Int`、`Box<Int>.value` 为 Int,可直接算术。
-   真多态 `fn f<T>(x:T){x+1}` 仍被拒(T 未代入,保安全)。
-5. ~~Closure 自举 emit~~ **✅ 完成**(c38469b):arena_frontend.zeta emit 闭包转换(fn-type 助手 +
-   gen_lambda lift/env/间接调用,复用 spec_defs 缓冲);selfhost_llvm +4,fixpoint 4/4 不变。
-   **P1-P4 回灌全部完成。** 仅 ev_expr 解释器闭包/Float/Tuple 推迟(值系统无复合槽,次要路径)。
-6. ~~#74 native 内存管理 v1~~ **✅ 完成**(01d52cb):作用域释放数组局部(fall-through 路径,
-   `free` elems-8),`lower_block` 覆盖 if/while/for/forc body → 循环每迭代回收。安全:数组值语义
-   唯一拥有 ⇒ 无 UAF。测试 tests/codegen_memory.rs。
-7. **#74 native 内存管理 v2 ✅**(32e92dd):数组局部赋值释放旧 buffer + 非数组 return 前释放存活数组局部。
-8. **#74 native 内存管理 v3 ✅**:return-数组所有权转移(数组返回释放其余局部、转移返回值;
-   `bind_owned` 让「返回数组的 call 结果」取得所有权不深拷)。
-9. **#74 native 内存管理 v4 ✅**:push **grow 释放被弃旧 buffer**(free_array_data) + **隐式
-   fall-through return 释放顶层数组局部**。**至此数组/动态数组内存全面零泄漏**(循环/重赋值/
-   per-call/返回值/grow/fall-through 全回收;codegen_memory 10 个差分测试)。
-   **内存模型 = Rust 式(2026-06-20 与用户敲定方向)**:数组已是 Rust 所有权/move/scope-drop
-   (= Vec 的管理,无 GC/无引用计数,编译期确定性释放)。方向 = **值语义 + 编译器自动 Drop/COW**
-   (学 Swift 值类型+COW、Nim ARC;**不**搬 Rust 借用检查器——避开新手陡峭),关键优势:值语义⇒无环⇒
-   连环收集器都不需要。
-
-10. **#74 值语义内存 v5 ✅(commit 656ace0)= 生成式 per-type drop/clone**:落地「值语义 + 自动 Drop」
-    的正确架构。为每个 managed 类型生成一份递归 `@__drop_T`/`@__clone_T` 模块函数(缓存,先于函数体插
-    缓存以支持递归类型),绑定点调 clone、scope/return/reassign 调 drop。**函数在数据上递归(有限)⇒
-    天然支持递归类型、无 codegen 栈溢出**(这正是先前 inline 递归失败的根因,现已解决)。框架:needs_drop /
-    get_or_build_drop+emit_drop_body / get_or_build_clone+emit_clone_body / clone_value / drop_local;
-    构造点(Array/Tuple/Struct/EnumVariant payload)bind_owned 每个 managed 成员;push 拥有追加元素;
-    return move-on-return。**Str / Array / Tuple 完全值管理零泄漏**(含 string array、嵌套);
-    codegen_memory 13 个差分测试 + fixpoint 4/4 无回归。
-10b. **#74 值语义内存 v6 ✅(commit 6d669d6)= Struct 开管理,全聚合零泄漏**:needs_drop(Struct) 改为
-    按字段递归判定(任一字段需 drop ⇒ struct 需 drop),复用 v5 的生成式 @__drop_T/@__clone_T 自动覆盖
-    嵌套/含数组/含字符串 struct。**至此 array/string/tuple/struct 全聚合都走值语义 + 确定性 Drop。**
-    ⚠️**重要更正**:v5 里归因到 struct 的「堆 double-free」**是误诊**。真因 = 并行测试 harness 下对 ~1 万行
-    合并前端做深递归(lower/run_mir/codegen)时,默认 **2 MiB 测试线程栈处于临界值**,struct 管理加深的
-    codegen 递归把它推过边界 → 偶发 SIGSEGV/SIGBUS。**证据**:ASan 对生成代码(clang 编译 run/mir-dump/
-    ast-dump 各模式)全程干净、digest 始终一致;改用 64 MiB 大栈线程跑 codegen_selfhost_run 后连跑 5 次零
-    flake。**经验**:并行 harness 下自举前端的偶发 SEGV 优先怀疑栈溢出(RUST_MIN_STACK=64M 一测便知),
-    别先假设堆错误。门禁:全 llvm 套件 53 suite 0 失败、fixpoint 4/4(144s)。
-10c. **#74 值语义内存 v7 ✅(commit c5a55d4)= Enum payload 管理**:emit_drop/clone_body 加 Enum 臂,
-    按 tag switch 处理活跃变体 payload —— Str/Array 重建 `{len,ptr}` 调其 drop/clone;Struct payload
-    堆装箱(p1),drop 先 load+drop 托管字段再 free 装箱、clone malloc 新箱深拷。needs_drop(Enum) 按变体
-    递归(Struct payload 恒装箱 ⇒ 即使无托管字段也需 free)。**关键**:match 的 Str/Struct/Array payload
-    绑定改为统一 clone_value(此前 Str 共享 p1、Struct/Array 浅拷)→ 绑定与 enum 各自独立所有,杜绝
-    double-free。门禁:codegen_memory 15、codegen_enum 20、fixpoint 4/4(error handling 走 Option/Result
-    重度验证)、ASan 零堆错误。
-10d. **#74 值语义内存 v8 ✅(commit 5044476)= Closure env 管理,全语言零泄漏**:闭包表示
-    `{fn,env}`→`{fn,env,drop_thunk,clone_thunk}`(调用 ABI 0/1 不变)。每 lambda 站点生成
-    `@<lambda>_dropenv`(逐捕获 drop+free env)/`@<lambda>_cloneenv`(malloc 新 env+逐捕获深拷)两枚
-    thunk 携带捕获布局;类型级 @__drop/clone_Closure 仅从值取 thunk 委派(null 守卫零值闭包)——解决
-    「env 布局是 per-lambda 非 per-type」的根本难点。捕获改 clone 进 env(此前浅拷共享 → double-free
-    隐患)。fixpoint 安全:arena_frontend 无 lambda,闭包构造路径不触发。**至此 array/string/tuple/
-    struct/enum/closure 全聚合值语义 + 确定性 Drop,全语言零泄漏。** 门禁:codegen_closure 8 / closure 9
-    / codegen_memory 17、全 llvm 50 suite 0 失败、fixpoint 4/4(143s)、ASan 对捕获 String 闭包零堆错误。
-10e. **#74 性能 v9 ✅(commit d015d03)= 数组 COW(refcount + 写时拷)**:数组 buffer 头 {cap}→{cap,rc}
-    (16B,rc 起始 1)。clone:标量数组 rc++ 返回同 buffer(O(1) 共享);托管元素数组仍深拷(rc 恒 1、
-    元素堆独立)。drop:rc--,仅 rc→0 才 drop 元素+free。**写时拷**:就地变异点(`a[i]=v`、就地 push
-    `xs=push(xs,v)`)先 `cow_make_unique`(rc>1 则深拷独占副本保留 cap、原 buffer 减一引用、写回 slot;
-    未共享 no-op),杜绝别名破坏值语义。**效果**:大数组反复传值(arena 式)O(n)→O(1) —— 微基准 4000
-    元素传值 10 万次 65ms→1ms(~65x);非共享负载中性。门禁:既有别名测试 + cow_inplace_push_on_shared
-    / cow_share_in_loop、ASan 零堆错误(含 realloc-while-shared)、全 llvm 50 suite 0 失败、fixpoint 4/4。
-10f. **#74 性能 v10 ✅(commit c49b2da)= 字符串 COW(纯引用计数)**:字符串不可变 ⇒ 共享天然安全、
-    无写时拷,纯 refcount。堆串加 8B rc 头(起始 1);**字面量发射为全局 `{i64 STATIC_RC, [bytes,NUL]}`,
-    哨兵 rc=i64::MIN**,clone/drop 一律跳过 → 全局常量永不 bump/free(解决「字面量是全局不可 free」难题)。
-    clone=rc++(哨兵 no-op)、drop=rc--free-if-0;concat/byte_slice/int_to_string 改 alloc_str_buf。
-    效果:大串传值 O(n)→O(1)(微基准 4096 字符×10万 9ms→2ms);小串负载中性(selfhost_perf 267≈265)。
-    门禁:string_literal_bound_in_loop / string_shared_by_refcount_balances、ASan 零堆错误、全 llvm 50
-    suite 0 失败、fixpoint 4/4。**至此 array + string 两大高频类型都走 COW；值语义共享传值 O(1)。**
-10g. **stdlib 补齐 ✅(commit 6733522)= 6 个常用内置**:int_abs/int_min/int_max + string_index_of/
-    string_contains/string_repeat。每个全链:std_api 签名 + runtime 解释器 + **mir.rs 内置类型表(易漏的第二处!)**
-    + native codegen,差分门禁。string_index_of 朴素扫描 memcmp,与 `runtime::byte_index_of` 逐字节对齐;
-    repeat 复用 alloc_str_buf(COW 头)。**坑:加内置要同时改 std_api + runtime(is_std_builtin+eval)+ mir
-    类型表 + codegen 四处**;**且新内置名不能与 arena_frontend 自定义函数撞名**(string_starts_with 因此排除,
-    否则前端 call 的 lowering 变化破坏 fixpoint)。
-11. **后续性能/补齐(可选)**:① trait/接口系统(类型系统最大缺口,UFCS 自由函数派发 + 单态化,多片工程);
-    ② 标准库继续扩(string_to_int/split、HashMap 需 trait 前置);③ move-on-last-use(免非共享绑定 rc 簿记);④ 小字符串
-    优化 SSO(≤15B 内联,免堆分配,缓解小串 rc 开销);③ struct/tuple 大聚合的 COW。array+string COW 已
-    兑现「无别名 ⇒ 共享传值 O(1)」的主要红利。
-12. 其它候选:#77 P4 并发 / #78 P5 FFI;ev_expr 解释器补全(FloatArray 现已有,blocker 或已解)。
-13. 远端:`git push`(本会话各提交)+ 官网重部署(`tools/deploy-website.sh`)。
-
-### 阶段B 实现笔记(给接续者)
-- 范式:复用泛型**函数**单态化(`lower_generic_call`/`get_or_build_specialization`/`mangle_instance`/`unify_ztype`)。
-- 类型字符串贯穿全链:parser 产规范带参串(`Result<Int, String>`)。各层解码:
-  - **typecheck**:`parse_type` 产 `Type::Generic(base,args)`(保留实参);match/字段访问代入;
-    EnumType/StructType 带 type_params;expect_type 用 `aggregate_base` 让擦除 `Named` 与具体
-    `Generic` 互通。
-  - **mir verifier**:`parse_mir_type` **strip 到 base**(type_param 当通配符,lenient,不拒 `v+1`)。
-  - **codegen**:`resolve_ann_ztype` 读实参单态化(`Box$Int`/`Option$Int`)。
-  - **runtime**:不解码注解,类型擦除,无需改。
-- enum 统一 `{tag,p0,p1}` 布局是关键:跨函数返回时注解实例与构造点占位实例 LLVM 类型一致。
-- codegen 里加新「按名查 struct/enum」逻辑时,串可能带 `<...>` —— 先 `type_syntax::base_name` 再查。
-- `?` 脱糖在 `src/desugar.rs`(pre-resolve):无 match 表达式/未初始化 let → 续延移入成功分支。
-
-## 6. 关键经验
-- 加类型要改**两个类型检查器**(typecheck.rs + mir.rs verifier)+ 解释器(MIR/AST eval + liveness)+ module_graph + native codegen。
-- 自举前端改动必跑 **fixpoint**;新特性 emit 路径对 fixpoint 通常 safe(arena_frontend 不用新特性→输出不变)。
-- `src/type_syntax.rs`(tuple_parts/fn_parts/split_top_level)贯穿 P2-P4,是结构化类型字符串解析基础。
-- 泛型在解释器透明(运行时类型擦除);native 必须单态化。
