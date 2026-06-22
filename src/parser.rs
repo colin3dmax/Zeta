@@ -864,15 +864,48 @@ impl Parser {
                     }
                     continue;
                 }
-                let (field, field_span) = if let TokenKind::Int(n) = self.peek_kind() {
+                let base_start = expr.span().start;
+                // A numeric `.0` is always a tuple index (never a method).
+                if let TokenKind::Int(n) = self.peek_kind() {
                     let n = n.clone();
-                    let span = self.peek().span;
+                    let field_span = self.peek().span;
                     self.pos += 1;
-                    (n, span)
-                } else {
-                    self.expect_ident_span("expected field name after `.`")?
-                };
-                let span = Span::new(expr.span().start, field_span.end);
+                    let span = Span::new(base_start, field_span.end);
+                    expr = Expr::FieldAccess {
+                        base: Box::new(expr),
+                        field: n,
+                        field_span,
+                        span,
+                    };
+                    continue;
+                }
+                let (field, field_span) = self.expect_ident_span("expected field name after `.`")?;
+                // Method-call sugar: `recv.method(args)` ≡ `method(recv, args)`,
+                // reusing UFCS / trait dispatch (the receiver becomes arg 0). A
+                // bare `recv.field` with no `(` stays a field access.
+                //
+                // Disambiguated from enum/type construction `Type.Variant(..)` by
+                // case (the codebase convention; cf. Go/Haskell): an Upper-cased
+                // bare-Name receiver is a TYPE, so `Option.Some(7)` stays a
+                // qualified construction (handled by the `(` arm via `expr_path`);
+                // a lower-cased name or any complex receiver (`xs[1]`, `a.b`) is a
+                // value, so its `.m(..)` is a method call.
+                if self.check_symbol(Symbol::LParen) && receiver_is_value(&expr) {
+                    self.pos += 1; // consume `(`
+                    let mut rest = self.parse_call_args()?;
+                    let end = self.previous_span().end;
+                    let mut args = Vec::with_capacity(rest.len() + 1);
+                    args.push(expr);
+                    args.append(&mut rest);
+                    expr = Expr::Call {
+                        callee: field,
+                        callee_span: field_span,
+                        args,
+                        span: Span::new(base_start, end),
+                    };
+                    continue;
+                }
+                let span = Span::new(base_start, field_span.end);
                 expr = Expr::FieldAccess {
                     base: Box::new(expr),
                     field,
@@ -1306,6 +1339,26 @@ impl Parser {
 
     fn error_here(&self, code: &'static str, message: &'static str) -> Diagnostic {
         Diagnostic::new(code, message, self.peek().span)
+    }
+}
+
+/// Whether `expr` is an unambiguous VALUE receiver for method-call sugar
+/// (`recv.m(..)` → `m(recv, ..)`). A NAME PATH — a bare `Name` or a `.field`
+/// chain rooted at one (`a`, `a.b`, `a.b.c`) — is left alone here: it could be a
+/// module-qualified call (`demo.math.fn`), enum construction (`Type.Variant`), or
+/// a method on a local (`obj.field.m`). That case is disambiguated later by
+/// `desugar::desugar_method_calls` (a method only if the path's ROOT is a local).
+/// Any OTHER receiver shape (index, call result, parenthesized, ...) cannot be a
+/// module/enum prefix, so its `.m(..)` is unambiguously a method call.
+fn receiver_is_value(expr: &Expr) -> bool {
+    !is_name_path(expr)
+}
+
+fn is_name_path(expr: &Expr) -> bool {
+    match expr {
+        Expr::Name { .. } => true,
+        Expr::FieldAccess { base, .. } => is_name_path(base),
+        _ => false,
     }
 }
 

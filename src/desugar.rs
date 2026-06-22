@@ -35,6 +35,7 @@ pub fn desugar_try(module: &mut Module) -> Result<(), Vec<Diagnostic>> {
     // functions also pass through `?`-desugaring below and are seen as ordinary
     // functions by resolve / typecheck / mir / codegen / runtime.
     flatten_impls(module);
+    desugar_method_calls(module);
     let mut diagnostics = Vec::new();
     for item in &mut module.items {
         if let Item::Function(function) = item {
@@ -51,6 +52,157 @@ pub fn desugar_try(module: &mut Module) -> Result<(), Vec<Diagnostic>> {
         Ok(())
     } else {
         Err(diagnostics)
+    }
+}
+
+/// Method-call sugar: rewrite `recv.method(args)` to `method(recv, args)` when
+/// `recv` is a bound LOCAL. The parser already desugared method calls on complex
+/// receivers (`xs[1].m()`, `a.b.m()`); the only ambiguous form it leaves is a
+/// bare `Name.method(args)`, which is a method call ONLY when `Name` is a local —
+/// vs an enum type in `Type.Variant(..)` or a module alias in `alias.fn(..)`.
+/// Disambiguating needs the set of in-scope locals, hence this scoped pass.
+fn desugar_method_calls(module: &mut Module) {
+    for item in &mut module.items {
+        if let Item::Function(function) = item {
+            let mut scope: Vec<String> = function.params.iter().map(|p| p.name.clone()).collect();
+            mc_scoped(&mut function.body, &mut scope, &[]);
+        }
+    }
+}
+
+/// Walk `body` with `extra` names added to `scope` for its duration (then
+/// restored). `scope` is a stack of in-scope local names; a `let` pushes onto it
+/// so later statements in the same block see the binding.
+fn mc_scoped(body: &mut [Stmt], scope: &mut Vec<String>, extra: &[String]) {
+    let base = scope.len();
+    scope.extend(extra.iter().cloned());
+    for stmt in body.iter_mut() {
+        mc_stmt(stmt, scope);
+    }
+    scope.truncate(base);
+}
+
+fn mc_stmt(stmt: &mut Stmt, scope: &mut Vec<String>) {
+    match stmt {
+        Stmt::Let { name, value, .. } => {
+            mc_expr(value, scope); // initializer sees the OUTER binding of `name`
+            scope.push(name.clone());
+        }
+        Stmt::Assign { target, value } => {
+            mc_expr(target, scope);
+            mc_expr(value, scope);
+        }
+        Stmt::If { condition, then_body, else_body } => {
+            mc_expr(condition, scope);
+            mc_scoped(then_body, scope, &[]);
+            mc_scoped(else_body, scope, &[]);
+        }
+        Stmt::While { condition, body } => {
+            mc_expr(condition, scope);
+            mc_scoped(body, scope, &[]);
+        }
+        Stmt::ForIn { binding, iterable, body, .. } => {
+            mc_expr(iterable, scope);
+            mc_scoped(body, scope, std::slice::from_ref(binding));
+        }
+        Stmt::ForC { init, condition, step, body } => {
+            // init's binding (a `let`) is in scope for condition / step / body.
+            let base = scope.len();
+            mc_stmt(init, scope);
+            mc_expr(condition, scope);
+            mc_stmt(step, scope);
+            for stmt in body.iter_mut() {
+                mc_stmt(stmt, scope);
+            }
+            scope.truncate(base);
+        }
+        Stmt::Match { value, arms } => {
+            mc_expr(value, scope);
+            for arm in arms.iter_mut() {
+                let extra: Vec<String> = match &arm.pattern {
+                    Pattern::Name(n) => vec![n.clone()],
+                    Pattern::Variant { binding: Some(b), .. } => vec![b.clone()],
+                    _ => Vec::new(),
+                };
+                mc_scoped(&mut arm.body, scope, &extra);
+            }
+        }
+        Stmt::Return(Some(expr)) | Stmt::Expr(expr) => mc_expr(expr, scope),
+        Stmt::Return(None) | Stmt::Break { .. } | Stmt::Continue { .. } => {}
+    }
+}
+
+fn mc_expr(expr: &mut Expr, scope: &mut Vec<String>) {
+    match expr {
+        Expr::Call { callee, callee_span, args, .. } => {
+            for arg in args.iter_mut() {
+                mc_expr(arg, scope);
+            }
+            // `root.​…​.method(args)` → `method(root.​…, args)` when `root` (the
+            // first path segment) is a local. The receiver is the field-access
+            // chain of all-but-last segments; the last segment is the method.
+            // A path whose root is NOT a local is an enum (`Type.Variant`) or a
+            // module-qualified call (`demo.math.fn`) and is left untouched.
+            if callee.contains('.') {
+                let segments: Vec<&str> = callee.split('.').collect();
+                let root = segments[0];
+                if segments.len() >= 2 && scope.iter().any(|n| n == root) {
+                    let span = *callee_span;
+                    let method = segments[segments.len() - 1].to_string();
+                    // Rebuild the receiver expression from segments[0..n-1].
+                    let mut recv = Expr::Name {
+                        name: root.to_string(),
+                        span,
+                    };
+                    for field in &segments[1..segments.len() - 1] {
+                        recv = Expr::FieldAccess {
+                            base: Box::new(recv),
+                            field: field.to_string(),
+                            field_span: span,
+                            span,
+                        };
+                    }
+                    args.insert(0, recv);
+                    *callee = method;
+                }
+            }
+        }
+        Expr::Binary { left, right, .. } => {
+            mc_expr(left, scope);
+            mc_expr(right, scope);
+        }
+        Expr::Unary { expr, .. } => mc_expr(expr, scope),
+        Expr::Lambda { params, body, .. } => {
+            let base = scope.len();
+            scope.extend(params.iter().map(|p| p.name.clone()));
+            mc_expr(body, scope);
+            scope.truncate(base);
+        }
+        Expr::StructLiteral { fields, .. } => {
+            for field in fields.iter_mut() {
+                mc_expr(&mut field.value, scope);
+            }
+        }
+        Expr::FieldAccess { base, .. } => mc_expr(base, scope),
+        Expr::ArrayLiteral { elements, .. } | Expr::Tuple { elements, .. } => {
+            for element in elements.iter_mut() {
+                mc_expr(element, scope);
+            }
+        }
+        Expr::Index { base, index, .. } => {
+            mc_expr(base, scope);
+            mc_expr(index, scope);
+        }
+        Expr::Range { start, end, .. } => {
+            mc_expr(start, scope);
+            mc_expr(end, scope);
+        }
+        Expr::Try { expr, .. } => mc_expr(expr, scope),
+        Expr::Name { .. }
+        | Expr::Int { .. }
+        | Expr::Float { .. }
+        | Expr::String { .. }
+        | Expr::Bool { .. } => {}
     }
 }
 
