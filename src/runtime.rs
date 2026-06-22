@@ -2221,6 +2221,8 @@ fn is_std_builtin(callee: &str) -> bool {
             | "string_to_upper"
             | "string_to_lower"
             | "string_trim"
+            | "mmio_write_byte"
+            | "mmio_read_byte"
             | "ascii_is_digit"
             | "ascii_is_alpha"
             | "ascii_is_alnum"
@@ -2498,6 +2500,17 @@ fn eval_std_builtin(callee: &str, args: Vec<Value>) -> Result<Value, Diagnostic>
             };
             let (start, end) = byte_trim_range(s.as_bytes());
             Ok(Value::String(s[start..end].to_string()))
+        }
+        // MMIO has no meaning in the hosted interpreter: a write is inert, a read
+        // yields 0. The freestanding native backend lowers these to real volatile
+        // loads/stores; there is no differential oracle for a bare-metal target.
+        "mmio_write_byte" => {
+            let [_addr, _value]: [Value; 2] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            Ok(Value::Int(0))
+        }
+        "mmio_read_byte" => {
+            let [_addr]: [Value; 1] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            Ok(Value::Int(0))
         }
         "ascii_is_digit" => eval_ascii_predicate(callee, args, |byte| byte.is_ascii_digit()),
         "ascii_is_alpha" => eval_ascii_predicate(callee, args, |byte| byte.is_ascii_alphabetic()),

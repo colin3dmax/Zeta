@@ -3825,6 +3825,32 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let v = self.gen_trim(s.into_struct_value());
                 Ok(Some((v.into(), ZType::Str)))
             }
+            "mmio_write_byte" => {
+                // *(volatile i8*)addr = (i8)value — a device-register store the
+                // optimizer must not drop or reorder away.
+                let addr = self.lower_int(&args[0])?;
+                let value = self.lower_int(&args[1])?;
+                let i8t = self.context.i8_type();
+                let ptr = b
+                    .build_int_to_ptr(addr, self.context.ptr_type(inkwell::AddressSpace::default()), "mmiop")
+                    .unwrap();
+                let byte = b.build_int_truncate(value, i8t, "mmiob").unwrap();
+                let store = b.build_store(ptr, byte).unwrap();
+                store.set_volatile(true).unwrap();
+                Ok(Some((self.i64t().const_zero().into(), ZType::Int)))
+            }
+            "mmio_read_byte" => {
+                // (i64)*(volatile i8*)addr — a device-register load.
+                let addr = self.lower_int(&args[0])?;
+                let i8t = self.context.i8_type();
+                let ptr = b
+                    .build_int_to_ptr(addr, self.context.ptr_type(inkwell::AddressSpace::default()), "mmiop")
+                    .unwrap();
+                let load = b.build_load(i8t, ptr, "mmior").unwrap().into_int_value();
+                load.as_instruction().unwrap().set_volatile(true).unwrap();
+                let widened = b.build_int_z_extend(load, self.i64t(), "mmiow").unwrap();
+                Ok(Some((widened.into(), ZType::Int)))
+            }
             // Growable arrays. bool arrays share the Int (i64) element repr; string
             // arrays carry `{len,ptr}` elements (stride from the element type).
             "int_array_empty" | "bool_array_empty" => Ok(Some(self.lower_array_empty(ZType::Int))),

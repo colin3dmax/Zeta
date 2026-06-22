@@ -13,6 +13,7 @@ fn main() {
         Some("mir-dump") if args.len() == 3 => mir_dump(&args[2]),
         Some("symbols-dump") if args.len() == 3 => symbols_dump(&args[2]),
         Some("check") if args.len() == 3 => check(&args[2]),
+        Some("emit-ir") if args.len() == 3 => emit_ir(&args[2]),
         Some("run") if args.len() == 3 => run(&args[2]),
         Some("serve") if args.len() == 3 => serve(&args[2]),
         Some("repl") if args.len() == 2 => repl(),
@@ -22,6 +23,7 @@ fn main() {
             eprintln!("       zeta mir-dump <path>");
             eprintln!("       zeta symbols-dump <directory>");
             eprintln!("       zeta check <path>");
+            eprintln!("       zeta emit-ir <path>   (requires --features llvm)");
             eprintln!("       zeta run <path>");
             eprintln!("       zeta serve <path>");
             eprintln!("       zeta repl");
@@ -188,6 +190,56 @@ fn load_module_directory(root: &Path) -> Vec<zeta::module_graph::SourceFile> {
         });
     }
     files
+}
+
+/// `zeta emit-ir <file>` — lower a single source to textual LLVM IR (the same IR
+/// the native backend JIT/AOT consumes). The freestanding kernel build pipes
+/// this through `clang --target=riscv64` (see `kernel/`). Requires `--features
+/// llvm`.
+#[cfg(feature = "llvm")]
+fn emit_ir(path: &str) {
+    let source = match fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(err) => {
+            eprintln!("failed to read {path}: {err}");
+            process::exit(1);
+        }
+    };
+    let module = match zeta::parse_source(&source) {
+        Ok(module) => module,
+        Err(diagnostics) => {
+            print_diagnostics(&diagnostics, &source, path);
+            process::exit(1);
+        }
+    };
+    let structs: Vec<zeta::ast::StructDecl> = module
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            zeta::ast::Item::Struct(decl) => Some(decl.clone()),
+            _ => None,
+        })
+        .collect();
+    let program = match zeta::lower_source(&source) {
+        Ok(program) => program,
+        Err(diagnostics) => {
+            print_diagnostics(&diagnostics, &source, path);
+            process::exit(1);
+        }
+    };
+    match zeta::codegen::emit_llvm_ir(&program, &structs) {
+        Ok(ir) => print!("{ir}"),
+        Err(err) => {
+            eprintln!("codegen error: {err}");
+            process::exit(1);
+        }
+    }
+}
+
+#[cfg(not(feature = "llvm"))]
+fn emit_ir(_path: &str) {
+    eprintln!("emit-ir requires building with `--features llvm`");
+    process::exit(2);
 }
 
 fn run(path: &str) {

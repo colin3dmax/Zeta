@@ -184,6 +184,20 @@ const STD_CORE_FUNCTIONS: &[StandardFunction] = &[
         params: &["String"],
         return_type: Some("String"),
     },
+    // Bare-metal memory-mapped I/O: write/read a byte at a raw physical address.
+    // No host meaning (the interpreter treats them as inert) — they exist for the
+    // freestanding native target, where a device register lives at a fixed
+    // address (e.g. a UART). The address is an `Int`; the byte is the low 8 bits.
+    StandardFunction {
+        name: "mmio_write_byte",
+        params: &["Int", "Int"],
+        return_type: Some("Int"),
+    },
+    StandardFunction {
+        name: "mmio_read_byte",
+        params: &["Int"],
+        return_type: Some("Int"),
+    },
     StandardFunction {
         name: "ascii_is_digit",
         params: &["Int"],

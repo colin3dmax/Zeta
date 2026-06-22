@@ -108,10 +108,9 @@ LLVM_SYS_221_PREFIX=/opt/homebrew/opt/llvm cargo test --release --features llvm 
 **新北极星:用 Zeta 打磨一个操作系统。** 这意味着以下"系统能力缺口"优先于继续堆 stdlib 广度。
 
 ### 6.1 OS 第一前置:freestanding + 裸机后端(最大缺口)
-当前 codegen 依赖宿主 C 运行时符号:`malloc/free/memcpy/memcmp/snprintf`(见 codegen.rs 顶部声明)。裸机/内核态没有 libc。需要:
-- **freestanding 目标**:AOT 出无 libc 依赖的目标文件;`malloc/free` 改走可替换的 allocator 接口(内核提供 bump/buddy);`memcpy/memcmp` 用 LLVM intrinsic 或自带实现;`snprintf`(仅 int_to_string 用)换成自写的整数转字符串(已有 `gen_string_to_int` 的逆,可写 `gen_int_to_string`)。
-- **自定义 target triple + 链接脚本**:`x86_64-unknown-none` / `riscv64`,关掉 PIC/红区,自定义 entry。
-- 产物:`.o`/ELF + 链接脚本 → QEMU 启动到一个 `kmain`。
+**✅ 最小闭环已打通(2026-06-22,`kernel/`)**:Zeta 写的 `kmain` 编成 freestanding riscv64 ELF,QEMU `virt` 裸机启动,经 MMIO(UART@0x10000000)打印 `Zeta OS: hello from bare-metal riscv64!` 后自旋。链路 = `zeta emit-ir`(新 CLI 子命令)→ 去掉 host datalayout/triple → `clang --target=riscv64 -mcmodel=medany -nostdlib` → `boot.s` 设栈调 main → `ld.lld -T kernel.ld`(载入 0x80000000)。唯一新语言原语:`mmio_write_byte`/`mmio_read_byte`(volatile i8 store/load 到 inttoptr 地址;解释器侧 inert)。
+**当前最小内核的约束**:`-nostdlib` 下镜像不能引用 `malloc/free/memcpy/snprintf`,故 kmain 全程 Int + 只**读**字符串字面量(string_len/string_byte_at),绝不绑定/传值 String(会拉进 clone/drop 的 alloc/free)。
+**下一步(解锁 String/array/struct 进内核)**:写一个 freestanding 运行时桩(bump allocator + 自写 memcpy/memcmp + `gen_int_to_string` 替 snprintf),把 codegen 顶部那 5 个 extern 符号在裸机目标下指向桩实现。再加自定义 target triple 抽象(目前靠 build.sh 手动 strip + clang 重定向,可固化进 AOT 路径)。
 
 ### 6.2 OS 第二前置:裸指针 + volatile MMIO + 内联汇编(DevGame #78 扩展)
 - **裸指针类型**`*T` / `*mut T` + 读写(MMIO 寄存器、页表项)。当前无指针类型、无 unsafe。
