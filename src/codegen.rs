@@ -1271,6 +1271,8 @@ fn build_module<'ctx>(
             entry_bb,
             lambda_count: 0,
             locals: HashMap::new(),
+            move_plan: crate::move_analysis::analyze(function),
+            moved_flags: HashMap::new(),
             loops: Vec::new(),
         };
         // Parameters seed the top-level scope; further locals are allocated
@@ -1283,6 +1285,8 @@ fn build_module<'ctx>(
             let value = llvm_fn.get_nth_param(index as u32).expect("param exists");
             builder.build_store(slot, value).unwrap();
             lower.locals.insert(param.name.clone(), (slot, zt));
+            // A param that gets moved away later needs its flag zeroed up front.
+            lower.bind_moved_flag(&param.name);
         }
 
         let terminated = lower
@@ -1386,6 +1390,13 @@ struct FnLower<'a, 'ctx> {
     lambda_count: u32,
     /// local name → (alloca slot, type)
     locals: HashMap<String, (PointerValue<'ctx>, ZType)>,
+    /// Move-on-last-use plan for this function body: which `Load` nodes may MOVE
+    /// (skip the clone) and which locals therefore carry a runtime moved-flag.
+    move_plan: crate::move_analysis::MovePlan,
+    /// Moved-flag slot (i1) per flagged local: 0 = still owned (drop it), 1 =
+    /// already moved out (skip its scope-exit drop). Reset to 0 each time the
+    /// local is (re)bound; set to 1 at the move site.
+    moved_flags: HashMap<String, PointerValue<'ctx>>,
     /// Enclosing loops as `(continue_target, exit)`. `break` jumps to `exit`;
     /// `continue` jumps to `continue_target` — which is the condition head for
     /// `while`, but the increment/step block for `for` loops (so `continue` still
@@ -1444,10 +1455,22 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         zt: &ZType,
     ) -> BasicValueEnum<'ctx> {
         if self.is_owned_source(expr, zt) {
-            value
-        } else {
-            self.bind_value(value, zt)
+            return value;
         }
+        // Move-on-last-use: a managed local read for the last time in an
+        // ownership-transferring position is MOVED, not cloned — take its value
+        // and flag it moved so its scope-exit drop is suppressed. Soundness is
+        // carried entirely by `move_analysis` (the read is dead-after on every
+        // path) plus the runtime flag (the drop is skipped iff the move ran).
+        if self.needs_drop(zt) {
+            if let MirExpr::Load(name) = expr {
+                if self.move_plan.is_move(expr) {
+                    self.mark_moved(name);
+                    return value;
+                }
+            }
+        }
+        self.bind_value(value, zt)
     }
 
     /// Byte size of one element of `elem` (8 for Int, 16 for the `{len,ptr}` of
@@ -1567,6 +1590,62 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             self.builder.position_at_end(block);
         }
         slot
+    }
+
+    /// Allocate (once) and ZERO a flagged local's moved-flag at the current
+    /// point — called whenever the local is (re)bound, so it starts owned. A
+    /// no-op for locals the move plan never moves.
+    fn bind_moved_flag(&mut self, name: &str) {
+        if !self.move_plan.is_flagged(name) {
+            return;
+        }
+        let slot = match self.moved_flags.get(name) {
+            Some(&slot) => slot,
+            None => {
+                let slot =
+                    self.entry_alloca(&format!("{name}.moved"), self.context.bool_type().into());
+                self.moved_flags.insert(name.to_string(), slot);
+                slot
+            }
+        };
+        self.builder
+            .build_store(slot, self.context.bool_type().const_zero())
+            .unwrap();
+    }
+
+    /// Record that a flagged local's value has been MOVED out (set its flag to
+    /// 1), so its scope-exit drop is skipped. A no-op for unflagged locals.
+    fn mark_moved(&self, name: &str) {
+        if let Some(&slot) = self.moved_flags.get(name) {
+            self.builder
+                .build_store(slot, self.context.bool_type().const_int(1, false))
+                .unwrap();
+        }
+    }
+
+    /// Drop a managed local unless its moved-flag says it was already moved out.
+    /// Plain `drop_local` when the local carries no flag.
+    fn drop_local_guarded(&self, name: &str, slot: PointerValue<'ctx>, zt: &ZType) {
+        let Some(&flag) = self.moved_flags.get(name) else {
+            self.drop_local(slot, zt);
+            return;
+        };
+        let moved = self
+            .builder
+            .build_load(self.context.bool_type(), flag, "moved")
+            .unwrap()
+            .into_int_value();
+        let live = self
+            .builder
+            .build_int_compare(IntPredicate::EQ, moved, self.context.bool_type().const_zero(), "notmoved")
+            .unwrap();
+        let drop_bb = self.context.append_basic_block(self.llvm_fn, "drop.live");
+        let cont_bb = self.context.append_basic_block(self.llvm_fn, "drop.cont");
+        self.builder.build_conditional_branch(live, drop_bb, cont_bb).unwrap();
+        self.builder.position_at_end(drop_bb);
+        self.drop_local(slot, zt);
+        self.builder.build_unconditional_branch(cont_bb).unwrap();
+        self.builder.position_at_end(cont_bb);
     }
 
     fn lower_stmts(&mut self, stmts: &[MirStmt]) -> Result<bool, String> {
@@ -2097,18 +2176,18 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
     /// gives each local unique ownership, so the drop is sound (no double-free /
     /// use-after-free).
     fn free_scope_locals(&mut self, saved: &HashMap<String, (PointerValue<'ctx>, ZType)>) {
-        let mut targets: Vec<(PointerValue<'ctx>, ZType)> = Vec::new();
+        let mut targets: Vec<(String, PointerValue<'ctx>, ZType)> = Vec::new();
         for (name, (slot, zt)) in self.locals.iter() {
             if !self.needs_drop(zt) {
                 continue;
             }
             let outer = saved.get(name).map(|(s, _)| *s == *slot).unwrap_or(false);
             if !outer {
-                targets.push((*slot, zt.clone()));
+                targets.push((name.clone(), *slot, zt.clone()));
             }
         }
-        for (slot, zt) in targets {
-            self.drop_local(slot, &zt);
+        for (name, slot, zt) in targets {
+            self.drop_local_guarded(&name, slot, &zt);
         }
     }
 
@@ -2116,14 +2195,14 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
     /// value MOVES out as the return value). Sound because the function is
     /// exiting so every other managed local is dead.
     fn free_live_managed_except(&self, skip: Option<PointerValue<'ctx>>) {
-        let targets: Vec<(PointerValue<'ctx>, ZType)> = self
+        let targets: Vec<(String, PointerValue<'ctx>, ZType)> = self
             .locals
-            .values()
-            .filter(|(slot, zt)| self.needs_drop(zt) && Some(*slot) != skip)
-            .map(|(slot, zt)| (*slot, zt.clone()))
+            .iter()
+            .filter(|(_, (slot, zt))| self.needs_drop(zt) && Some(*slot) != skip)
+            .map(|(name, (slot, zt))| (name.clone(), *slot, zt.clone()))
             .collect();
-        for (slot, zt) in targets {
-            self.drop_local(slot, &zt);
+        for (name, slot, zt) in targets {
+            self.drop_local_guarded(&name, slot, &zt);
         }
     }
 
@@ -2153,6 +2232,8 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let slot = self.entry_alloca(name, self.types.llvm(&vt));
                 self.builder.build_store(slot, v).unwrap();
                 self.locals.insert(name.clone(), (slot, vt));
+                // Fresh binding starts owned: (re)zero its moved-flag if flagged.
+                self.bind_moved_flag(name);
                 Ok(false)
             }
             MirStmt::Store { place, value } => {
@@ -2169,9 +2250,16 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let (slot, slot_ty) = self.resolve_place(place)?;
                 // Reassigning a simple managed local: drop the old value first. The
                 // new value was already cloned/owned by `bind_owned`, so it can't
-                // alias the old, and the old is uniquely owned by this local.
-                if matches!(place, MirPlace::Local(_)) && self.needs_drop(&slot_ty) {
-                    self.drop_local(slot, &slot_ty);
+                // alias the old, and the old is uniquely owned by this local —
+                // unless it was already moved out, which the flag-guarded drop
+                // skips. After the store the local owns a fresh value again.
+                if let MirPlace::Local(name) = place {
+                    if self.needs_drop(&slot_ty) {
+                        self.drop_local_guarded(name, slot, &slot_ty);
+                    }
+                    self.builder.build_store(slot, v).unwrap();
+                    self.bind_moved_flag(name);
+                    return Ok(false);
                 }
                 self.builder.build_store(slot, v).unwrap();
                 Ok(false)
@@ -2833,6 +2921,8 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 entry_bb: lifted_entry,
                 lambda_count: 0,
                 locals: HashMap::new(),
+                move_plan: crate::move_analysis::MovePlan::empty(),
+                moved_flags: HashMap::new(),
                 loops: Vec::new(),
             };
             let env_ptr = lifted
@@ -3194,6 +3284,8 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 entry_bb: entry,
                 lambda_count: 0,
                 locals: HashMap::new(),
+                move_plan: crate::move_analysis::analyze(generic),
+                moved_flags: HashMap::new(),
                 loops: Vec::new(),
             };
             for (index, (param, zt)) in generic.params.iter().zip(param_ztys).enumerate() {
@@ -3201,6 +3293,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let value = func.get_nth_param(index as u32).expect("param exists");
                 inner.builder.build_store(slot, value).unwrap();
                 inner.locals.insert(param.name.clone(), (slot, zt.clone()));
+                inner.bind_moved_flag(&param.name);
             }
             let terminated = inner
                 .lower_stmts(&generic.body)

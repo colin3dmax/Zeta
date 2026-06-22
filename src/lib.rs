@@ -8,6 +8,8 @@ pub mod lexer;
 pub mod line_editor;
 pub mod mir;
 pub mod module_graph;
+#[cfg(feature = "llvm")]
+pub mod move_analysis;
 pub mod parser;
 pub mod repl;
 pub mod resolver;
