@@ -1,23 +1,61 @@
-// A Zeta kernel that uses the full type system on bare metal: heap Strings
-// (string_concat / int_to_string), an array, and a helper that takes a String
-// by value — all of which allocate/copy through the freestanding runtime stub
-// (kernel/runtime.c: bump malloc + memcpy/memset/memcmp). Output is via the
-// virt-machine UART at 0x1000_0000 (mmio_write_byte).
+// A Zeta kernel on QEMU virt (riscv64). Now with a real NS16550 UART driver:
+// proper init (baud divisor, 8N1, FIFO) and transmit done by polling the
+// line-status register's THRE bit before each byte — not blind writes. Uses the
+// full value-semantics type system (heap Strings, arrays, int formatting), which
+// allocate/copy through the freestanding runtime stub (kernel/runtime.c).
 import std.core;
 
-// Print a string to UART0, byte by byte. Takes the String by value — exercising
-// the clone/drop path that needs malloc/free (now provided by runtime.c).
+// ---------------------------------------------------------------- NS16550 UART
+// On the virt machine the 8 registers are byte-wide at 0x1000_0000 (reg-shift 0).
+
+fn uart_base() -> Int { return 268435456; }   // 0x1000_0000
+
+// Register offsets from the base.
+fn uart_thr() -> Int { return 0; }            // transmit hold (DLAB=0, write)
+fn uart_ier() -> Int { return 1; }            // interrupt enable (DLAB=0)
+fn uart_dll() -> Int { return 0; }            // divisor latch low  (DLAB=1)
+fn uart_dlm() -> Int { return 1; }            // divisor latch high (DLAB=1)
+fn uart_fcr() -> Int { return 2; }            // FIFO control (write)
+fn uart_lcr() -> Int { return 3; }            // line control
+fn uart_lsr() -> Int { return 5; }            // line status
+
+fn uart_init() {
+  let b: Int = uart_base();
+  mmio_write_byte(b + uart_ier(), 0);         // disable all UART interrupts
+  mmio_write_byte(b + uart_lcr(), 128);       // LCR.DLAB = 1 → divisor latch visible
+  mmio_write_byte(b + uart_dll(), 1);         // divisor low  = 1 (max baud; QEMU ignores)
+  mmio_write_byte(b + uart_dlm(), 0);         // divisor high = 0
+  mmio_write_byte(b + uart_lcr(), 3);         // 8 bits, no parity, 1 stop; DLAB = 0
+  mmio_write_byte(b + uart_fcr(), 7);         // enable FIFO + clear RX/TX FIFOs
+}
+
+// Block until the transmit-hold register is empty (LSR bit 5, 0x20 = THRE),
+// then push the byte. The volatile MMIO read keeps the poll loop honest.
+fn uart_putc(c: Int) {
+  let b: Int = uart_base();
+  let mut ready: Int = 0;
+  while ready == 0 {
+    ready = mmio_read_byte(b + uart_lsr()) & 32;
+  }
+  mmio_write_byte(b + uart_thr(), c);
+}
+
 fn print(msg: String) {
   let n: Int = string_len(msg);
   let mut i: Int = 0;
   while i < n {
-    mmio_write_byte(268435456, string_byte_at(msg, i)); // 0x1000_0000 = UART0 TX
+    uart_putc(string_byte_at(msg, i));
     i = i + 1;
   }
 }
 
+// ---------------------------------------------------------------------- kernel
+
 fn main() -> Int {
+  uart_init();
+
   print("Zeta OS: booting on bare-metal riscv64\n");
+  print("uart: NS16550 initialised, polling LSR\n");
 
   // Heap string built at runtime: concat + integer formatting.
   print(string_concat("the answer is ", int_to_string(42)));
