@@ -117,7 +117,9 @@ LLVM_SYS_221_PREFIX=/opt/homebrew/opt/llvm cargo test --release --features llvm 
 - ✅ **#1 裸指针 `*T` + 真 UART 驱动**(`6103e89`/`afcd901`,见 §6.2)。
 - ✅ **#2 可回收 allocator**(`792e496`):kernel/runtime.c bump→带合并的 first-fit 空闲链表;实机 20 万次 alloc/free 不耗尽 arena。经验:中间结果须绑成局部才会被 drop/free,否则泄漏 + O(n) 合并退化 O(n²)。
 - **#3 固化 AOT 装配**(待办,低优先):把 build.sh 的手动 emit-ir→strip→clang riscv64 固化成 `zeta` 原生跨目标 obj 输出。价值有限(只省一次 clang 调用;链接/boot.s/runtime.c/链接脚本仍需外部工具链)。
-- **#4 前置 ✅ 内联汇编完成**:csr_read/write/set/clear + wfi(见 §6.2)。**#4 主体待办**:riscv trap handler(设 mtvec、保存/恢复寄存器)→ CLINT 定时器中断(mtimecmp@MMIO + mie.MTIE + mstatus.MIE)→ 第一个协作式调度器。注意:trap handler 入口需 naked/对齐,可能要再加一小段 boot.s 式汇编或 `mtvec` 指向一个 Zeta 函数(需保证它不被 prologue 破坏 —— 可能需要 trap-entry 汇编 stub 保存上下文再调 Zeta handler)。
+- **#4 前置 ✅ 内联汇编**(csr_read/write/set/clear + wfi)。
+- **#4 ✅ 定时器中断完成**(`d9d5a23`):boot.s 加 `trap_entry` 汇编 stub(.align 4,保存 16 caller-saved 寄存器 → call Zeta `trap_handler` → mret),_start 里 csrw mtvec 安装。Zeta `trap_handler`(无分配,中断安全)在固定 scratch RAM 做计数器(因无全局变量)+ 重设 mtimecmp。main 装 CLINT mtimecmp + 开 mie.MTIE/mstatus.MIE。实测 tick 1/2/3 "traps work"。**这是调度器的地基。**
+- **#4 剩余:第一个调度器**(待办,大切片):需任务结构(每任务的寄存器上下文 + 栈)+ 上下文切换汇编(`switch(old_ctx, new_ctx)` 保存/恢复 ra/sp/s0-s11)+ 时间片驱动的抢占(trap_handler 里换任务)。协作式(yield)更简单可先做。Zeta 无全局 → 任务表用固定内存 + 裸指针管理。
 
 ### 6.2 OS 第二前置:裸指针 + volatile MMIO + 内联汇编(DevGame #78 扩展)
 - **✅ volatile MMIO**(`d80a208`/`7ecb785`):`mmio_{read,write}_{byte,word,dword}`(8/16... 即 8/32/64 位)volatile load/store 到 inttoptr;真 NS16550 UART 驱动(`6103e89`,init+LSR 轮询)。
