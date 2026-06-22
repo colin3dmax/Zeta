@@ -169,6 +169,10 @@ fn parse_sources(files: &[SourceFile]) -> Result<Vec<ParsedSource>, Vec<SourceDi
     for file in files {
         match crate::lexer::lex(&file.source)
             .and_then(|tokens| parser::Parser::new(tokens).parse_module())
+            .map(|mut module| {
+                crate::std_prelude::inject(&mut module);
+                module
+            })
         {
             Ok(module) => modules.push(ParsedSource {
                 path: file.path.clone(),

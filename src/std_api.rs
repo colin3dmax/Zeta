@@ -1,4 +1,5 @@
-pub const STANDARD_IMPORTS: &[&[&str]] = &[&["std", "core"], &["std", "io"]];
+pub const STANDARD_IMPORTS: &[&[&str]] =
+    &[&["std", "core"], &["std", "io"], &["std", "collections"]];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StandardEnum {
@@ -289,6 +290,15 @@ pub fn is_std_core_import(path: &[String]) -> bool {
 
 pub fn is_std_io_import(path: &[String]) -> bool {
     ["std", "io"]
+        .into_iter()
+        .eq(path.iter().map(String::as_str))
+}
+
+/// `std.collections` is a SOURCE module (HashMap/HashSet written in Zeta),
+/// not an intrinsic one — importing it injects its definitions verbatim (see
+/// `std_prelude`), so it carries no `core_functions`-style builtin entries.
+pub fn is_std_collections_import(path: &[String]) -> bool {
+    ["std", "collections"]
         .into_iter()
         .eq(path.iter().map(String::as_str))
 }

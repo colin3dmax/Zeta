@@ -1,0 +1,244 @@
+// std.collections — generic hash containers, injected verbatim when a module
+// writes `import std.collections;`. Open-addressing HashMap<K, V> and HashSet<T>
+// built on the trait + generics + generic-array stack. Because monomorphization
+// is bottom-up, parameterless construction is impossible; `*_new` takes a seed
+// of each element type so `array_repeat` can size the backing arrays.
+//
+// Helper names are `std_`-prefixed to avoid colliding with user code; the
+// public API is hashmap_*/hashset_* plus the Hash/Eq traits.
+import std.core;
+
+trait Hash { fn hash(self: Self) -> Int; }
+trait Eq { fn eq(self: Self, other: Self) -> Bool; }
+
+impl Hash for Int { fn hash(self: Self) -> Int { return self; } }
+impl Eq for Int { fn eq(self: Self, other: Self) -> Bool { return self == other; } }
+
+impl Hash for String {
+  fn hash(self: Self) -> Int {
+    let mut h: Int = 5381;
+    let mut i: Int = 0;
+    let n: Int = string_len(self);
+    while i < n {
+      h = h * 33 + string_byte_at(self, i);
+      i = i + 1;
+    }
+    return h;
+  }
+}
+impl Eq for String { fn eq(self: Self, other: Self) -> Bool { return self == other; } }
+
+fn std_imod(a: Int, m: Int) -> Int {
+  let r: Int = a % m;
+  if r < 0 { return r + m; }
+  return r;
+}
+
+// ---------------------------------------------------------------- HashMap<K,V>
+
+struct HashMap<K, V> {
+  keys: Array<K>,
+  values: Array<V>,
+  used: Array<Bool>,
+  size: Int,
+  cap: Int,
+}
+
+fn hashmap_new<K: Hash + Eq, V>(seed_key: K, seed_val: V) -> HashMap<K, V> {
+  let cap: Int = 8;
+  return HashMap {
+    keys: array_repeat(seed_key, cap),
+    values: array_repeat(seed_val, cap),
+    used: array_repeat(false, cap),
+    size: 0,
+    cap: cap,
+  };
+}
+
+fn std_hashmap_grow<K: Hash + Eq, V>(m: HashMap<K, V>, seed_key: K, seed_val: V) -> HashMap<K, V> {
+  let newcap: Int = m.cap * 2;
+  let mut nk: Array<K> = array_repeat(seed_key, newcap);
+  let mut nv: Array<V> = array_repeat(seed_val, newcap);
+  let mut nu: Array<Bool> = array_repeat(false, newcap);
+  let mut i: Int = 0;
+  while i < m.cap {
+    if m.used[i] {
+      let mut j: Int = std_imod(hash(m.keys[i]), newcap);
+      while nu[j] {
+        j = std_imod(j + 1, newcap);
+      }
+      nk[j] = m.keys[i];
+      nv[j] = m.values[i];
+      nu[j] = true;
+    }
+    i = i + 1;
+  }
+  return HashMap { keys: nk, values: nv, used: nu, size: m.size, cap: newcap };
+}
+
+fn hashmap_insert<K: Hash + Eq, V>(m: HashMap<K, V>, key: K, value: V) -> HashMap<K, V> {
+  let mut map: HashMap<K, V> = m;
+  if map.size * 4 >= map.cap * 3 {
+    map = std_hashmap_grow(map, key, value);
+  }
+  let mut j: Int = std_imod(hash(key), map.cap);
+  while map.used[j] {
+    if eq(map.keys[j], key) {
+      map.values[j] = value;
+      return map;
+    }
+    j = std_imod(j + 1, map.cap);
+  }
+  map.keys[j] = key;
+  map.values[j] = value;
+  map.used[j] = true;
+  map.size = map.size + 1;
+  return map;
+}
+
+fn hashmap_get<K: Hash + Eq, V>(m: HashMap<K, V>, key: K, default: V) -> V {
+  let mut j: Int = std_imod(hash(key), m.cap);
+  let mut steps: Int = 0;
+  while m.used[j] {
+    if eq(m.keys[j], key) {
+      return m.values[j];
+    }
+    j = std_imod(j + 1, m.cap);
+    steps = steps + 1;
+    if steps >= m.cap {
+      return default;
+    }
+  }
+  return default;
+}
+
+fn hashmap_contains<K: Hash + Eq, V>(m: HashMap<K, V>, key: K) -> Bool {
+  let mut j: Int = std_imod(hash(key), m.cap);
+  let mut steps: Int = 0;
+  while m.used[j] {
+    if eq(m.keys[j], key) {
+      return true;
+    }
+    j = std_imod(j + 1, m.cap);
+    steps = steps + 1;
+    if steps >= m.cap {
+      return false;
+    }
+  }
+  return false;
+}
+
+fn std_hashmap_remove_at<K: Hash + Eq, V>(m: HashMap<K, V>, slot: Int) -> HashMap<K, V> {
+  let mut map: HashMap<K, V> = m;
+  map.used[slot] = false;
+  map.size = map.size - 1;
+  let mut i: Int = std_imod(slot + 1, map.cap);
+  while map.used[i] {
+    let k: K = map.keys[i];
+    let v: V = map.values[i];
+    map.used[i] = false;
+    let mut t: Int = std_imod(hash(k), map.cap);
+    while map.used[t] {
+      t = std_imod(t + 1, map.cap);
+    }
+    map.keys[t] = k;
+    map.values[t] = v;
+    map.used[t] = true;
+    i = std_imod(i + 1, map.cap);
+  }
+  return map;
+}
+
+fn hashmap_remove<K: Hash + Eq, V>(m: HashMap<K, V>, key: K) -> HashMap<K, V> {
+  let mut map: HashMap<K, V> = m;
+  let mut j: Int = std_imod(hash(key), map.cap);
+  let mut steps: Int = 0;
+  let mut slot: Int = 0 - 1;
+  while map.used[j] {
+    if eq(map.keys[j], key) {
+      slot = j;
+      break;
+    }
+    j = std_imod(j + 1, map.cap);
+    steps = steps + 1;
+    if steps >= map.cap {
+      break;
+    }
+  }
+  if slot < 0 {
+    return map;
+  }
+  return std_hashmap_remove_at(map, slot);
+}
+
+// ------------------------------------------------------------------ HashSet<T>
+
+struct HashSet<T> {
+  elems: Array<T>,
+  used: Array<Bool>,
+  size: Int,
+  cap: Int,
+}
+
+fn hashset_new<T: Hash + Eq>(seed: T) -> HashSet<T> {
+  let cap: Int = 8;
+  return HashSet {
+    elems: array_repeat(seed, cap),
+    used: array_repeat(false, cap),
+    size: 0,
+    cap: cap,
+  };
+}
+
+fn std_hashset_grow<T: Hash + Eq>(s: HashSet<T>, seed: T) -> HashSet<T> {
+  let newcap: Int = s.cap * 2;
+  let mut ne: Array<T> = array_repeat(seed, newcap);
+  let mut nu: Array<Bool> = array_repeat(false, newcap);
+  let mut i: Int = 0;
+  while i < s.cap {
+    if s.used[i] {
+      let mut j: Int = std_imod(hash(s.elems[i]), newcap);
+      while nu[j] {
+        j = std_imod(j + 1, newcap);
+      }
+      ne[j] = s.elems[i];
+      nu[j] = true;
+    }
+    i = i + 1;
+  }
+  return HashSet { elems: ne, used: nu, size: s.size, cap: newcap };
+}
+
+fn hashset_insert<T: Hash + Eq>(s: HashSet<T>, value: T) -> HashSet<T> {
+  let mut set: HashSet<T> = s;
+  if set.size * 4 >= set.cap * 3 {
+    set = std_hashset_grow(set, value);
+  }
+  let mut j: Int = std_imod(hash(value), set.cap);
+  while set.used[j] {
+    if eq(set.elems[j], value) {
+      return set;
+    }
+    j = std_imod(j + 1, set.cap);
+  }
+  set.elems[j] = value;
+  set.used[j] = true;
+  set.size = set.size + 1;
+  return set;
+}
+
+fn hashset_contains<T: Hash + Eq>(s: HashSet<T>, value: T) -> Bool {
+  let mut j: Int = std_imod(hash(value), s.cap);
+  let mut steps: Int = 0;
+  while s.used[j] {
+    if eq(s.elems[j], value) {
+      return true;
+    }
+    j = std_imod(j + 1, s.cap);
+    steps = steps + 1;
+    if steps >= s.cap {
+      return false;
+    }
+  }
+  return false;
+}

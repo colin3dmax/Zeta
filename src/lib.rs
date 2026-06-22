@@ -13,6 +13,7 @@ pub mod repl;
 pub mod resolver;
 pub mod runtime;
 pub mod std_api;
+pub mod std_prelude;
 pub mod type_syntax;
 pub mod typecheck;
 pub mod wasm;
@@ -21,7 +22,9 @@ use diagnostic::Diagnostic;
 
 pub fn parse_source(source: &str) -> Result<ast::Module, Vec<Diagnostic>> {
     let tokens = lexer::lex(source)?;
-    parser::Parser::new(tokens).parse_module()
+    let mut module = parser::Parser::new(tokens).parse_module()?;
+    std_prelude::inject(&mut module);
+    Ok(module)
 }
 
 pub fn dump_ast(source: &str) -> Result<String, Vec<Diagnostic>> {
