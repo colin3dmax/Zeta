@@ -66,11 +66,22 @@ and a String-by-value helper — the full value-semantics type system, on bare m
 `qemu-system-riscv64`, Homebrew LLVM (`/opt/homebrew/opt/llvm/bin/clang`),
 `ld.lld` (`/usr/local/bin`). Adjust paths in `build.sh` if yours differ.
 
+## Capabilities demonstrated
+
+| feature | how |
+|---|---|
+| volatile MMIO | `mmio_{read,write}_{byte,word,dword}` (8/32/64-bit) |
+| real UART driver | NS16550 init + LSR THRE polling (pure Zeta) |
+| heap types | String/array/struct via the freestanding runtime |
+| raw pointers | `*Int` write/offset/read over scratch RAM |
+| reclaiming alloc | 200k-iteration alloc/free loop stays within the arena |
+| inline assembly | `csr_read`/`csr_write`/`wfi` (mhartid, mscratch round-trip) |
+
 ## Next steps (see `docs/compiler/handoff.md` §6)
 
-1. ✅ ~~Freestanding runtime stubs → String/array/struct in the kernel.~~ Done.
-2. Raw pointer type `*T` + a real UART driver with status polling (`mmio_read_byte`
-   of the line-status register) instead of blind writes; structured MMIO.
-3. A reclaiming allocator (the bump arena never frees) behind the same symbols.
-4. Traps/interrupts, then a timer + the first scheduler (needs the concurrency
-   primitives on the roadmap).
+1. ✅ ~~Freestanding runtime stubs → String/array/struct.~~
+2. ✅ ~~Raw pointer `*T` + real UART driver with LSR polling; width-typed MMIO.~~
+3. ✅ ~~Reclaiming allocator behind the same symbols.~~
+4. ✅ ~~Inline assembly (CSR access / `wfi`) — the trap/scheduler prerequisite.~~
+5. **Next:** a riscv trap handler (set `mtvec`, save/restore registers), then a
+   CLINT timer interrupt, then the first cooperative scheduler.

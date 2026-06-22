@@ -220,6 +220,34 @@ const STD_CORE_FUNCTIONS: &[StandardFunction] = &[
         params: &["Int"],
         return_type: Some("Int"),
     },
+    // Inline-assembly primitives for riscv privileged code (traps/timers/
+    // scheduler). The CSR argument MUST be an integer literal — it is baked into
+    // the instruction's csr field at codegen. Native/riscv-only (no host meaning).
+    StandardFunction {
+        name: "csr_read",
+        params: &["Int"],
+        return_type: Some("Int"),
+    },
+    StandardFunction {
+        name: "csr_write",
+        params: &["Int", "Int"],
+        return_type: Some("Int"),
+    },
+    StandardFunction {
+        name: "csr_set",
+        params: &["Int", "Int"],
+        return_type: Some("Int"),
+    },
+    StandardFunction {
+        name: "csr_clear",
+        params: &["Int", "Int"],
+        return_type: Some("Int"),
+    },
+    StandardFunction {
+        name: "wfi",
+        params: &[],
+        return_type: Some("Int"),
+    },
     StandardFunction {
         name: "ascii_is_digit",
         params: &["Int"],

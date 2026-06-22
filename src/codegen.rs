@@ -3914,6 +3914,63 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 b.build_store(pv.into_pointer_value(), val).unwrap();
                 Ok(Some((self.i64t().const_zero().into(), ZType::Int)))
             }
+            // Inline-assembly privileged ops (riscv-only). The CSR is baked into
+            // the instruction as a literal, so it must be an Int literal here.
+            "csr_read" => {
+                let csr = self.const_csr(&args[0])?;
+                let fn_ty = self.i64t().fn_type(&[], false);
+                let asm = self.context.create_inline_asm(
+                    fn_ty,
+                    format!("csrr $0, {csr}"),
+                    "=r".to_string(),
+                    true,
+                    false,
+                    None,
+                    false,
+                );
+                let val = b
+                    .build_indirect_call(fn_ty, asm, &[], "csrr")
+                    .unwrap()
+                    .try_as_basic_value()
+                    .basic()
+                    .unwrap();
+                Ok(Some((val, ZType::Int)))
+            }
+            "csr_write" | "csr_set" | "csr_clear" => {
+                let csr = self.const_csr(&args[0])?;
+                let val = self.lower_int(&args[1])?;
+                let mnem = match callee {
+                    "csr_write" => "csrw",
+                    "csr_set" => "csrs",
+                    _ => "csrc",
+                };
+                let fn_ty = self.context.void_type().fn_type(&[self.i64t().into()], false);
+                let asm = self.context.create_inline_asm(
+                    fn_ty,
+                    format!("{mnem} {csr}, $0"),
+                    "r".to_string(),
+                    true,
+                    false,
+                    None,
+                    false,
+                );
+                b.build_indirect_call(fn_ty, asm, &[val.into()], "").unwrap();
+                Ok(Some((self.i64t().const_zero().into(), ZType::Int)))
+            }
+            "wfi" => {
+                let fn_ty = self.context.void_type().fn_type(&[], false);
+                let asm = self.context.create_inline_asm(
+                    fn_ty,
+                    "wfi".to_string(),
+                    String::new(),
+                    true,
+                    false,
+                    None,
+                    false,
+                );
+                b.build_indirect_call(fn_ty, asm, &[], "").unwrap();
+                Ok(Some((self.i64t().const_zero().into(), ZType::Int)))
+            }
             "array_data_addr" => {
                 // The data pointer of an array's `{len, ptr}` value, as an Int —
                 // for raw access or handing a buffer to hardware.
@@ -4287,6 +4344,17 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
     }
 
     /// Lower an expression that must be an `i64` (Int/Bool).
+    /// The compile-time CSR number for a `csr_*` builtin — required to be an
+    /// integer literal, since the CSR is encoded directly in the instruction.
+    fn const_csr(&self, expr: &MirExpr) -> Result<i64, String> {
+        match expr {
+            MirExpr::Int(text) => text
+                .parse()
+                .map_err(|_| format!("bad CSR literal `{text}`")),
+            _ => Err("csr_* requires an integer-literal CSR number".into()),
+        }
+    }
+
     fn lower_int(&mut self, expr: &MirExpr) -> Result<IntValue<'ctx>, String> {
         let (v, zt) = self.lower_expr(expr)?;
         if zt != ZType::Int {

@@ -1738,6 +1738,11 @@ impl<'a> MirVerifier<'a> {
             "mmio_read_byte" | "mmio_read_word" | "mmio_read_dword" => {
                 (&["Int"][..], MirType::named("Int"))
             }
+            "csr_read" => (&["Int"][..], MirType::named("Int")),
+            "csr_write" | "csr_set" | "csr_clear" => {
+                (&["Int", "Int"][..], MirType::named("Int"))
+            }
+            "wfi" => (&[][..], MirType::named("Int")),
             "ascii_is_digit" | "ascii_is_alpha" | "ascii_is_alnum" | "ascii_is_whitespace" => {
                 (&["Int"][..], MirType::named("Bool"))
             }

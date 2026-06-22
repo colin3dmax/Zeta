@@ -117,12 +117,12 @@ LLVM_SYS_221_PREFIX=/opt/homebrew/opt/llvm cargo test --release --features llvm 
 - ✅ **#1 裸指针 `*T` + 真 UART 驱动**(`6103e89`/`afcd901`,见 §6.2)。
 - ✅ **#2 可回收 allocator**(`792e496`):kernel/runtime.c bump→带合并的 first-fit 空闲链表;实机 20 万次 alloc/free 不耗尽 arena。经验:中间结果须绑成局部才会被 drop/free,否则泄漏 + O(n) 合并退化 O(n²)。
 - **#3 固化 AOT 装配**(待办,低优先):把 build.sh 的手动 emit-ir→strip→clang riscv64 固化成 `zeta` 原生跨目标 obj 输出。价值有限(只省一次 clang 调用;链接/boot.s/runtime.c/链接脚本仍需外部工具链)。
-- **#4 中断/陷入 → 定时器 → 调度器**(待办,高价值但**前置阻塞**):需**内联汇编**原语(读写 CSR:stvec/sstatus/sie/sepc、`wfi`/`csrr`/`csrw`)——这是新语言原语,必须先做。之后才能装 trap handler + 定时器中断 + 调度。
+- **#4 前置 ✅ 内联汇编完成**:csr_read/write/set/clear + wfi(见 §6.2)。**#4 主体待办**:riscv trap handler(设 mtvec、保存/恢复寄存器)→ CLINT 定时器中断(mtimecmp@MMIO + mie.MTIE + mstatus.MIE)→ 第一个协作式调度器。注意:trap handler 入口需 naked/对齐,可能要再加一小段 boot.s 式汇编或 `mtvec` 指向一个 Zeta 函数(需保证它不被 prologue 破坏 —— 可能需要 trap-entry 汇编 stub 保存上下文再调 Zeta handler)。
 
 ### 6.2 OS 第二前置:裸指针 + volatile MMIO + 内联汇编(DevGame #78 扩展)
 - **✅ volatile MMIO**(`d80a208`/`7ecb785`):`mmio_{read,write}_{byte,word,dword}`(8/16... 即 8/32/64 位)volatile load/store 到 inttoptr;真 NS16550 UART 驱动(`6103e89`,init+LSR 轮询)。
 - **✅ 裸指针 `*T`**(`afcd901`,unsafe/native-only):`*T` 前缀语法 + Type::Ptr/ZType::Ptr 全栈;内置 `ptr_from_addr`/`ptr_addr`/`ptr_read`(支持整 struct)/`ptr_write`/`ptr_offset`(按元素步长)+ `array_data_addr`(数组缓冲区地址,DMA/测试)。typecheck 宽松兼容(任意 *A≈*B);解释器 inert ⇒ native/实机验证(tests/codegen_pointer.rs + kernel 实测 1337)。`ptr_from_addr` 元素由 let 注解 `*T` 精化(codegen Local 读注解)。
-- **内联汇编**(`hlt`/`wfi`/读写 CR3/CSR、特权指令)——**仍缺**,是 #4 中断/调度的前置。
+- **✅ 内联汇编**(`afcd901` 后续提交,#4 前置完成):`csr_read`/`csr_write`/`csr_set`/`csr_clear`(CSR 号须为 Int 字面量,烤进指令)+ `wfi`。codegen 经 inkwell `create_inline_asm` + `build_indirect_call` 发 LLVM inline asm;riscv-only(host JIT 不能跑,解释器 inert)。实机:读 mhartid=0、mscratch 写读往返=31337。
 - **C ABI FFI**(声明 extern、按 C ABI 传参)——仍缺。
 
 ### 6.3 OS 第三前置:并发原语(DevGame #77)

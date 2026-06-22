@@ -2233,6 +2233,11 @@ fn is_std_builtin(callee: &str) -> bool {
             | "ptr_write"
             | "ptr_offset"
             | "array_data_addr"
+            | "csr_read"
+            | "csr_write"
+            | "csr_set"
+            | "csr_clear"
+            | "wfi"
             | "ascii_is_digit"
             | "ascii_is_alpha"
             | "ascii_is_alnum"
@@ -2545,6 +2550,16 @@ fn eval_std_builtin(callee: &str, args: Vec<Value>) -> Result<Value, Diagnostic>
         "array_data_addr" => {
             // No stable host address in the interpreter; native-only.
             let [_a]: [Value; 1] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            Ok(Value::Int(0))
+        }
+        // Inline-asm CSR ops / wfi: privileged riscv instructions with no host
+        // meaning — inert in the interpreter, real only on bare metal.
+        "csr_read" | "wfi" => {
+            let _ = expect_arity(callee, args)?;
+            Ok(Value::Int(0))
+        }
+        "csr_write" | "csr_set" | "csr_clear" => {
+            let _ = expect_arity(callee, args)?;
             Ok(Value::Int(0))
         }
         "ascii_is_digit" => eval_ascii_predicate(callee, args, |byte| byte.is_ascii_digit()),
