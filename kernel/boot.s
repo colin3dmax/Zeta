@@ -15,6 +15,60 @@ asm_add3:
     add  a0, a0, a2
     ret
 
+# --- Cooperative scheduler primitives (called from Zeta via extern FFI) ---
+#
+# A task context is 14 doublewords: ra, sp, s0..s11 (the callee-saved set the
+# C ABI guarantees across a call). switch_context saves the current set into
+# *a0 and loads *a1, then `ret` resumes whoever owns the new context — either
+# mid-yield or, for a fresh task, at task_trampoline.
+.global switch_context
+switch_context:                 # a0 = &old_ctx, a1 = &new_ctx
+    sd   ra,    0(a0)
+    sd   sp,    8(a0)
+    sd   s0,   16(a0)
+    sd   s1,   24(a0)
+    sd   s2,   32(a0)
+    sd   s3,   40(a0)
+    sd   s4,   48(a0)
+    sd   s5,   56(a0)
+    sd   s6,   64(a0)
+    sd   s7,   72(a0)
+    sd   s8,   80(a0)
+    sd   s9,   88(a0)
+    sd   s10,  96(a0)
+    sd   s11, 104(a0)
+    ld   ra,    0(a1)
+    ld   sp,    8(a1)
+    ld   s0,   16(a1)
+    ld   s1,   24(a1)
+    ld   s2,   32(a1)
+    ld   s3,   40(a1)
+    ld   s4,   48(a1)
+    ld   s5,   56(a1)
+    ld   s6,   64(a1)
+    ld   s7,   72(a1)
+    ld   s8,   80(a1)
+    ld   s9,   88(a1)
+    ld   s10,  96(a1)
+    ld   s11, 104(a1)
+    ret
+
+# Entry for a freshly-created task: its context is set up with ra=task_trampoline,
+# a fresh sp, and s0 = task id. The trampoline hands the id to the Zeta dispatcher
+# `run_task(id)`. If a task ever returns it parks here forever.
+.global task_trampoline
+task_trampoline:
+    mv   a0, s0
+    call run_task
+1:  wfi
+    j    1b
+
+# extern fn trampoline_addr() -> Int — so Zeta can seed a new context's ra slot.
+.global trampoline_addr
+trampoline_addr:
+    la   a0, task_trampoline
+    ret
+
 .section .text.boot
 .global _start
 _start:

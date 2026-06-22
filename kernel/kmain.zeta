@@ -9,6 +9,10 @@ import std.core;
 // mechanism a scheduler uses to call a `switch_context` written in assembly.
 extern fn asm_add3(a: Int, b: Int, c: Int) -> Int;
 
+// Cooperative scheduler primitives, implemented in boot.s.
+extern fn switch_context(old_ctx: Int, new_ctx: Int);
+extern fn trampoline_addr() -> Int;
+
 // ---------------------------------------------------------------- NS16550 UART
 // On the virt machine the 8 registers are byte-wide at 0x1000_0000 (reg-shift 0).
 
@@ -67,6 +71,48 @@ fn trap_handler() -> Int {
   let c: Int = mmio_read_dword(tick_counter());
   mmio_write_dword(tick_counter(), c + 1);
   mmio_write_dword(clint_mtimecmp(), mmio_read_dword(clint_mtime()) + 1000000);
+  return 0;
+}
+
+// ------------------------------------------------------- cooperative scheduler
+// Two tasks run on their own stacks and yield to the scheduler via context
+// switches. Because Zeta has no globals, contexts/stacks live at fixed RAM
+// addresses. A context is 14 doublewords (ra, sp, s0..s11); see boot.s.
+
+fn sched_main_ctx() -> Int { return 2158821376; }                    // 0x80B0_0000
+fn sched_task_ctx(id: Int) -> Int { return 2158821888 + id * 128; }  // 0x80B0_0200 + id*128
+fn sched_stack_top(id: Int) -> Int { return 2164260864 + id * 1048576; } // 0x8100_0000 + id*1MiB
+
+// Seed a fresh task context: ra = trampoline, sp = its stack top, s0 = task id.
+fn task_init(id: Int) {
+  let ctx: Int = sched_task_ctx(id);
+  mmio_write_dword(ctx + 0, trampoline_addr());       // ra → task_trampoline
+  mmio_write_dword(ctx + 8, sched_stack_top(id));     // sp → fresh stack
+  mmio_write_dword(ctx + 16, id);                     // s0 → task id
+}
+
+// A task yields back to the scheduler, saving its own state into its context.
+fn task_yield(id: Int) {
+  switch_context(sched_task_ctx(id), sched_main_ctx());
+}
+
+fn task_a() -> Int {
+  print("  [task A] step 1\n");  task_yield(1);
+  print("  [task A] step 2\n");  task_yield(1);
+  print("  [task A] step 3\n");  task_yield(1);
+  return 0;
+}
+fn task_b() -> Int {
+  print("  [task B] step 1\n");  task_yield(2);
+  print("  [task B] step 2\n");  task_yield(2);
+  print("  [task B] step 3\n");  task_yield(2);
+  return 0;
+}
+
+// Entry point called from task_trampoline (assembly) with the task id in a0.
+fn run_task(id: Int) -> Int {
+  if id == 1 { return task_a(); }
+  if id == 2 { return task_b(); }
   return 0;
 }
 
@@ -162,6 +208,19 @@ fn main() -> Int {
   // FFI: call the assembly routine asm_add3 (C ABI) from Zeta.
   print(string_concat("asm_add3(100,20,3) = ", int_to_string(asm_add3(100, 20, 3))));
   print("\n");
+
+  // Cooperative multitasking: round-robin two tasks, each resuming where it
+  // last yielded — real context switching via the assembly switch_context.
+  print("scheduler: round-robin two cooperative tasks\n");
+  task_init(1);
+  task_init(2);
+  let mut round: Int = 0;
+  while round < 3 {
+    switch_context(sched_main_ctx(), sched_task_ctx(1));   // resume task A
+    switch_context(sched_main_ctx(), sched_task_ctx(2));   // resume task B
+    round = round + 1;
+  }
+  print("scheduler: both tasks finished - context switching works!\n");
 
   print("kernel: done, halting (wfi).\n");
   let mut spin: Int = 0;
