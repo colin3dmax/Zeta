@@ -49,6 +49,23 @@ fn print(msg: String) {
   }
 }
 
+// ------------------------------------------------------------ timer interrupt
+// CLINT (core-local interruptor) on the virt machine: 64-bit mtime / mtimecmp.
+
+fn clint_mtime() -> Int { return 33603576; }     // 0x0200_BFF8
+fn clint_mtimecmp() -> Int { return 33570816; }  // 0x0200_4000
+fn tick_counter() -> Int { return 2157969408; }  // 0x80A0_0000 scratch RAM
+
+// Machine trap handler, called from the boot.s trap_entry stub. Allocation-free
+// (no malloc in interrupt context): it bumps a counter in scratch RAM and
+// re-arms mtimecmp, which also clears the pending timer interrupt.
+fn trap_handler() -> Int {
+  let c: Int = mmio_read_dword(tick_counter());
+  mmio_write_dword(tick_counter(), c + 1);
+  mmio_write_dword(clint_mtimecmp(), mmio_read_dword(clint_mtime()) + 1000000);
+  return 0;
+}
+
 // ---------------------------------------------------------------------- kernel
 
 fn main() -> Int {
@@ -118,10 +135,30 @@ fn main() -> Int {
   print(string_concat("mscratch = ", int_to_string(csr_read(832))));
   print("\n");
 
+  // Timer interrupts: arm the CLINT for the first tick, enable machine timer
+  // interrupts (mie.MTIE) and interrupts globally (mstatus.MIE). The trap_handler
+  // (via boot.s trap_entry) bumps the scratch counter on each fire; we watch it.
+  mmio_write_dword(tick_counter(), 0);
+  mmio_write_dword(clint_mtimecmp(), mmio_read_dword(clint_mtime()) + 1000000);
+  csr_set(772, 128);       // mie.MTIE  (bit 7) — machine timer interrupt enable
+  csr_set(768, 8);         // mstatus.MIE (bit 3) — global interrupt enable
+  print("timer armed, waiting for interrupts...\n");
+
+  let mut last: Int = 0;
+  while last < 3 {
+    let c: Int = mmio_read_dword(tick_counter());
+    if c > last {
+      last = c;
+      print(string_concat("tick ", int_to_string(c)));
+      print("\n");
+    }
+  }
+  print("got 3 timer interrupts - traps work!\n");
+
   print("kernel: done, halting (wfi).\n");
   let mut spin: Int = 0;
   while spin >= 0 {
-    wfi();                 // low-power wait (no interrupts enabled → hint/no-op)
+    wfi();                 // low-power wait until the next interrupt
     spin = spin + 1;
   }
   return 0;
