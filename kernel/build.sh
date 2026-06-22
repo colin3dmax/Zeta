@@ -31,10 +31,15 @@ grep -v -E '^target (datalayout|triple)' "$OUT/kmain.raw.ll" > "$OUT/kmain.ll"
 echo "[3/5] compile IR -> riscv64 object"
 "$CLANG" $CFLAGS -c "$OUT/kmain.ll" -o "$OUT/kmain.o"
 
-echo "[4/5] assemble boot stub"
+echo "[4/6] assemble boot stub"
 "$CLANG" $CFLAGS -c "$HERE/boot.s" -o "$OUT/boot.o"
 
-echo "[5/5] link freestanding ELF"
-"$LLD" -T "$HERE/kernel.ld" "$OUT/boot.o" "$OUT/kmain.o" -o "$OUT/kernel.elf"
+echo "[5/6] compile freestanding runtime stub (malloc/memcpy/...)"
+# -O0: keep the byte-copy loops as loops; loop-idiom at -O>0 would rewrite them
+# into memcpy/memset calls — i.e. into themselves — and recurse.
+"$CLANG" $CFLAGS -O0 -c "$HERE/runtime.c" -o "$OUT/runtime.o"
+
+echo "[6/6] link freestanding ELF"
+"$LLD" -T "$HERE/kernel.ld" "$OUT/boot.o" "$OUT/kmain.o" "$OUT/runtime.o" -o "$OUT/kernel.elf"
 
 echo "ok -> $OUT/kernel.elf"

@@ -1,26 +1,45 @@
-// The world's smallest Zeta kernel: print a line to the UART, then halt.
-//
-// Target: QEMU `-machine virt` (riscv64). The NS16550 UART's transmit-hold
-// register is memory-mapped at 0x1000_0000 (decimal 268435456), so "output" is
-// just a volatile byte store — no syscalls, no libc, no inline assembly.
-//
-// Constraint that shapes this code: with `-nostdlib` the image may reference NO
-// host runtime symbol (malloc/free/memcpy/snprintf). So the message is only ever
-// READ from a string literal (a `.rodata` global) via `string_len` /
-// `string_byte_at` — it is never bound to a local or passed by value, which
-// would pull in the clone/drop (malloc/free) machinery. Everything else is `Int`.
+// A Zeta kernel that uses the full type system on bare metal: heap Strings
+// (string_concat / int_to_string), an array, and a helper that takes a String
+// by value — all of which allocate/copy through the freestanding runtime stub
+// (kernel/runtime.c: bump malloc + memcpy/memset/memcmp). Output is via the
+// virt-machine UART at 0x1000_0000 (mmio_write_byte).
 import std.core;
 
-fn main() -> Int {
-  let n: Int = string_len("Zeta OS: hello from bare-metal riscv64!\n");
+// Print a string to UART0, byte by byte. Takes the String by value — exercising
+// the clone/drop path that needs malloc/free (now provided by runtime.c).
+fn print(msg: String) {
+  let n: Int = string_len(msg);
   let mut i: Int = 0;
   while i < n {
-    // 268435456 = 0x1000_0000 = UART0 transmit register on the virt machine.
-    mmio_write_byte(268435456, string_byte_at("Zeta OS: hello from bare-metal riscv64!\n", i));
+    mmio_write_byte(268435456, string_byte_at(msg, i)); // 0x1000_0000 = UART0 TX
     i = i + 1;
   }
+}
 
-  // Nothing left to do — spin forever. (The boot stub also halts if we return.)
+fn main() -> Int {
+  print("Zeta OS: booting on bare-metal riscv64\n");
+
+  // Heap string built at runtime: concat + integer formatting.
+  print(string_concat("the answer is ", int_to_string(42)));
+  print("\n");
+
+  // An array, summed — array literal allocates via the runtime malloc.
+  let xs: IntArray = [10, 20, 30, 40, 50];
+  let mut sum: Int = 0;
+  let mut j: Int = 0;
+  while j < xs.len {
+    sum = sum + xs[j];
+    j = j + 1;
+  }
+  print(string_concat("sum of 5 elems = ", int_to_string(sum)));
+  print("\n");
+
+  // Negative formatting too, to exercise the sign path.
+  print(string_concat("delta = ", int_to_string(0 - 273)));
+  print("\n");
+
+  print("kernel: done, halting.\n");
+
   let mut spin: Int = 0;
   while spin >= 0 {
     spin = spin + 1;

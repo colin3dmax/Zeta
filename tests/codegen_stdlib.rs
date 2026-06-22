@@ -87,6 +87,25 @@ fn main() -> Int {
 }
 
 #[test]
+fn int_to_string_cases() {
+    // Self-contained int→string (no libc snprintf); native must match the
+    // interpreter's Rust formatting, including sign and i64::MIN/MAX.
+    assert_eq!(check(&prog("  return string_len(int_to_string(0));")), 1);
+    assert_eq!(check(&prog("  return string_len(int_to_string(7));")), 1);
+    assert_eq!(check(&prog("  return string_len(int_to_string(1000000));")), 7);
+    assert_eq!(check(&prog("  return string_len(int_to_string(0 - 42));")), 3); // "-42"
+    // round-trip: int_to_string then string_to_int recovers the value.
+    assert_eq!(check(&prog("  return string_to_int(int_to_string(123456789));")), 123456789);
+    assert_eq!(check(&prog("  return string_to_int(int_to_string(0 - 987654321));")), -987654321);
+    // first byte of "-5" is '-' (45); of "30" is '3' (51).
+    assert_eq!(check(&prog("  return string_byte_at(int_to_string(0 - 5), 0);")), 45);
+    assert_eq!(check(&prog("  return string_byte_at(int_to_string(305), 1);")), 48); // '0'
+    // i64::MAX = 9223372036854775807 (19 digits); MIN = -9223372036854775808 (20 chars).
+    assert_eq!(check(&prog("  return string_len(int_to_string(9223372036854775807));")), 19);
+    assert_eq!(check(&prog("  return string_len(int_to_string(0 - 9223372036854775807 - 1));")), 20);
+}
+
+#[test]
 fn string_to_int_cases() {
     assert_eq!(check(&prog("  return string_to_int(\"42\");")), 42);
     assert_eq!(check(&prog("  return string_to_int(\"-17\");")), -17);

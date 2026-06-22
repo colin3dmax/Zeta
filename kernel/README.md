@@ -19,22 +19,29 @@ bash kernel/run.sh       # boot in QEMU (Ctrl-A then X to quit; it spins forever
 Expected serial output:
 
 ```
-Zeta OS: hello from bare-metal riscv64!
+Zeta OS: booting on bare-metal riscv64
+the answer is 42
+sum of 5 elems = 150
+delta = -273
+kernel: done, halting.
 ```
+
+The kernel uses **heap Strings** (`string_concat`, `int_to_string`), an **array**,
+and a String-by-value helper — the full value-semantics type system, on bare metal.
 
 ## How it works / what was needed
 
 * **Output = a volatile store.** QEMU virt maps the NS16550 UART transmit
   register at `0x1000_0000`. The only new language primitive is the `mmio_write_byte`
   / `mmio_read_byte` builtin, lowered to a volatile `i8` store/load at an
-  `inttoptr` address. No syscalls, no libc, no inline assembly for I/O.
-* **No host runtime.** With `-nostdlib` the image may not reference
-  `malloc`/`free`/`memcpy`/`snprintf`. So `kmain.zeta` keeps everything in `Int`
-  and only ever *reads* the message from a string literal (`string_len` /
-  `string_byte_at`); it never binds or passes a `String` by value, which would
-  pull in the clone/drop (alloc/free) machinery. Lifting that restriction is the
-  next step — a tiny freestanding runtime (bump allocator + `memcpy`) would let
-  the kernel use strings, arrays and structs.
+  `inttoptr` address. No syscalls, no inline assembly for I/O.
+* **A freestanding runtime (`runtime.c`).** The native backend references a few
+  C-library symbols when Strings/arrays/structs allocate and copy:
+  `malloc`/`free`/`memcpy`/`memcmp`/`memset`. `runtime.c` supplies them with a
+  bump allocator over a static arena (`free` is a no-op) plus byte-loop copies.
+  Compiled at `-O0` so the loop-idiom pass doesn't rewrite those loops into calls
+  to themselves. `int_to_string` needs **no** runtime help — the backend emits a
+  self-contained decimal conversion (no libc `snprintf`).
 * **`boot.s`** is the only assembly: ~5 lines to point `sp` at a reserved stack
   (every Zeta function uses stack allocas) and `call main`. If `main` ever
   returned it `wfi`-loops instead of running garbage.
@@ -48,6 +55,7 @@ Zeta OS: hello from bare-metal riscv64!
 | file | role |
 |---|---|
 | `kmain.zeta` | the kernel, in Zeta |
+| `runtime.c` | freestanding malloc/free/memcpy/memcmp/memset |
 | `boot.s` | stack setup + entry (the only assembly) |
 | `kernel.ld` | linker script: load at 0x8000_0000, reserve stack |
 | `build.sh` | emit-ir → clang riscv64 → ld.lld → ELF |
@@ -60,9 +68,9 @@ Zeta OS: hello from bare-metal riscv64!
 
 ## Next steps (see `docs/compiler/handoff.md` §6)
 
-1. Freestanding runtime stubs (bump allocator + `memcpy`/`memcmp`) → enable
-   String/array/struct in the kernel.
-2. Raw pointer type `*T` + UART driver with status polling (`mmio_read_byte` of
-   the line-status register) instead of blind writes.
-3. Traps/interrupts, then a timer + the first scheduler (needs the concurrency
+1. ✅ ~~Freestanding runtime stubs → String/array/struct in the kernel.~~ Done.
+2. Raw pointer type `*T` + a real UART driver with status polling (`mmio_read_byte`
+   of the line-status register) instead of blind writes; structured MMIO.
+3. A reclaiming allocator (the bump arena never frees) behind the same symbols.
+4. Traps/interrupts, then a timer + the first scheduler (needs the concurrency
    primitives on the roadmap).

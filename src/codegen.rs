@@ -18,7 +18,7 @@
 //! and **structs** (value semantics): struct literals, field read/write, struct
 //! locals/params/returns, nesting. Strings (immutable `{len, ptr<i8>}`): literals,
 //! `string_len`/`string_byte_at`/`string_byte_slice`/`string_concat`,
-//! `int_to_string` (via libc snprintf), and the `ascii_is_*` predicates.
+//! `int_to_string` (self-contained, no libc), and the `ascii_is_*` predicates.
 //! Enums (`{i64 tag, i64 p0, ptr p1}`, Int/Bool/String/array/struct/no-payload
 //! variants; struct payloads are heap-boxed via p1) +
 //! `match` (lowered to an LLVM `switch` over the tag, or over an Int/Bool value),
@@ -1203,15 +1203,6 @@ fn build_module<'ctx>(
             .fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into()], false),
         None,
     );
-    // libc snprintf for int_to_string (variadic: i32 snprintf(ptr, size_t, fmt, ...)).
-    let snprintf = module.add_function(
-        "snprintf",
-        context
-            .i32_type()
-            .fn_type(&[ptr_ty.into(), i64_ty.into(), ptr_ty.into()], true),
-        None,
-    );
-
     // Generic functions can't be lowered as-is (LLVM is statically typed); they
     // are kept aside and monomorphized on demand at each call site.
     let generics: HashMap<String, &MirFunction> = program
@@ -1266,7 +1257,6 @@ fn build_module<'ctx>(
             free,
             memcpy,
             memcmp,
-            snprintf,
             llvm_fn,
             entry_bb,
             lambda_count: 0,
@@ -1383,7 +1373,6 @@ struct FnLower<'a, 'ctx> {
     free: FunctionValue<'ctx>,
     memcpy: FunctionValue<'ctx>,
     memcmp: FunctionValue<'ctx>,
-    snprintf: FunctionValue<'ctx>,
     llvm_fn: FunctionValue<'ctx>,
     entry_bb: BasicBlock<'ctx>,
     /// Monotonic counter for naming lambdas lifted out of this function.
@@ -2916,7 +2905,6 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 free: self.free,
                 memcpy: self.memcpy,
                 memcmp: self.memcmp,
-                snprintf: self.snprintf,
                 llvm_fn: lifted,
                 entry_bb: lifted_entry,
                 lambda_count: 0,
@@ -3279,7 +3267,6 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 free: self.free,
                 memcpy: self.memcpy,
                 memcmp: self.memcmp,
-                snprintf: self.snprintf,
                 llvm_fn: func,
                 entry_bb: entry,
                 lambda_count: 0,
@@ -3739,21 +3726,10 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 Ok(Some((self.make_len_ptr(len, buf).into(), ZType::Str)))
             }
             "int_to_string" => {
-                // snprintf(buf, 24, "%lld", n): 24 ≥ 20 digits + sign + NUL for any
-                // i64. The i32 return is the byte length (excl. NUL), our `len`.
+                // Self-contained decimal conversion (no libc snprintf) — see
+                // `gen_int_to_string`. Keeps the native backend libc-free.
                 let n = self.lower_int(&args[0])?;
-                let fmt = b.build_global_string_ptr("%lld", "fmt").unwrap().as_pointer_value();
-                let cap = self.i64t().const_int(24, false);
-                let buf = self.alloc_str_buf(cap);
-                let written = b
-                    .build_call(self.snprintf, &[buf.into(), cap.into(), fmt.into(), n.into()], "snp")
-                    .unwrap()
-                    .try_as_basic_value()
-                    .basic()
-                    .unwrap()
-                    .into_int_value();
-                let len = b.build_int_s_extend(written, self.i64t(), "len64").unwrap();
-                Ok(Some((self.make_len_ptr(len, buf).into(), ZType::Str)))
+                Ok(Some((self.gen_int_to_string(n).into(), ZType::Str)))
             }
             "int_abs" => {
                 let n = self.lower_int(&args[0])?;
@@ -4476,6 +4452,85 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         b.build_select(isvalid, signed, i64t.const_zero(), "s2ival")
             .unwrap()
             .into_int_value()
+    }
+
+    /// Self-contained signed-i64 → decimal string, replacing libc `snprintf`
+    /// (so the native backend — and the freestanding kernel — needs no libc).
+    /// Works on the UNSIGNED magnitude so `i64::MIN` is handled without overflow
+    /// (`0 - MIN` wraps back to MIN, whose unsigned value is the right
+    /// magnitude). Two passes: count digits, then fill them in backward.
+    fn gen_int_to_string(&self, n: IntValue<'ctx>) -> inkwell::values::StructValue<'ctx> {
+        let b = self.builder;
+        let i64t = self.i64t();
+        let i8t = self.context.i8_type();
+        let zero = i64t.const_zero();
+        let ten = i64t.const_int(10, false);
+
+        let isneg = b.build_int_compare(IntPredicate::SLT, n, zero, "itsneg").unwrap();
+        let negbit = b.build_int_z_extend(isneg, i64t, "itnegbit").unwrap();
+        let negval = b.build_int_sub(zero, n, "itnegval").unwrap();
+        let mag0 = b.build_select(isneg, negval, n, "itmag0").unwrap().into_int_value();
+
+        let mag = self.entry_alloca("itmag", i64t.into());
+        let cnt = self.entry_alloca("itcnt", i64t.into());
+        let pos = self.entry_alloca("itpos", i64t.into());
+        let idx = self.entry_alloca("itidx", i64t.into());
+
+        // Pass 1: count digits (do-while ⇒ at least one, so 0 → "0").
+        b.build_store(mag, mag0).unwrap();
+        b.build_store(cnt, zero).unwrap();
+        let chead = self.context.append_basic_block(self.llvm_fn, "it.chead");
+        let cdone = self.context.append_basic_block(self.llvm_fn, "it.cdone");
+        b.build_unconditional_branch(chead).unwrap();
+        b.position_at_end(chead);
+        let c = b.build_load(i64t, cnt, "c").unwrap().into_int_value();
+        b.build_store(cnt, b.build_int_add(c, i64t.const_int(1, false), "c1").unwrap()).unwrap();
+        let m = b.build_load(i64t, mag, "m").unwrap().into_int_value();
+        let m2 = b.build_int_unsigned_div(m, ten, "mdiv").unwrap();
+        b.build_store(mag, m2).unwrap();
+        let more = b.build_int_compare(IntPredicate::NE, m2, zero, "more").unwrap();
+        b.build_conditional_branch(more, chead, cdone).unwrap();
+
+        b.position_at_end(cdone);
+        let digits = b.build_load(i64t, cnt, "digits").unwrap().into_int_value();
+        let total = b.build_int_add(digits, negbit, "ittotal").unwrap();
+        let buf = self.alloc_str_buf(total);
+        // Leading '-' for negatives (digits then fill positions [negbit, total-1]).
+        let minus_bb = self.context.append_basic_block(self.llvm_fn, "it.minus");
+        let fillinit = self.context.append_basic_block(self.llvm_fn, "it.fillinit");
+        b.build_conditional_branch(isneg, minus_bb, fillinit).unwrap();
+        b.position_at_end(minus_bb);
+        b.build_store(buf, i8t.const_int(45, false)).unwrap(); // '-'
+        b.build_unconditional_branch(fillinit).unwrap();
+
+        // Pass 2: write digits backward from the end of the buffer.
+        b.position_at_end(fillinit);
+        b.build_store(mag, mag0).unwrap();
+        b.build_store(idx, zero).unwrap();
+        b.build_store(pos, b.build_int_sub(total, i64t.const_int(1, false), "lastpos").unwrap()).unwrap();
+        let fhead = self.context.append_basic_block(self.llvm_fn, "it.fhead");
+        let fbody = self.context.append_basic_block(self.llvm_fn, "it.fbody");
+        let fdone = self.context.append_basic_block(self.llvm_fn, "it.fdone");
+        b.build_unconditional_branch(fhead).unwrap();
+        b.position_at_end(fhead);
+        let iv = b.build_load(i64t, idx, "iv").unwrap().into_int_value();
+        let cond = b.build_int_compare(IntPredicate::SLT, iv, digits, "fcond").unwrap();
+        b.build_conditional_branch(cond, fbody, fdone).unwrap();
+        b.position_at_end(fbody);
+        let m = b.build_load(i64t, mag, "fm").unwrap().into_int_value();
+        let d = b.build_int_unsigned_rem(m, ten, "frem").unwrap();
+        let d8 = b.build_int_truncate(d, i8t, "fd8").unwrap();
+        let ch = b.build_int_add(d8, i8t.const_int(48, false), "fch").unwrap();
+        let p = b.build_load(i64t, pos, "fp").unwrap().into_int_value();
+        let dst = unsafe { b.build_in_bounds_gep(i8t, buf, &[p], "fdst").unwrap() };
+        b.build_store(dst, ch).unwrap();
+        b.build_store(mag, b.build_int_unsigned_div(m, ten, "fmdiv").unwrap()).unwrap();
+        b.build_store(pos, b.build_int_sub(p, i64t.const_int(1, false), "p1").unwrap()).unwrap();
+        b.build_store(idx, b.build_int_add(iv, i64t.const_int(1, false), "iv1").unwrap()).unwrap();
+        b.build_unconditional_branch(fhead).unwrap();
+
+        b.position_at_end(fdone);
+        self.make_len_ptr(total, buf)
     }
 
     fn gen_index_of(
