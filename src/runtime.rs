@@ -2218,6 +2218,9 @@ fn is_std_builtin(callee: &str) -> bool {
             | "string_index_of"
             | "string_contains"
             | "string_repeat"
+            | "string_to_upper"
+            | "string_to_lower"
+            | "string_trim"
             | "ascii_is_digit"
             | "ascii_is_alpha"
             | "ascii_is_alnum"
@@ -2256,6 +2259,22 @@ fn byte_index_of(haystack: &[u8], needle: &[u8]) -> i64 {
         i += 1;
     }
     -1
+}
+
+/// Half-open `[start, end)` byte range of `bytes` with leading/trailing ASCII
+/// whitespace removed (an all-whitespace input yields an empty `start == end`
+/// range). Native codegen mirrors this exact scan so the differential oracle
+/// holds — whitespace is `is_ascii_whitespace`: space, \t, \n, \r, form-feed.
+fn byte_trim_range(bytes: &[u8]) -> (usize, usize) {
+    let mut start = 0;
+    while start < bytes.len() && bytes[start].is_ascii_whitespace() {
+        start += 1;
+    }
+    let mut end = bytes.len();
+    while end > start && bytes[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    (start, end)
 }
 
 fn eval_std_builtin(callee: &str, args: Vec<Value>) -> Result<Value, Diagnostic> {
@@ -2448,6 +2467,37 @@ fn eval_std_builtin(callee: &str, args: Vec<Value>) -> Result<Value, Diagnostic>
             };
             let count = if n < 0 { 0 } else { n as usize };
             Ok(Value::String(s.repeat(count)))
+        }
+        "string_to_upper" => {
+            let [s]: [Value; 1] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            let Value::String(s) = s else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "string_to_upper expects String",
+                ));
+            };
+            Ok(Value::String(s.to_ascii_uppercase()))
+        }
+        "string_to_lower" => {
+            let [s]: [Value; 1] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            let Value::String(s) = s else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "string_to_lower expects String",
+                ));
+            };
+            Ok(Value::String(s.to_ascii_lowercase()))
+        }
+        "string_trim" => {
+            let [s]: [Value; 1] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            let Value::String(s) = s else {
+                return Err(runtime_error(
+                    "RUNTIME_STD_TYPE",
+                    "string_trim expects String",
+                ));
+            };
+            let (start, end) = byte_trim_range(s.as_bytes());
+            Ok(Value::String(s[start..end].to_string()))
         }
         "ascii_is_digit" => eval_ascii_predicate(callee, args, |byte| byte.is_ascii_digit()),
         "ascii_is_alpha" => eval_ascii_predicate(callee, args, |byte| byte.is_ascii_alphabetic()),

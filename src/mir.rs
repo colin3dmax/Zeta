@@ -1707,6 +1707,9 @@ impl<'a> MirVerifier<'a> {
             "string_index_of" => (&["String", "String"][..], MirType::named("Int")),
             "string_contains" => (&["String", "String"][..], MirType::named("Bool")),
             "string_repeat" => (&["String", "Int"][..], MirType::named("String")),
+            "string_to_upper" | "string_to_lower" | "string_trim" => {
+                (&["String"][..], MirType::named("String"))
+            }
             "ascii_is_digit" | "ascii_is_alpha" | "ascii_is_alnum" | "ascii_is_whitespace" => {
                 (&["Int"][..], MirType::named("Bool"))
             }

@@ -169,6 +169,21 @@ const STD_CORE_FUNCTIONS: &[StandardFunction] = &[
         return_type: Some("String"),
     },
     StandardFunction {
+        name: "string_to_upper",
+        params: &["String"],
+        return_type: Some("String"),
+    },
+    StandardFunction {
+        name: "string_to_lower",
+        params: &["String"],
+        return_type: Some("String"),
+    },
+    StandardFunction {
+        name: "string_trim",
+        params: &["String"],
+        return_type: Some("String"),
+    },
+    StandardFunction {
         name: "ascii_is_digit",
         params: &["Int"],
         return_type: Some("Bool"),

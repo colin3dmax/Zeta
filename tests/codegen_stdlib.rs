@@ -126,6 +126,39 @@ fn string_repeat_basic() {
 }
 
 #[test]
+fn string_to_upper_lower() {
+    // content: 'h'→'H'(72), 'E'→'e'(101); non-letters pass through.
+    assert_eq!(check(&prog("  return string_byte_at(string_to_upper(\"hello\"), 0);")), 72);
+    assert_eq!(check(&prog("  return string_byte_at(string_to_lower(\"HELLO\"), 0);")), 104);
+    // digit/underscore untouched by either map: '9'(57), '_'(95).
+    assert_eq!(check(&prog("  return string_byte_at(string_to_upper(\"a9_\"), 1);")), 57);
+    assert_eq!(check(&prog("  return string_byte_at(string_to_lower(\"A9_\"), 2);")), 95);
+    // length is preserved; mixed-case round trips byte-for-byte through the oracle.
+    assert_eq!(check(&prog("  return string_len(string_to_upper(\"MiXeD123\"));")), 8);
+    // 'Z'(90) already upper stays; 'a'(97)→'A'(65): sum 65+90 from a 2-char map.
+    assert_eq!(
+        check(&prog(
+            "  let u: String = string_to_upper(\"aZ\");\n  return string_byte_at(u, 0) + string_byte_at(u, 1);"
+        )),
+        65 + 90
+    );
+}
+
+#[test]
+fn string_trim_cases() {
+    assert_eq!(check(&prog("  return string_len(string_trim(\"  abc  \"));")), 3);
+    assert_eq!(check(&prog("  return string_len(string_trim(\"abc\"));")), 3);
+    assert_eq!(check(&prog("  return string_len(string_trim(\"   \"));")), 0); // all ws
+    assert_eq!(check(&prog("  return string_len(string_trim(\"\"));")), 0);
+    // newlines count as whitespace (the lexer's only whitespace escape is \n).
+    assert_eq!(check(&prog("  return string_len(string_trim(\"\\n x \\n\"));")), 1);
+    // content survives: first byte of trimmed " hi " is 'h'(104).
+    assert_eq!(check(&prog("  return string_byte_at(string_trim(\"  hi \"), 0);")), 104);
+    // interior whitespace is kept — "a b" trims to itself (len 3).
+    assert_eq!(check(&prog("  return string_len(string_trim(\"  a b  \"));")), 3);
+}
+
+#[test]
 fn builtins_compose_in_loop() {
     // exercise refcount/drop of repeat's heap string inside a loop + search.
     let src = prog(

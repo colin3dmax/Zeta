@@ -3717,6 +3717,21 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let v = self.gen_repeat(s.into_struct_value(), n);
                 Ok(Some((v.into(), ZType::Str)))
             }
+            "string_to_upper" => {
+                let (s, _) = self.lower_expr(&args[0])?;
+                let v = self.gen_case_map(s.into_struct_value(), false);
+                Ok(Some((v.into(), ZType::Str)))
+            }
+            "string_to_lower" => {
+                let (s, _) = self.lower_expr(&args[0])?;
+                let v = self.gen_case_map(s.into_struct_value(), true);
+                Ok(Some((v.into(), ZType::Str)))
+            }
+            "string_trim" => {
+                let (s, _) = self.lower_expr(&args[0])?;
+                let v = self.gen_trim(s.into_struct_value());
+                Ok(Some((v.into(), ZType::Str)))
+            }
             // Growable arrays. bool arrays share the Int (i64) element repr; string
             // arrays carry `{len,ptr}` elements (stride from the element type).
             "int_array_empty" | "bool_array_empty" => Ok(Some(self.lower_array_empty(ZType::Int))),
@@ -4450,6 +4465,147 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         self.builder.build_unconditional_branch(head).unwrap();
         self.builder.position_at_end(exit);
         self.make_len_ptr(total, buf)
+    }
+
+    /// `i1` true when the i64 byte value `ci` is ASCII whitespace, matching
+    /// Rust's `is_ascii_whitespace`: space, \t, \n, \r, form-feed (NOT \x0B).
+    fn is_ws_byte(&self, ci: IntValue<'ctx>) -> IntValue<'ctx> {
+        let b = self.builder;
+        let i64t = self.i64t();
+        let mut acc: Option<IntValue<'ctx>> = None;
+        for code in [9u64, 10, 12, 13, 32] {
+            let eq = b
+                .build_int_compare(IntPredicate::EQ, ci, i64t.const_int(code, false), "wseq")
+                .unwrap();
+            acc = Some(match acc {
+                None => eq,
+                Some(prev) => b.build_or(prev, eq, "wsor").unwrap(),
+            });
+        }
+        acc.unwrap()
+    }
+
+    /// ASCII case map: a fresh `malloc(len)` string with each byte upper/lower-
+    /// cased in place (`to_lower` picks the direction). Mirrors the interpreter's
+    /// `to_ascii_uppercase`/`to_ascii_lowercase` — only A–Z / a–z bytes shift by
+    /// 32, so UTF-8 continuation bytes (≥ 0x80) pass through untouched.
+    fn gen_case_map(
+        &self,
+        s: inkwell::values::StructValue<'ctx>,
+        to_lower: bool,
+    ) -> inkwell::values::StructValue<'ctx> {
+        let b = self.builder;
+        let i64t = self.i64t();
+        let i8t = self.context.i8_type();
+        let (len, data) = self.len_ptr_parts(s);
+        let buf = self.alloc_str_buf(len);
+        // Lowercase maps A–Z (65–90) by +32; uppercase maps a–z (97–122) by −32.
+        let (lo, hi) = if to_lower { (65u64, 90u64) } else { (97u64, 122u64) };
+
+        let head = self.context.append_basic_block(self.llvm_fn, "cm.head");
+        let body = self.context.append_basic_block(self.llvm_fn, "cm.body");
+        let exit = self.context.append_basic_block(self.llvm_fn, "cm.exit");
+        let entry = b.get_insert_block().unwrap();
+        b.build_unconditional_branch(head).unwrap();
+        b.position_at_end(head);
+        let phi = b.build_phi(i64t, "i").unwrap();
+        phi.add_incoming(&[(&i64t.const_zero(), entry)]);
+        let i = phi.as_basic_value().into_int_value();
+        let cond = b.build_int_compare(IntPredicate::SLT, i, len, "cmcond").unwrap();
+        b.build_conditional_branch(cond, body, exit).unwrap();
+
+        b.position_at_end(body);
+        let src = unsafe { b.build_in_bounds_gep(i8t, data, &[i], "cmsrc").unwrap() };
+        let cb = b.build_load(i8t, src, "cmcb").unwrap().into_int_value();
+        let ci = b.build_int_z_extend(cb, i64t, "cmci").unwrap();
+        let ge = b.build_int_compare(IntPredicate::SGE, ci, i64t.const_int(lo, false), "cmge").unwrap();
+        let le = b.build_int_compare(IntPredicate::SLE, ci, i64t.const_int(hi, false), "cmle").unwrap();
+        let in_range = b.build_and(ge, le, "cmin").unwrap();
+        let delta = i8t.const_int(32, false);
+        let shifted = if to_lower {
+            b.build_int_add(cb, delta, "cmadd").unwrap()
+        } else {
+            b.build_int_sub(cb, delta, "cmsub").unwrap()
+        };
+        let newb = b.build_select(in_range, shifted, cb, "cmnew").unwrap().into_int_value();
+        let dst = unsafe { b.build_in_bounds_gep(i8t, buf, &[i], "cmdst").unwrap() };
+        b.build_store(dst, newb).unwrap();
+        let i2 = b.build_int_add(i, i64t.const_int(1, false), "cmi2").unwrap();
+        phi.add_incoming(&[(&i2, b.get_insert_block().unwrap())]);
+        b.build_unconditional_branch(head).unwrap();
+
+        b.position_at_end(exit);
+        self.make_len_ptr(len, buf)
+    }
+
+    /// Trim leading/trailing ASCII whitespace: scan a `[start, end)` byte range
+    /// (mirrors `byte_trim_range`), then `malloc(end-start)` + memcpy. An all-
+    /// whitespace input yields an empty string.
+    fn gen_trim(
+        &self,
+        s: inkwell::values::StructValue<'ctx>,
+    ) -> inkwell::values::StructValue<'ctx> {
+        let b = self.builder;
+        let i64t = self.i64t();
+        let i8t = self.context.i8_type();
+        let (len, data) = self.len_ptr_parts(s);
+        let start = self.entry_alloca("trstart", i64t.into());
+        let end = self.entry_alloca("trend", i64t.into());
+        b.build_store(start, i64t.const_zero()).unwrap();
+        b.build_store(end, len).unwrap();
+
+        // Advance `start` while start < end-equivalent (start < len) and ws.
+        let shead = self.context.append_basic_block(self.llvm_fn, "tr.shead");
+        let sbody = self.context.append_basic_block(self.llvm_fn, "tr.sbody");
+        let safter = self.context.append_basic_block(self.llvm_fn, "tr.safter");
+        b.build_unconditional_branch(shead).unwrap();
+        b.position_at_end(shead);
+        let sv = b.build_load(i64t, start, "sv").unwrap().into_int_value();
+        let in_bounds = b.build_int_compare(IntPredicate::SLT, sv, len, "sib").unwrap();
+        b.build_conditional_branch(in_bounds, sbody, safter).unwrap();
+        b.position_at_end(sbody);
+        let sptr = unsafe { b.build_in_bounds_gep(i8t, data, &[sv], "sptr").unwrap() };
+        let scb = b.build_load(i8t, sptr, "scb").unwrap().into_int_value();
+        let sci = b.build_int_z_extend(scb, i64t, "sci").unwrap();
+        let sws = self.is_ws_byte(sci);
+        let snext = self.context.append_basic_block(self.llvm_fn, "tr.snext");
+        b.build_conditional_branch(sws, snext, safter).unwrap();
+        b.position_at_end(snext);
+        let sv2 = b.build_int_add(sv, i64t.const_int(1, false), "sv2").unwrap();
+        b.build_store(start, sv2).unwrap();
+        b.build_unconditional_branch(shead).unwrap();
+
+        // Retreat `end` while end > start and bytes[end-1] is ws.
+        b.position_at_end(safter);
+        let ehead = self.context.append_basic_block(self.llvm_fn, "tr.ehead");
+        let ebody = self.context.append_basic_block(self.llvm_fn, "tr.ebody");
+        let eafter = self.context.append_basic_block(self.llvm_fn, "tr.eafter");
+        b.build_unconditional_branch(ehead).unwrap();
+        b.position_at_end(ehead);
+        let ev = b.build_load(i64t, end, "ev").unwrap().into_int_value();
+        let svf = b.build_load(i64t, start, "svf").unwrap().into_int_value();
+        let gt = b.build_int_compare(IntPredicate::SGT, ev, svf, "egt").unwrap();
+        b.build_conditional_branch(gt, ebody, eafter).unwrap();
+        b.position_at_end(ebody);
+        let em1 = b.build_int_sub(ev, i64t.const_int(1, false), "em1").unwrap();
+        let eptr = unsafe { b.build_in_bounds_gep(i8t, data, &[em1], "eptr").unwrap() };
+        let ecb = b.build_load(i8t, eptr, "ecb").unwrap().into_int_value();
+        let eci = b.build_int_z_extend(ecb, i64t, "eci").unwrap();
+        let ews = self.is_ws_byte(eci);
+        let enext = self.context.append_basic_block(self.llvm_fn, "tr.enext");
+        b.build_conditional_branch(ews, enext, eafter).unwrap();
+        b.position_at_end(enext);
+        b.build_store(end, em1).unwrap();
+        b.build_unconditional_branch(ehead).unwrap();
+
+        b.position_at_end(eafter);
+        let sfin = b.build_load(i64t, start, "sfin").unwrap().into_int_value();
+        let efin = b.build_load(i64t, end, "efin").unwrap().into_int_value();
+        let newlen = b.build_int_sub(efin, sfin, "trlen").unwrap();
+        let buf = self.alloc_str_buf(newlen);
+        let src = unsafe { b.build_in_bounds_gep(i8t, data, &[sfin], "trsrc").unwrap() };
+        self.memcpy_bytes(buf, src, newlen);
+        self.make_len_ptr(newlen, buf)
     }
 
     fn lower_logical(
