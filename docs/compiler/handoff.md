@@ -113,7 +113,11 @@ LLVM_SYS_221_PREFIX=/opt/homebrew/opt/llvm cargo test --release --features llvm 
 - `kernel/runtime.c`:freestanding `malloc`(bump arena 4MiB)/`free`(no-op)/`memcpy`/`memset`/`memcmp`(字节循环,**-O0 编译**否则 loop-idiom 把循环重写成 memcpy/memset 自调用→递归)。
 - `snprintf` 已从 native 后端彻底删除:codegen 改用自包含 `gen_int_to_string`(无符号幅值处理 i64::MIN;两遍数位计数+倒填)。现在裸机只需 malloc/free/memcpy/memcmp/memset 五个符号(全在 runtime.c)。
 - 实测 QEMU 输出 string_concat/int_to_string(含负数)/数组求和全正确。
-**下一步**:① 裸指针类型 `*T` + 真 UART 驱动(轮询 LSR);② 可回收 allocator(现 bump arena 不释放);③ 固化自定义 target triple 进 AOT(现靠 build.sh 手动 strip+clang 重定向);④ 中断/陷入 → 定时器 → 调度器(需并发原语)。
+**OS 路线进度**:
+- ✅ **#1 裸指针 `*T` + 真 UART 驱动**(`6103e89`/`afcd901`,见 §6.2)。
+- ✅ **#2 可回收 allocator**(`792e496`):kernel/runtime.c bump→带合并的 first-fit 空闲链表;实机 20 万次 alloc/free 不耗尽 arena。经验:中间结果须绑成局部才会被 drop/free,否则泄漏 + O(n) 合并退化 O(n²)。
+- **#3 固化 AOT 装配**(待办,低优先):把 build.sh 的手动 emit-ir→strip→clang riscv64 固化成 `zeta` 原生跨目标 obj 输出。价值有限(只省一次 clang 调用;链接/boot.s/runtime.c/链接脚本仍需外部工具链)。
+- **#4 中断/陷入 → 定时器 → 调度器**(待办,高价值但**前置阻塞**):需**内联汇编**原语(读写 CSR:stvec/sstatus/sie/sepc、`wfi`/`csrr`/`csrw`)——这是新语言原语,必须先做。之后才能装 trap handler + 定时器中断 + 调度。
 
 ### 6.2 OS 第二前置:裸指针 + volatile MMIO + 内联汇编(DevGame #78 扩展)
 - **✅ volatile MMIO**(`d80a208`/`7ecb785`):`mmio_{read,write}_{byte,word,dword}`(8/16... 即 8/32/64 位)volatile load/store 到 inttoptr;真 NS16550 UART 驱动(`6103e89`,init+LSR 轮询)。
