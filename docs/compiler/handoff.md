@@ -32,6 +32,7 @@ struct 字面量与字段;enum + payload;闭包 `|x| ...` + 捕获;泛型 `<T>`(
 `import`/`module`;`Option`/`Result` + `?`。
 **trait/impl(切片①②已实现)**:`trait Show { fn show(self: Self) -> String; }` / `impl Show for Point { ... }`;UFCS 自由函数派发 `show(p)` 按接收者具体类型路由到 `show$Point`。`trait`/`impl` 是上下文标识符(非保留字,fixpoint 安全);impl 在 desugar 展平为 mangled 自由函数(`Self`→target),三后端当普通函数处理;调用按首参类型在 typecheck(Self 作类型参数宽松检查)/解释器(运行时值类型)/native(ZType base)三处派发,差分一致。
 **方法调用语法(`902d69b` 已实现)**:`x.f(args)` ≡ `f(x, args)`,复用 UFCS/trait 派发。消歧规则:`a.b(..)` 是方法当且仅当路径 ROOT 是作用域内局部(枚举 `Type.Variant`/模块 `demo.math.fn` 的 root 不是局部)。parser 拦截非名字路径接收者(`xs[1].m()`),作用域感知的 `desugar::desugar_method_calls` 处理名字路径(仅单文件路径跑;module_graph 不跑)。
+**运算符重载(`f17017a` 已实现)**:非标量(struct/enum)操作数的 `a OP b` 派发到 `op$Type` trait 方法(`+`→add/`-`→sub/`==`→eq/`<`→lt 等,`mir::operator_trait_method`;排除 &&/||)。标量走内置快路径;仅在存在 `op$Base` 方法时派发 ⇒ 纯增量。五处接入:typecheck/mir verify/解释器/codegen/helper。
 **未实现**:并发原语、C ABI FFI(裸机内联汇编 csr/wfi 已有);可选:trait 默认方法/关联类型、string_split 等 stdlib 广度。
 
 **后端**:解释器 `run_mir`(差分 oracle);native MIR→LLVM22(inkwell,122 codegen fn,JIT + AOT 独立二进制 + 热替换);WASM(浏览器 playground)。
