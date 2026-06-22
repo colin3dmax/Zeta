@@ -42,3 +42,11 @@ fn generic_hashmap_string_int_native_matches_oracle() {
     // one=1, two=22 (overwritten), three=3, missing=-1, e=50, size=8
     assert_eq!(check(src), 1 + 22 + 3 - 1 + 50 + 8);
 }
+
+#[test]
+fn generic_hashmap_remove_contains_native_matches_oracle() {
+    let src = include_str!("../testdata/generic_hashmap_ops.zeta");
+    // before=5, size=4 (one removed), contains three=0/one=1/five=1,
+    // get two=2/four=4 (cluster survives rehash) → 5+4+0+1+1+2+4
+    assert_eq!(check(src), 5 + 4 + 0 + 1 + 1 + 2 + 4);
+}

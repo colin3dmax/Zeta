@@ -1,0 +1,174 @@
+import std.core;
+
+// HashMap<K, V> with removal + membership. Open-addressing deletion is done by
+// the "rehash the cluster" method: after clearing the hit slot, every element
+// in the contiguous probe cluster behind it is pulled out and re-inserted, so
+// no probe chain is left dangling. No tombstones, so `size` stays exact and
+// later probes terminate. Built on the same trait + generics stack as the map.
+
+trait Hash { fn hash(self: Self) -> Int; }
+trait Eq { fn eq(self: Self, other: Self) -> Bool; }
+
+impl Hash for Int { fn hash(self: Self) -> Int { return self; } }
+impl Eq for Int { fn eq(self: Self, other: Self) -> Bool { return self == other; } }
+
+impl Hash for String {
+  fn hash(self: Self) -> Int {
+    let mut h: Int = 5381;
+    let mut i: Int = 0;
+    let n: Int = string_len(self);
+    while i < n {
+      h = h * 33 + string_byte_at(self, i);
+      i = i + 1;
+    }
+    return h;
+  }
+}
+impl Eq for String { fn eq(self: Self, other: Self) -> Bool { return self == other; } }
+
+struct HashMap<K, V> {
+  keys: Array<K>,
+  values: Array<V>,
+  used: Array<Bool>,
+  size: Int,
+  cap: Int,
+}
+
+fn imod(a: Int, m: Int) -> Int {
+  let r: Int = a % m;
+  if r < 0 { return r + m; }
+  return r;
+}
+
+fn hashmap_new<K: Hash + Eq, V>(seed_key: K, seed_val: V) -> HashMap<K, V> {
+  let cap: Int = 8;
+  return HashMap {
+    keys: array_repeat(seed_key, cap),
+    values: array_repeat(seed_val, cap),
+    used: array_repeat(false, cap),
+    size: 0,
+    cap: cap,
+  };
+}
+
+fn hashmap_insert<K: Hash + Eq, V>(m: HashMap<K, V>, key: K, value: V) -> HashMap<K, V> {
+  let mut map: HashMap<K, V> = m;
+  let mut j: Int = imod(hash(key), map.cap);
+  while map.used[j] {
+    if eq(map.keys[j], key) {
+      map.values[j] = value;
+      return map;
+    }
+    j = imod(j + 1, map.cap);
+  }
+  map.keys[j] = key;
+  map.values[j] = value;
+  map.used[j] = true;
+  map.size = map.size + 1;
+  return map;
+}
+
+fn hashmap_contains<K: Hash + Eq, V>(m: HashMap<K, V>, key: K) -> Bool {
+  let mut j: Int = imod(hash(key), m.cap);
+  let mut steps: Int = 0;
+  while m.used[j] {
+    if eq(m.keys[j], key) {
+      return true;
+    }
+    j = imod(j + 1, m.cap);
+    steps = steps + 1;
+    if steps >= m.cap {
+      return false;
+    }
+  }
+  return false;
+}
+
+fn hashmap_get<K: Hash + Eq, V>(m: HashMap<K, V>, key: K, default: V) -> V {
+  let mut j: Int = imod(hash(key), m.cap);
+  let mut steps: Int = 0;
+  while m.used[j] {
+    if eq(m.keys[j], key) {
+      return m.values[j];
+    }
+    j = imod(j + 1, m.cap);
+    steps = steps + 1;
+    if steps >= m.cap {
+      return default;
+    }
+  }
+  return default;
+}
+
+fn hashmap_remove<K: Hash + Eq, V>(m: HashMap<K, V>, key: K) -> HashMap<K, V> {
+  let mut map: HashMap<K, V> = m;
+  // locate the key's slot along its probe chain
+  let mut j: Int = imod(hash(key), map.cap);
+  let mut steps: Int = 0;
+  let mut slot: Int = 0 - 1;
+  while map.used[j] {
+    if eq(map.keys[j], key) {
+      slot = j;
+      break;
+    }
+    j = imod(j + 1, map.cap);
+    steps = steps + 1;
+    if steps >= map.cap {
+      break;
+    }
+  }
+  if slot < 0 {
+    return map;       // not present
+  }
+  return remove_at(map, slot);
+}
+
+fn remove_at<K: Hash + Eq, V>(m: HashMap<K, V>, slot: Int) -> HashMap<K, V> {
+  let mut map: HashMap<K, V> = m;
+  map.used[slot] = false;
+  map.size = map.size - 1;
+  // rehash the contiguous cluster behind the hole
+  let mut i: Int = imod(slot + 1, map.cap);
+  while map.used[i] {
+    let k: K = map.keys[i];
+    let v: V = map.values[i];
+    map.used[i] = false;
+    let mut t: Int = imod(hash(k), map.cap);
+    while map.used[t] {
+      t = imod(t + 1, map.cap);
+    }
+    map.keys[t] = k;
+    map.values[t] = v;
+    map.used[t] = true;
+    i = imod(i + 1, map.cap);
+  }
+  return map;
+}
+
+fn b2i(b: Bool) -> Int {
+  if b { return 1; }
+  return 0;
+}
+
+fn main() -> Int {
+  let mut h: HashMap<String, Int> = hashmap_new("", 0);
+  h = hashmap_insert(h, "one", 1);
+  h = hashmap_insert(h, "two", 2);
+  h = hashmap_insert(h, "three", 3);
+  h = hashmap_insert(h, "four", 4);
+  h = hashmap_insert(h, "five", 5);
+  // size = 5
+  let before: Int = h.size;                       // 5
+
+  h = hashmap_remove(h, "three");                 // remove existing
+  h = hashmap_remove(h, "nope");                  // remove missing → no-op
+
+  let c1: Int = b2i(hashmap_contains(h, "three")); // 0 (removed)
+  let c2: Int = b2i(hashmap_contains(h, "one"));   // 1
+  let c3: Int = b2i(hashmap_contains(h, "five"));  // 1
+  let g1: Int = hashmap_get(h, "two", 0 - 1);      // 2 (cluster intact after rehash)
+  let g2: Int = hashmap_get(h, "four", 0 - 1);     // 4
+
+  // before(5) + size(4) + c1(0) + c2(1) + c3(1) + g1(2) + g2(4) = 17
+  return before + h.size + c1 + c2 + c3 + g1 + g2;
+}

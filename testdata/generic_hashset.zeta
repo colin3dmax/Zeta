@@ -1,0 +1,127 @@
+import std.core;
+
+// Generic open-addressing hash set — the sibling of HashMap<K, V> with the
+// value array dropped. Same trait bounds (`Hash`/`Eq`), same linear-probing
+// resize. Proves the generic-container stack generalises beyond the map.
+
+trait Hash { fn hash(self: Self) -> Int; }
+trait Eq { fn eq(self: Self, other: Self) -> Bool; }
+
+impl Hash for Int { fn hash(self: Self) -> Int { return self; } }
+impl Eq for Int { fn eq(self: Self, other: Self) -> Bool { return self == other; } }
+
+impl Hash for String {
+  fn hash(self: Self) -> Int {
+    let mut h: Int = 5381;
+    let mut i: Int = 0;
+    let n: Int = string_len(self);
+    while i < n {
+      h = h * 33 + string_byte_at(self, i);
+      i = i + 1;
+    }
+    return h;
+  }
+}
+impl Eq for String { fn eq(self: Self, other: Self) -> Bool { return self == other; } }
+
+struct HashSet<T> {
+  elems: Array<T>,
+  used: Array<Bool>,
+  size: Int,
+  cap: Int,
+}
+
+fn imod(a: Int, m: Int) -> Int {
+  let r: Int = a % m;
+  if r < 0 { return r + m; }
+  return r;
+}
+
+fn hashset_new<T: Hash + Eq>(seed: T) -> HashSet<T> {
+  let cap: Int = 8;
+  return HashSet {
+    elems: array_repeat(seed, cap),
+    used: array_repeat(false, cap),
+    size: 0,
+    cap: cap,
+  };
+}
+
+fn hashset_grow<T: Hash + Eq>(s: HashSet<T>, seed: T) -> HashSet<T> {
+  let newcap: Int = s.cap * 2;
+  let mut ne: Array<T> = array_repeat(seed, newcap);
+  let mut nu: Array<Bool> = array_repeat(false, newcap);
+  let mut i: Int = 0;
+  while i < s.cap {
+    if s.used[i] {
+      let mut j: Int = imod(hash(s.elems[i]), newcap);
+      while nu[j] {
+        j = imod(j + 1, newcap);
+      }
+      ne[j] = s.elems[i];
+      nu[j] = true;
+    }
+    i = i + 1;
+  }
+  return HashSet { elems: ne, used: nu, size: s.size, cap: newcap };
+}
+
+fn hashset_insert<T: Hash + Eq>(s: HashSet<T>, value: T) -> HashSet<T> {
+  let mut set: HashSet<T> = s;
+  if set.size * 4 >= set.cap * 3 {
+    set = hashset_grow(set, value);
+  }
+  let mut j: Int = imod(hash(value), set.cap);
+  while set.used[j] {
+    if eq(set.elems[j], value) {
+      return set;
+    }
+    j = imod(j + 1, set.cap);
+  }
+  set.elems[j] = value;
+  set.used[j] = true;
+  set.size = set.size + 1;
+  return set;
+}
+
+fn hashset_contains<T: Hash + Eq>(s: HashSet<T>, value: T) -> Bool {
+  let mut j: Int = imod(hash(value), s.cap);
+  let mut steps: Int = 0;
+  while s.used[j] {
+    if eq(s.elems[j], value) {
+      return true;
+    }
+    j = imod(j + 1, s.cap);
+    steps = steps + 1;
+    if steps >= s.cap {
+      return false;
+    }
+  }
+  return false;
+}
+
+fn b2i(b: Bool) -> Int {
+  if b { return 1; }
+  return 0;
+}
+
+fn main() -> Int {
+  let mut s: HashSet<String> = hashset_new("");
+  s = hashset_insert(s, "alpha");
+  s = hashset_insert(s, "beta");
+  s = hashset_insert(s, "gamma");
+  s = hashset_insert(s, "beta");   // duplicate, no-op
+  // force growth past the 0.75 load factor
+  s = hashset_insert(s, "a");
+  s = hashset_insert(s, "b");
+  s = hashset_insert(s, "c");
+  s = hashset_insert(s, "d");
+  s = hashset_insert(s, "e");
+
+  let c1: Int = b2i(hashset_contains(s, "alpha"));    // 1
+  let c2: Int = b2i(hashset_contains(s, "beta"));     // 1
+  let c3: Int = b2i(hashset_contains(s, "missing"));  // 0
+  let c4: Int = b2i(hashset_contains(s, "e"));        // 1
+  // size = 8 distinct (alpha,beta,gamma,a,b,c,d,e)
+  return c1 + c2 + c3 + c4 + s.size;                  // 1+1+0+1+8 = 11
+}

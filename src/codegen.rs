@@ -152,6 +152,12 @@ struct Types<'ctx> {
     /// `enums`); only `type_params`-bearing decls need a template.
     struct_templates: HashMap<String, StructTemplate>,
     enum_templates: HashMap<String, EnumTemplate>,
+    /// Mangled instance name (`HashMap$Str_Int`) → its concrete type arguments.
+    /// Recorded at monomorphization so `unify_ztype` can recover a generic
+    /// struct/enum parameter's type args from a concrete instance — letting a
+    /// type parameter be inferred from a struct-typed argument (e.g. `V` from a
+    /// `HashMap<K, V>` value) and not only from a value of that type directly.
+    instances: RefCell<HashMap<String, Vec<ZType>>>,
     /// Function name → return type (so calls know their result type).
     returns: HashMap<String, ZType>,
 }
@@ -249,6 +255,7 @@ impl<'ctx> Types<'ctx> {
             enums: RefCell::new(enums),
             struct_templates,
             enum_templates,
+            instances: RefCell::new(HashMap::new()),
             returns: HashMap::new(),
         };
         let mut returns = HashMap::new();
@@ -473,6 +480,10 @@ impl<'ctx> Types<'ctx> {
             return Ok(base.to_string());
         };
         let mangled = mangle_instance(base, args);
+        self.instances
+            .borrow_mut()
+            .entry(mangled.clone())
+            .or_insert_with(|| args.to_vec());
         if self.structs.borrow().contains_key(&mangled) {
             return Ok(mangled);
         }
@@ -501,6 +512,10 @@ impl<'ctx> Types<'ctx> {
             return Ok(base.to_string());
         };
         let mangled = mangle_instance(base, args);
+        self.instances
+            .borrow_mut()
+            .entry(mangled.clone())
+            .or_insert_with(|| args.to_vec());
         if self.enums.borrow().contains_key(&mangled) {
             return Ok(mangled);
         }
@@ -607,6 +622,7 @@ fn unify_ztype(
     generic_str: &str,
     concrete: &ZType,
     type_params: &[String],
+    instances: &HashMap<String, Vec<ZType>>,
     subst: &mut HashMap<String, ZType>,
 ) {
     if type_params.iter().any(|p| p == generic_str) {
@@ -616,7 +632,7 @@ fn unify_ztype(
     if let Some(parts) = crate::type_syntax::tuple_parts(generic_str) {
         if let ZType::Tuple(elems) = concrete {
             for (p, c) in parts.iter().zip(elems) {
-                unify_ztype(p, c, type_params, subst);
+                unify_ztype(p, c, type_params, instances, subst);
             }
         }
         return;
@@ -624,17 +640,29 @@ fn unify_ztype(
     if let Some((params, ret)) = crate::type_syntax::fn_parts(generic_str) {
         if let ZType::Closure(cparams, cret) = concrete {
             for (p, c) in params.iter().zip(cparams) {
-                unify_ztype(p, c, type_params, subst);
+                unify_ztype(p, c, type_params, instances, subst);
             }
-            unify_ztype(ret, cret, type_params, subst);
+            unify_ztype(ret, cret, type_params, instances, subst);
         }
         return;
     }
-    // `Array<E>` vs a concrete array: recurse to bind a type-parameter element.
     if let Some((base, args)) = crate::type_syntax::generic_parts(generic_str) {
+        // `Array<E>` vs a concrete array: recurse to bind a type-parameter element.
         if base == "Array" && args.len() == 1 {
             if let ZType::Array(elem) = concrete {
-                unify_ztype(args[0], elem, type_params, subst);
+                unify_ztype(args[0], elem, type_params, instances, subst);
+            }
+            return;
+        }
+        // A generic struct/enum parameter (`HashMap<K, V>`) vs a concrete
+        // monomorphized instance: recover the instance's recorded type args and
+        // recurse, so a parameter appearing only inside an aggregate type still
+        // binds (e.g. infer `V` from a `HashMap<K, V>`-typed argument).
+        if let ZType::Struct(name) | ZType::Enum(name) = concrete {
+            if let Some(concrete_args) = instances.get(name) {
+                for (p, c) in args.iter().zip(concrete_args) {
+                    unify_ztype(p, c, type_params, instances, subst);
+                }
             }
         }
     }
@@ -3051,8 +3079,11 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             arg_ztys.push(vt);
         }
         let mut subst: HashMap<String, ZType> = HashMap::new();
-        for (param, arg_zty) in generic.params.iter().zip(&arg_ztys) {
-            unify_ztype(&param.ty, arg_zty, &generic.type_params, &mut subst);
+        {
+            let instances = self.types.instances.borrow();
+            for (param, arg_zty) in generic.params.iter().zip(&arg_ztys) {
+                unify_ztype(&param.ty, arg_zty, &generic.type_params, &instances, &mut subst);
+            }
         }
         let ret_zty = match &generic.return_type {
             Some(t) => self.resolve_generic_ztype(t, &subst)?,
@@ -3284,7 +3315,13 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                             .ok_or_else(|| format!("missing field `{fname}` in `{ty}` literal"))?
                             .value;
                         let (v, vt) = self.lower_expr(value_expr)?;
-                        unify_ztype(fty, &vt, &type_params, &mut subst);
+                        unify_ztype(
+                            fty,
+                            &vt,
+                            &type_params,
+                            &self.types.instances.borrow(),
+                            &mut subst,
+                        );
                         // The struct owns each managed field.
                         let v = self.bind_owned(value_expr, v, &vt);
                         lowered.push(v);
@@ -3501,7 +3538,13 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                     Some(expr) => {
                         let (v0, vt) = self.lower_expr(expr)?;
                         if let Some(decl) = &payload_decl {
-                            unify_ztype(decl, &vt, &type_params, &mut subst);
+                            unify_ztype(
+                                decl,
+                                &vt,
+                                &type_params,
+                                &self.types.instances.borrow(),
+                                &mut subst,
+                            );
                         }
                         // The enum owns its payload, independent of any droppable
                         // source it aliases. The enum value itself is NOT dropped
