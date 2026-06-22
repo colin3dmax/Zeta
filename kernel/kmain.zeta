@@ -95,6 +95,20 @@ fn main() -> Int {
   print(string_concat("ptr[0]+ptr[1] = ", int_to_string(ptr_read(p) + ptr_read(q))));
   print("\n");
 
+  // Reclaiming-allocator stress: build & drop ~20000 heap strings — far more
+  // total bytes than the 4 MiB arena. This only survives because `free` actually
+  // reclaims (a bump allocator would exhaust the arena and fault/return null).
+  let mut k: Int = 0;
+  let mut acc: Int = 0;
+  while k < 200000 {
+    let d: String = int_to_string(k);            // bound so it is freed (no leak)
+    let s: String = string_concat("item-", d);
+    acc = acc + string_len(s);     // d, s both dropped (freed) at scope exit
+    k = k + 1;
+  }
+  print(string_concat("alloc/free loop ok, total bytes = ", int_to_string(acc)));
+  print("\n");
+
   print("kernel: done, halting.\n");
 
   let mut spin: Int = 0;
