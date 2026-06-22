@@ -76,6 +76,16 @@ fn main() -> Int {
   print(string_concat("delta = ", int_to_string(0 - 273)));
   print("\n");
 
+  // Width-typed raw memory access: write then read back a 32-bit and a 64-bit
+  // value at a scratch RAM address (0x8080_0000, well past our image + arena).
+  let scratch: Int = 2155872256;                 // 0x8080_0000
+  mmio_write_word(scratch, 3735928559);          // 0xDEADBEEF (32-bit)
+  print(string_concat("mem32 = ", int_to_string(mmio_read_word(scratch))));
+  print("\n");
+  mmio_write_dword(scratch + 8, 1099511627776);  // 2^40, needs 64-bit
+  print(string_concat("mem64 = ", int_to_string(mmio_read_dword(scratch + 8))));
+  print("\n");
+
   print("kernel: done, halting.\n");
 
   let mut spin: Int = 0;

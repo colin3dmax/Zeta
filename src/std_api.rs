@@ -198,6 +198,28 @@ const STD_CORE_FUNCTIONS: &[StandardFunction] = &[
         params: &["Int"],
         return_type: Some("Int"),
     },
+    // Wider memory-mapped access: 32-bit word and 64-bit dword, for device
+    // registers and page-table entries. Same volatile, no-host-meaning contract.
+    StandardFunction {
+        name: "mmio_write_word",
+        params: &["Int", "Int"],
+        return_type: Some("Int"),
+    },
+    StandardFunction {
+        name: "mmio_read_word",
+        params: &["Int"],
+        return_type: Some("Int"),
+    },
+    StandardFunction {
+        name: "mmio_write_dword",
+        params: &["Int", "Int"],
+        return_type: Some("Int"),
+    },
+    StandardFunction {
+        name: "mmio_read_dword",
+        params: &["Int"],
+        return_type: Some("Int"),
+    },
     StandardFunction {
         name: "ascii_is_digit",
         params: &["Int"],

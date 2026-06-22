@@ -705,6 +705,19 @@ fn zty_base_name(zt: &ZType) -> String {
     }
 }
 
+/// Access width in bits for an `mmio_*_{byte,word,dword}` builtin.
+fn mmio_bits(callee: &str) -> u32 {
+    if callee.ends_with("word") {
+        if callee.ends_with("dword") {
+            64
+        } else {
+            32
+        }
+    } else {
+        8
+    }
+}
+
 /// Mangled name for a monomorphized instance, e.g. `id$Int`, `pair$Int_Bool`.
 fn mangle_instance(callee: &str, arg_ztys: &[ZType]) -> String {
     let parts: Vec<String> = arg_ztys.iter().map(zty_mangle).collect();
@@ -3801,30 +3814,40 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let v = self.gen_trim(s.into_struct_value());
                 Ok(Some((v.into(), ZType::Str)))
             }
-            "mmio_write_byte" => {
-                // *(volatile i8*)addr = (i8)value — a device-register store the
-                // optimizer must not drop or reorder away.
+            // Volatile memory-mapped writes at the given width (device registers /
+            // page-table entries the optimizer must not drop or reorder).
+            "mmio_write_byte" | "mmio_write_word" | "mmio_write_dword" => {
+                let bits = mmio_bits(callee);
                 let addr = self.lower_int(&args[0])?;
                 let value = self.lower_int(&args[1])?;
-                let i8t = self.context.i8_type();
                 let ptr = b
                     .build_int_to_ptr(addr, self.context.ptr_type(inkwell::AddressSpace::default()), "mmiop")
                     .unwrap();
-                let byte = b.build_int_truncate(value, i8t, "mmiob").unwrap();
-                let store = b.build_store(ptr, byte).unwrap();
+                // The i64 value carries the low `bits`; narrow it for sub-64 widths.
+                let narrowed = if bits == 64 {
+                    value
+                } else {
+                    b.build_int_truncate(value, self.context.custom_width_int_type(std::num::NonZeroU32::new(bits).unwrap()).unwrap(), "mmiov").unwrap()
+                };
+                let store = b.build_store(ptr, narrowed).unwrap();
                 store.set_volatile(true).unwrap();
                 Ok(Some((self.i64t().const_zero().into(), ZType::Int)))
             }
-            "mmio_read_byte" => {
-                // (i64)*(volatile i8*)addr — a device-register load.
+            // Volatile memory-mapped reads, zero-extended to the i64 value repr.
+            "mmio_read_byte" | "mmio_read_word" | "mmio_read_dword" => {
+                let bits = mmio_bits(callee);
                 let addr = self.lower_int(&args[0])?;
-                let i8t = self.context.i8_type();
+                let width = self.context.custom_width_int_type(std::num::NonZeroU32::new(bits).unwrap()).unwrap();
                 let ptr = b
                     .build_int_to_ptr(addr, self.context.ptr_type(inkwell::AddressSpace::default()), "mmiop")
                     .unwrap();
-                let load = b.build_load(i8t, ptr, "mmior").unwrap().into_int_value();
+                let load = b.build_load(width, ptr, "mmior").unwrap().into_int_value();
                 load.as_instruction().unwrap().set_volatile(true).unwrap();
-                let widened = b.build_int_z_extend(load, self.i64t(), "mmiow").unwrap();
+                let widened = if bits == 64 {
+                    load
+                } else {
+                    b.build_int_z_extend(load, self.i64t(), "mmiow").unwrap()
+                };
                 Ok(Some((widened.into(), ZType::Int)))
             }
             // Growable arrays. bool arrays share the Int (i64) element repr; string

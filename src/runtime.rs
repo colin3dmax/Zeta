@@ -2223,6 +2223,10 @@ fn is_std_builtin(callee: &str) -> bool {
             | "string_trim"
             | "mmio_write_byte"
             | "mmio_read_byte"
+            | "mmio_write_word"
+            | "mmio_read_word"
+            | "mmio_write_dword"
+            | "mmio_read_dword"
             | "ascii_is_digit"
             | "ascii_is_alpha"
             | "ascii_is_alnum"
@@ -2504,11 +2508,11 @@ fn eval_std_builtin(callee: &str, args: Vec<Value>) -> Result<Value, Diagnostic>
         // MMIO has no meaning in the hosted interpreter: a write is inert, a read
         // yields 0. The freestanding native backend lowers these to real volatile
         // loads/stores; there is no differential oracle for a bare-metal target.
-        "mmio_write_byte" => {
+        "mmio_write_byte" | "mmio_write_word" | "mmio_write_dword" => {
             let [_addr, _value]: [Value; 2] = expect_arity(callee, args)?.try_into().ok().unwrap();
             Ok(Value::Int(0))
         }
-        "mmio_read_byte" => {
+        "mmio_read_byte" | "mmio_read_word" | "mmio_read_dword" => {
             let [_addr]: [Value; 1] = expect_arity(callee, args)?.try_into().ok().unwrap();
             Ok(Value::Int(0))
         }

@@ -1710,8 +1710,12 @@ impl<'a> MirVerifier<'a> {
             "string_to_upper" | "string_to_lower" | "string_trim" => {
                 (&["String"][..], MirType::named("String"))
             }
-            "mmio_write_byte" => (&["Int", "Int"][..], MirType::named("Int")),
-            "mmio_read_byte" => (&["Int"][..], MirType::named("Int")),
+            "mmio_write_byte" | "mmio_write_word" | "mmio_write_dword" => {
+                (&["Int", "Int"][..], MirType::named("Int"))
+            }
+            "mmio_read_byte" | "mmio_read_word" | "mmio_read_dword" => {
+                (&["Int"][..], MirType::named("Int"))
+            }
             "ascii_is_digit" | "ascii_is_alpha" | "ascii_is_alnum" | "ascii_is_whitespace" => {
                 (&["Int"][..], MirType::named("Bool"))
             }
