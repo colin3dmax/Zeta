@@ -116,10 +116,10 @@ LLVM_SYS_221_PREFIX=/opt/homebrew/opt/llvm cargo test --release --features llvm 
 **下一步**:① 裸指针类型 `*T` + 真 UART 驱动(轮询 LSR);② 可回收 allocator(现 bump arena 不释放);③ 固化自定义 target triple 进 AOT(现靠 build.sh 手动 strip+clang 重定向);④ 中断/陷入 → 定时器 → 调度器(需并发原语)。
 
 ### 6.2 OS 第二前置:裸指针 + volatile MMIO + 内联汇编(DevGame #78 扩展)
-- **裸指针类型**`*T` / `*mut T` + 读写(MMIO 寄存器、页表项)。当前无指针类型、无 unsafe。
-- **volatile load/store**(设备寄存器不可被优化掉)。
-- **内联汇编**(`hlt`/`wfi`/读写 CR3/CSR、特权指令)。
-- **C ABI FFI**(声明 extern、按 C ABI 传参)——既为调用固件,也为被汇编 stub 调用。
+- **✅ volatile MMIO**(`d80a208`/`7ecb785`):`mmio_{read,write}_{byte,word,dword}`(8/16... 即 8/32/64 位)volatile load/store 到 inttoptr;真 NS16550 UART 驱动(`6103e89`,init+LSR 轮询)。
+- **✅ 裸指针 `*T`**(`afcd901`,unsafe/native-only):`*T` 前缀语法 + Type::Ptr/ZType::Ptr 全栈;内置 `ptr_from_addr`/`ptr_addr`/`ptr_read`(支持整 struct)/`ptr_write`/`ptr_offset`(按元素步长)+ `array_data_addr`(数组缓冲区地址,DMA/测试)。typecheck 宽松兼容(任意 *A≈*B);解释器 inert ⇒ native/实机验证(tests/codegen_pointer.rs + kernel 实测 1337)。`ptr_from_addr` 元素由 let 注解 `*T` 精化(codegen Local 读注解)。
+- **内联汇编**(`hlt`/`wfi`/读写 CR3/CSR、特权指令)——**仍缺**,是 #4 中断/调度的前置。
+- **C ABI FFI**(声明 extern、按 C ABI 传参)——仍缺。
 
 ### 6.3 OS 第三前置:并发原语(DevGame #77)
 - 原子操作(LLVM atomicrmw/cmpxchg)、内存屏障 → 自旋锁;之上做调度器/中断安全。
