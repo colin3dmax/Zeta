@@ -1262,9 +1262,10 @@ fn build_module<'ctx>(
         );
     }
 
-    // Pass 2: lower each concrete body.
+    // Pass 2: lower each concrete body. Extern functions have no body — pass 1's
+    // declaration stands and the linker resolves the symbol.
     for function in &program.functions {
-        if !function.type_params.is_empty() {
+        if !function.type_params.is_empty() || function.is_extern {
             continue;
         }
         let llvm_fn = functions[&function.name];

@@ -54,6 +54,10 @@ impl Parser {
         // `fn`), so it is NOT a reserved keyword — this keeps the lexer/token-kind
         // numbering identical and avoids any self-hosting parity churn.
         let reloadable = self.consume_reloadable();
+        // `extern fn name(..) -> ..;` — a bodyless external (C ABI) declaration.
+        // Contextual modifier (not a reserved keyword), same precedent as
+        // `reloadable`/`trait`, so the lexer/token numbering is untouched.
+        let is_extern = self.consume_contextual_before_fn("extern");
 
         if self.consume_keyword(Keyword::Import).is_some() {
             let (path, path_span) = self.parse_path_span()?;
@@ -80,7 +84,9 @@ impl Parser {
             return self.parse_enum(exported).map(Item::Enum);
         }
         if self.consume_keyword(Keyword::Fn).is_some() {
-            return self.parse_function(exported, reloadable).map(Item::Function);
+            return self
+                .parse_function(exported, reloadable, is_extern)
+                .map(Item::Function);
         }
         // `trait` / `impl` are contextual identifiers (not reserved keywords), so
         // the lexer/token-kind numbering stays identical and self-hosting parity
@@ -236,7 +242,7 @@ impl Parser {
                     "expected `fn` for impl method",
                 ));
             }
-            methods.push(self.parse_function(fn_exported, false)?);
+            methods.push(self.parse_function(fn_exported, false, false)?);
         }
         self.expect_symbol(Symbol::RBrace, "expected `}` after impl methods")?;
         Ok(ImplBlock {
@@ -250,7 +256,12 @@ impl Parser {
         })
     }
 
-    fn parse_function(&mut self, exported: bool, reloadable: bool) -> Result<Function, Diagnostic> {
+    fn parse_function(
+        &mut self,
+        exported: bool,
+        reloadable: bool,
+        is_extern: bool,
+    ) -> Result<Function, Diagnostic> {
         let (name, name_span) = self.expect_ident_span("expected function name")?;
         let (type_params, type_param_bounds) = self.parse_type_params_with_bounds()?;
         self.expect_symbol(Symbol::LParen, "expected `(` after function name")?;
@@ -262,8 +273,14 @@ impl Parser {
         } else {
             (None, None)
         };
-        self.expect_symbol(Symbol::LBrace, "expected function body")?;
-        let body = self.parse_block_body()?;
+        // An extern declaration ends at `;` and has no body.
+        let body = if is_extern {
+            self.expect_symbol(Symbol::Semicolon, "expected `;` after extern function declaration")?;
+            Vec::new()
+        } else {
+            self.expect_symbol(Symbol::LBrace, "expected function body")?;
+            self.parse_block_body()?
+        };
         Ok(Function {
             exported,
             reloadable,
@@ -275,6 +292,7 @@ impl Parser {
             return_type,
             return_type_span,
             body,
+            is_extern,
         })
     }
 
@@ -1257,6 +1275,23 @@ impl Parser {
             Ok(())
         } else {
             Err(self.error_here("PARSE_EXPECTED_SYMBOL", message))
+        }
+    }
+
+    /// Consume the contextual modifier `name` (e.g. `extern`) ONLY when it
+    /// directly precedes `fn`, so it stays usable as an ordinary identifier
+    /// elsewhere — same precedent as `reloadable`, no new reserved keyword.
+    fn consume_contextual_before_fn(&mut self, name: &str) -> bool {
+        let is_ident = matches!(self.peek_kind(), TokenKind::Ident(found) if found == name);
+        let followed_by_fn = matches!(
+            self.tokens.get(self.pos + 1).map(|token| &token.kind),
+            Some(TokenKind::Keyword(Keyword::Fn))
+        );
+        if is_ident && followed_by_fn {
+            self.pos += 1;
+            true
+        } else {
+            false
         }
     }
 

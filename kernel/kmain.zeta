@@ -5,6 +5,10 @@
 // allocate/copy through the freestanding runtime stub (kernel/runtime.c).
 import std.core;
 
+// FFI: an assembly routine (kernel/boot.s) called via the C ABI. This is the
+// mechanism a scheduler uses to call a `switch_context` written in assembly.
+extern fn asm_add3(a: Int, b: Int, c: Int) -> Int;
+
 // ---------------------------------------------------------------- NS16550 UART
 // On the virt machine the 8 registers are byte-wide at 0x1000_0000 (reg-shift 0).
 
@@ -154,6 +158,10 @@ fn main() -> Int {
     }
   }
   print("got 3 timer interrupts - traps work!\n");
+
+  // FFI: call the assembly routine asm_add3 (C ABI) from Zeta.
+  print(string_concat("asm_add3(100,20,3) = ", int_to_string(asm_add3(100, 20, 3))));
+  print("\n");
 
   print("kernel: done, halting (wfi).\n");
   let mut spin: Int = 0;

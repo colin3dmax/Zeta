@@ -741,6 +741,12 @@ impl MirRuntime {
                 ),
             ));
         }
+        if function.is_extern {
+            return Err(runtime_error(
+                "RUNTIME_EXTERN_CALL",
+                format!("cannot call extern function `{name}` in the interpreter (native-only)"),
+            ));
+        }
         let mut call_locals = HashMap::new();
         for (param, value) in function.params.iter().zip(arg_values) {
             call_locals.insert(param.name.clone(), value);
@@ -1248,6 +1254,12 @@ impl MirRuntime {
                             function.params.len(),
                             args.len()
                         ),
+                    ));
+                }
+                if function.is_extern {
+                    return Err(runtime_error(
+                        "RUNTIME_EXTERN_CALL",
+                        format!("cannot call extern function `{callee}` in the interpreter (native-only)"),
                     ));
                 }
                 let mut call_locals = HashMap::new();
@@ -1813,6 +1825,12 @@ impl Runtime {
                             function.params.len(),
                             args.len()
                         ),
+                    ));
+                }
+                if function.is_extern {
+                    return Err(runtime_error(
+                        "RUNTIME_EXTERN_CALL",
+                        format!("cannot call extern function `{callee}` in the interpreter (native-only)"),
                     ));
                 }
                 let mut call_locals = HashMap::new();

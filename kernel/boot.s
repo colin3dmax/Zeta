@@ -5,6 +5,16 @@
 # here: give Zeta's `main` a valid stack pointer (every Zeta function uses stack
 # allocas), install the machine trap vector, then call main. `main` never
 # returns, but if it ever did we wait-for-interrupt forever.
+# Example assembly routine called FROM Zeta via `extern fn asm_add3(...)`,
+# demonstrating the C ABI: integer args arrive in a0, a1, a2; the result is
+# returned in a0. This is the same mechanism a scheduler's `switch_context`
+# would use.
+.global asm_add3
+asm_add3:
+    add  a0, a0, a1
+    add  a0, a0, a2
+    ret
+
 .section .text.boot
 .global _start
 _start:

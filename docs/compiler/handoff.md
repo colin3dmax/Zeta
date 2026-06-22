@@ -33,7 +33,8 @@ struct 字面量与字段;enum + payload;闭包 `|x| ...` + 捕获;泛型 `<T>`(
 **trait/impl(切片①②已实现)**:`trait Show { fn show(self: Self) -> String; }` / `impl Show for Point { ... }`;UFCS 自由函数派发 `show(p)` 按接收者具体类型路由到 `show$Point`。`trait`/`impl` 是上下文标识符(非保留字,fixpoint 安全);impl 在 desugar 展平为 mangled 自由函数(`Self`→target),三后端当普通函数处理;调用按首参类型在 typecheck(Self 作类型参数宽松检查)/解释器(运行时值类型)/native(ZType base)三处派发,差分一致。
 **方法调用语法(`902d69b` 已实现)**:`x.f(args)` ≡ `f(x, args)`,复用 UFCS/trait 派发。消歧规则:`a.b(..)` 是方法当且仅当路径 ROOT 是作用域内局部(枚举 `Type.Variant`/模块 `demo.math.fn` 的 root 不是局部)。parser 拦截非名字路径接收者(`xs[1].m()`),作用域感知的 `desugar::desugar_method_calls` 处理名字路径(仅单文件路径跑;module_graph 不跑)。
 **运算符重载(`f17017a` 已实现)**:非标量(struct/enum)操作数的 `a OP b` 派发到 `op$Type` trait 方法(`+`→add/`-`→sub/`==`→eq/`<`→lt 等,`mir::operator_trait_method`;排除 &&/||)。标量走内置快路径;仅在存在 `op$Base` 方法时派发 ⇒ 纯增量。五处接入:typecheck/mir verify/解释器/codegen/helper。
-**未实现**:并发原语、C ABI FFI(裸机内联汇编 csr/wfi 已有);可选:trait 默认方法/关联类型、string_split 等 stdlib 广度。
+**extern FFI(已实现)**:`extern fn name(..) -> ..;` —— C ABI 外部函数声明(无 body,链接器解析)。native-only(解释器拒绝)。详见 §6.2。
+**未实现**:并发原语(调度器现已可做,FFI 解锁);可选:trait 默认方法/关联类型、string_split 等 stdlib 广度。
 
 **后端**:解释器 `run_mir`(差分 oracle);native MIR→LLVM22(inkwell,122 codegen fn,JIT + AOT 独立二进制 + 热替换);WASM(浏览器 playground)。
 
@@ -127,7 +128,7 @@ LLVM_SYS_221_PREFIX=/opt/homebrew/opt/llvm cargo test --release --features llvm 
 - **✅ volatile MMIO**(`d80a208`/`7ecb785`):`mmio_{read,write}_{byte,word,dword}`(8/16... 即 8/32/64 位)volatile load/store 到 inttoptr;真 NS16550 UART 驱动(`6103e89`,init+LSR 轮询)。
 - **✅ 裸指针 `*T`**(`afcd901`,unsafe/native-only):`*T` 前缀语法 + Type::Ptr/ZType::Ptr 全栈;内置 `ptr_from_addr`/`ptr_addr`/`ptr_read`(支持整 struct)/`ptr_write`/`ptr_offset`(按元素步长)+ `array_data_addr`(数组缓冲区地址,DMA/测试)。typecheck 宽松兼容(任意 *A≈*B);解释器 inert ⇒ native/实机验证(tests/codegen_pointer.rs + kernel 实测 1337)。`ptr_from_addr` 元素由 let 注解 `*T` 精化(codegen Local 读注解)。
 - **✅ 内联汇编**(`afcd901` 后续提交,#4 前置完成):`csr_read`/`csr_write`/`csr_set`/`csr_clear`(CSR 号须为 Int 字面量,烤进指令)+ `wfi`。codegen 经 inkwell `create_inline_asm` + `build_indirect_call` 发 LLVM inline asm;riscv-only(host JIT 不能跑,解释器 inert)。实机:读 mhartid=0、mscratch 写读往返=31337。
-- **C ABI FFI**(声明 extern、按 C ABI 传参)——仍缺。
+- **✅ C ABI FFI**(`extern fn` 已实现):`extern fn name(..) -> ..;`(无 body,`extern` 上下文标识符,parser `consume_contextual_before_fn`)。codegen 只声明不生成 body(pass2 跳过 is_extern),链接器/JIT 解析符号;mir verify 跳过 extern;解释器拒绝 extern 调用(native-only)。实测:JIT 调 libc labs/llabs;内核经 C ABI 调 boot.s 的 asm_add3(100,20,3)=123。**这解锁了调度器**(Zeta 可调汇编 switch_context)。
 
 ### 6.3 OS 第三前置:并发原语(DevGame #77)
 - 原子操作(LLVM atomicrmw/cmpxchg)、内存屏障 → 自旋锁;之上做调度器/中断安全。

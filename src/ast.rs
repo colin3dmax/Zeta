@@ -86,6 +86,11 @@ pub struct Function {
     pub return_type: Option<String>,
     pub return_type_span: Option<Span>,
     pub body: Vec<Stmt>,
+    /// Declared `extern fn name(..) -> ..;` — an external (C ABI) function with
+    /// NO body, resolved by the linker (e.g. an assembly routine or a C library
+    /// symbol). Native-only: the interpreter cannot call it. Calls type-check
+    /// against the declared signature and lower to a plain call of the symbol.
+    pub is_extern: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

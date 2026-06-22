@@ -42,6 +42,9 @@ pub struct MirFunction {
     /// Carried from `reloadable fn` (see ast::Function::reloadable): marks this
     /// function as an opt-in hot-swap boundary for the runtime / native backend.
     pub reloadable: bool,
+    /// Declared `extern fn` — no body; codegen emits only a declaration and the
+    /// linker resolves the symbol. The interpreter cannot call it (native-only).
+    pub is_extern: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -310,6 +313,7 @@ fn lower_function(
             .map(|stmt| lower_stmt(stmt, enum_variants))
             .collect(),
         reloadable: function.reloadable,
+        is_extern: function.is_extern,
     }
 }
 
@@ -1102,6 +1106,11 @@ impl<'a> MirVerifier<'a> {
     }
 
     fn verify_function(&mut self, function: &MirFunction) {
+        // Extern declarations have no body — nothing to verify (their signature
+        // is checked at call sites; the symbol is resolved by the linker).
+        if function.is_extern {
+            return;
+        }
         let mut locals = HashMap::new();
         for param in &function.params {
             if locals
