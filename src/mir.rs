@@ -905,6 +905,36 @@ fn pattern_text(pattern: &MirPattern) -> String {
     }
 }
 
+/// The trait-method name a binary operator overloads to, for a NON-scalar
+/// operand (`+` → `add`, `==` → `eq`, ...). Routes via UFCS/trait dispatch to
+/// `{name}${TypeBase}`, exactly like a method call. `&&`/`||` are excluded —
+/// they short-circuit and are boolean-only. Reuses [`binary_op_text`]'s names.
+/// Whether a type name is a built-in scalar/aggregate (not an overloadable
+/// user struct/enum) — used to gate operator-overload dispatch.
+fn is_scalar_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "Int" | "Float"
+            | "Bool"
+            | "String"
+            | "Unit"
+            | "IntArray"
+            | "StringArray"
+            | "BoolArray"
+            | "FloatArray"
+            | "Array"
+            | "Tuple"
+            | "Fn"
+    )
+}
+
+pub fn operator_trait_method(op: BinaryOp) -> Option<&'static str> {
+    match op {
+        BinaryOp::And | BinaryOp::Or => None,
+        other => Some(binary_op_text(other)),
+    }
+}
+
 pub fn binary_op_text(op: BinaryOp) -> &'static str {
     match op {
         BinaryOp::Add => "add",
@@ -1531,6 +1561,24 @@ impl<'a> MirVerifier<'a> {
     ) -> MirType {
         let left_ty = self.verify_expr(left, locals);
         let right_ty = self.verify_expr(right, locals);
+        // Operator overloading: a non-scalar (struct/enum) left operand dispatches
+        // to the operator's trait method (native/interpreter). Lenient here — the
+        // result type is established by typecheck; the verifier just returns the
+        // method's declared return (or Unknown).
+        if let MirType::Named(base) = &left_ty {
+            if !is_scalar_type_name(base) && operator_trait_method(op).is_some() {
+                let dispatch = crate::type_syntax::dispatch_name(
+                    operator_trait_method(op).unwrap(),
+                    base,
+                );
+                return self
+                    .functions
+                    .get(dispatch.as_str())
+                    .and_then(|f| f.return_type.as_deref())
+                    .map(parse_mir_type)
+                    .unwrap_or(MirType::Unknown);
+            }
+        }
         match op {
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
                 // Numeric: Int or Float (operands must match the left's type).

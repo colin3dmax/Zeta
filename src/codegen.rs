@@ -4380,7 +4380,30 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             return Ok((self.lower_logical(op, left, right)?.into(), ZType::Int));
         }
         let (lv, lt) = self.lower_expr(left)?;
-        let (rv, _rt) = self.lower_expr(right)?;
+        let (rv, rt) = self.lower_expr(right)?;
+        // Operator overloading: a non-scalar (struct/enum) left operand dispatches
+        // `a OP b` to its operator trait method `{name}${Base}` (e.g. `+` →
+        // `add$Point`), with both operands taken by value (bind_owned). Scalars
+        // fall through to the built-in paths below.
+        if matches!(lt, ZType::Struct(_) | ZType::Enum(_)) {
+            if let Some(method) = crate::mir::operator_trait_method(op) {
+                let dispatch = crate::type_syntax::dispatch_name(method, &zty_base_name(&lt));
+                if let Some(&func) = self.functions.get(&dispatch) {
+                    let lo = self.bind_owned(left, lv, &lt);
+                    let ro = self.bind_owned(right, rv, &rt);
+                    let call = self
+                        .builder
+                        .build_call(func, &[lo.into(), ro.into()], "opcall")
+                        .unwrap();
+                    let val = call
+                        .try_as_basic_value()
+                        .basic()
+                        .ok_or_else(|| format!("`{dispatch}` returned no value"))?;
+                    let ret = self.types.returns.get(&dispatch).cloned().unwrap_or(lt.clone());
+                    return Ok((val, ret));
+                }
+            }
+        }
         // String == / != is a byte-compare (typecheck guarantees matching types).
         if matches!(op, BinaryOp::Eq | BinaryOp::NotEq) && lt == ZType::Str {
             let eq = self.string_eq(lv.into_struct_value(), rv.into_struct_value());

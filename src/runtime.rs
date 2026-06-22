@@ -1395,9 +1395,20 @@ impl MirRuntime {
                 )?))
             }
             _ => {
-                let left = self.eval_expr(left, locals)?;
-                let right = self.eval_expr(right, locals)?;
-                eval_binary(op, left, right)
+                let lv = self.eval_expr(left, locals)?;
+                let rv = self.eval_expr(right, locals)?;
+                // Operator overloading: a non-scalar operand dispatches to the
+                // operator's trait method `{name}${Base}` (e.g. `+` → `add$Point`).
+                if let Some(method) = crate::mir::operator_trait_method(op) {
+                    if matches!(lv, Value::Struct { .. } | Value::Enum { .. }) {
+                        let base = value_type_base(&lv);
+                        let mangled = crate::type_syntax::dispatch_name(method, &base);
+                        if let Some(function) = self.functions.get(&mangled).cloned() {
+                            return self.run_function_with_args(&function, vec![lv, rv], &mangled);
+                        }
+                    }
+                }
+                eval_binary(op, lv, rv)
             }
         }
     }

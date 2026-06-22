@@ -1212,6 +1212,20 @@ fn infer_expr(
         } => {
             let left_type = infer_expr(left, locals, functions, structs, enums, diagnostics);
             let right_type = infer_expr(right, locals, functions, structs, enums, diagnostics);
+            // Operator overloading: a non-scalar (struct/enum) left operand whose
+            // type has the operator's trait method `{name}${Base}` dispatches
+            // there; the result is the method's return type. Built-in scalar ops
+            // fall through to the checks below.
+            if matches!(left_type, Type::Named(_) | Type::Generic(_, _)) {
+                if let Some(method) = crate::mir::operator_trait_method(*op) {
+                    if let Some(base) = type_base_name(&left_type) {
+                        let dispatch = crate::type_syntax::dispatch_name(method, &base);
+                        if let Some(sig) = functions.get(&dispatch) {
+                            return sig.return_type.clone();
+                        }
+                    }
+                }
+            }
             match op {
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
                     // Numeric: Int or Float (operands must match); result is the
