@@ -2227,6 +2227,12 @@ fn is_std_builtin(callee: &str) -> bool {
             | "mmio_read_word"
             | "mmio_write_dword"
             | "mmio_read_dword"
+            | "ptr_from_addr"
+            | "ptr_addr"
+            | "ptr_read"
+            | "ptr_write"
+            | "ptr_offset"
+            | "array_data_addr"
             | "ascii_is_digit"
             | "ascii_is_alpha"
             | "ascii_is_alnum"
@@ -2514,6 +2520,31 @@ fn eval_std_builtin(callee: &str, args: Vec<Value>) -> Result<Value, Diagnostic>
         }
         "mmio_read_byte" | "mmio_read_word" | "mmio_read_dword" => {
             let [_addr]: [Value; 1] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            Ok(Value::Int(0))
+        }
+        // Raw pointers are native-only (the interpreter cannot deref a real
+        // address). A pointer is modelled as its integer address; reads are inert
+        // (yield 0), writes are no-ops. Programs using pointers have no meaningful
+        // interpreter result — they are validated natively / on hardware.
+        "ptr_from_addr" | "ptr_addr" | "ptr_offset" => {
+            let mut it = expect_arity(callee, args)?.into_iter();
+            let p = match it.next() {
+                Some(Value::Int(n)) => n,
+                _ => 0,
+            };
+            Ok(Value::Int(p)) // identity / address passthrough
+        }
+        "ptr_read" => {
+            let [_p]: [Value; 1] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            Ok(Value::Int(0))
+        }
+        "ptr_write" => {
+            let [_p, _v]: [Value; 2] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            Ok(Value::Int(0))
+        }
+        "array_data_addr" => {
+            // No stable host address in the interpreter; native-only.
+            let [_a]: [Value; 1] = expect_arity(callee, args)?.try_into().ok().unwrap();
             Ok(Value::Int(0))
         }
         "ascii_is_digit" => eval_ascii_predicate(callee, args, |byte| byte.is_ascii_digit()),

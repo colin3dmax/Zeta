@@ -106,6 +106,10 @@ enum ZType {
     /// environment. The carried `(param types, return type)` give the callee
     /// signature for indirect calls.
     Closure(Vec<ZType>, Box<ZType>),
+    /// A raw pointer `*T` (unsafe, native-only). Represented as an LLVM opaque
+    /// `ptr`; the pointee `T` drives the width of `ptr_read`/`ptr_write` loads
+    /// and the element stride of `ptr_offset`. Not owned — never cloned/dropped.
+    Ptr(Box<ZType>),
 }
 
 /// Per-struct layout: field name → index (declaration order) and each field's
@@ -299,6 +303,7 @@ impl<'ctx> Types<'ctx> {
                 self.context.struct_type(&field_types, false).into()
             }
             ZType::Closure(_, _) => closure_struct_type(self.context).into(),
+            ZType::Ptr(_) => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
         }
     }
 
@@ -392,6 +397,9 @@ impl<'ctx> Types<'ctx> {
     /// on the fly and registering their instances. Falls back to `parse_ztype`
     /// for plain (non-generic) type strings.
     fn resolve_ann_ztype(&self, ann: &str) -> Result<ZType, String> {
+        if let Some(pointee) = crate::type_syntax::ptr_parts(ann) {
+            return Ok(ZType::Ptr(Box::new(self.resolve_ann_ztype(pointee)?)));
+        }
         if let Some((params, ret)) = crate::type_syntax::fn_parts(ann) {
             let ptys = params
                 .iter()
@@ -534,6 +542,9 @@ impl<'ctx> Types<'ctx> {
 }
 
 fn parse_ztype(text: &str, struct_names: &[&str], enum_names: &[&str]) -> Result<ZType, String> {
+    if let Some(pointee) = crate::type_syntax::ptr_parts(text) {
+        return Ok(ZType::Ptr(Box::new(parse_ztype(pointee, struct_names, enum_names)?)));
+    }
     if let Some((params, ret)) = crate::type_syntax::fn_parts(text) {
         let param_types = params
             .iter()
@@ -685,6 +696,7 @@ fn zty_mangle(zt: &ZType) -> String {
             let inner: Vec<String> = params.iter().map(zty_mangle).collect();
             format!("Fn{}_{}_r{}", inner.len(), inner.join("_"), zty_mangle(ret))
         }
+        ZType::Ptr(elem) => format!("Ptr{}", zty_mangle(elem)),
     }
 }
 
@@ -702,6 +714,7 @@ fn zty_base_name(zt: &ZType) -> String {
         ZType::Array(_) => "Array".to_string(),
         ZType::Tuple(_) => "Tuple".to_string(),
         ZType::Closure(..) => "Fn".to_string(),
+        ZType::Ptr(_) => "Ptr".to_string(),
     }
 }
 
@@ -809,6 +822,7 @@ fn llvm_type_of<'ctx>(
             context.struct_type(&field_types, false).into()
         }
         ZType::Closure(_, _) => closure_struct_type(context).into(),
+        ZType::Ptr(_) => context.ptr_type(inkwell::AddressSpace::default()).into(),
     }
 }
 
@@ -1420,6 +1434,11 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             ZType::Enum(_) => enum_struct_type(self.context).const_zero().into(),
             ZType::Tuple(_) => self.types.llvm(zt).const_zero(),
             ZType::Closure(_, _) => closure_struct_type(self.context).const_zero().into(),
+            ZType::Ptr(_) => self
+                .context
+                .ptr_type(inkwell::AddressSpace::default())
+                .const_null()
+                .into(),
         }
     }
 
@@ -2225,11 +2244,20 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
 
     fn lower_stmt(&mut self, stmt: &MirStmt) -> Result<bool, String> {
         match stmt {
-            MirStmt::Local { name, value, .. } => {
+            MirStmt::Local { name, value, ty, .. } => {
                 // Lower the initializer FIRST (so `let x = x + 1` reads the outer
                 // `x`), then allocate a fresh slot typed by the value and bind it —
                 // shadowing any outer binding until this scope ends.
-                let (v, vt) = self.lower_expr(value)?;
+                let (v, mut vt) = self.lower_expr(value)?;
+                // A `*T` annotation refines a raw pointer's pointee: `ptr_from_addr`
+                // yields a default `*Int`, but `let p: *Point = ...` must type `p`
+                // as `*Point` so `ptr_read(p)` loads a `Point`. The value's LLVM
+                // repr (an opaque `ptr`) is identical, so only the ZType changes.
+                if let (ZType::Ptr(_), Some(ann)) = (&vt, ty) {
+                    if let Ok(resolved @ ZType::Ptr(_)) = self.types.resolve_ann_ztype(ann) {
+                        vt = resolved;
+                    }
+                }
                 let v = self.bind_owned(value, v, &vt);
                 let slot = self.entry_alloca(name, self.types.llvm(&vt));
                 self.builder.build_store(slot, v).unwrap();
@@ -3849,6 +3877,70 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                     b.build_int_z_extend(load, self.i64t(), "mmiow").unwrap()
                 };
                 Ok(Some((widened.into(), ZType::Int)))
+            }
+            // Raw pointers (unsafe, native-only). A `*T` is an LLVM opaque `ptr`;
+            // the pointee ZType drives load/store width and offset stride.
+            "ptr_from_addr" => {
+                // Int address → `*T`. The element defaults to Int here; the
+                // binding's annotation (a `*T` let/param) refines the slot type,
+                // which is what `ptr_read`/`ptr_write` consult for the width.
+                let addr = self.lower_int(&args[0])?;
+                let ptr = b
+                    .build_int_to_ptr(addr, self.context.ptr_type(inkwell::AddressSpace::default()), "pfa")
+                    .unwrap();
+                Ok(Some((ptr.into(), ZType::Ptr(Box::new(ZType::Int)))))
+            }
+            "ptr_addr" => {
+                let (pv, _) = self.lower_expr(&args[0])?;
+                let addr = b
+                    .build_ptr_to_int(pv.into_pointer_value(), self.i64t(), "pta")
+                    .unwrap();
+                Ok(Some((addr.into(), ZType::Int)))
+            }
+            "ptr_read" => {
+                let (pv, pt) = self.lower_expr(&args[0])?;
+                let elem = match pt {
+                    ZType::Ptr(e) => *e,
+                    _ => ZType::Int,
+                };
+                let val = b
+                    .build_load(self.types.llvm(&elem), pv.into_pointer_value(), "pread")
+                    .unwrap();
+                Ok(Some((val, elem)))
+            }
+            "ptr_write" => {
+                let (pv, _) = self.lower_expr(&args[0])?;
+                let (val, _) = self.lower_expr(&args[1])?;
+                b.build_store(pv.into_pointer_value(), val).unwrap();
+                Ok(Some((self.i64t().const_zero().into(), ZType::Int)))
+            }
+            "array_data_addr" => {
+                // The data pointer of an array's `{len, ptr}` value, as an Int —
+                // for raw access or handing a buffer to hardware.
+                let (a, _) = self.lower_expr(&args[0])?;
+                let data = b
+                    .build_extract_value(a.into_struct_value(), 1, "adata")
+                    .unwrap()
+                    .into_pointer_value();
+                let addr = b.build_ptr_to_int(data, self.i64t(), "aaddr").unwrap();
+                Ok(Some((addr.into(), ZType::Int)))
+            }
+            "ptr_offset" => {
+                // p + count*sizeof(T), via ptrtoint/add/inttoptr (no GEP needed).
+                let (pv, pt) = self.lower_expr(&args[0])?;
+                let count = self.lower_int(&args[1])?;
+                let elem = match &pt {
+                    ZType::Ptr(e) => (**e).clone(),
+                    _ => ZType::Int,
+                };
+                let stride = self.types.llvm(&elem).size_of().unwrap();
+                let base = b.build_ptr_to_int(pv.into_pointer_value(), self.i64t(), "po.base").unwrap();
+                let delta = b.build_int_mul(count, stride, "po.delta").unwrap();
+                let sum = b.build_int_add(base, delta, "po.sum").unwrap();
+                let ptr = b
+                    .build_int_to_ptr(sum, self.context.ptr_type(inkwell::AddressSpace::default()), "po.ptr")
+                    .unwrap();
+                Ok(Some((ptr.into(), pt)))
             }
             // Growable arrays. bool arrays share the Int (i64) element repr; string
             // arrays carry `{len,ptr}` elements (stride from the element type).

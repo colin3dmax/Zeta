@@ -86,6 +86,15 @@ fn main() -> Int {
   print(string_concat("mem64 = ", int_to_string(mmio_read_dword(scratch + 8))));
   print("\n");
 
+  // Typed raw pointers `*Int` over the same scratch region: write through a
+  // pointer, stride to the next element, read both back.
+  let p: *Int = ptr_from_addr(scratch + 64);
+  ptr_write(p, 1000);
+  let q: *Int = ptr_offset(p, 1);                // p + 1 element (8 bytes)
+  ptr_write(q, 337);
+  print(string_concat("ptr[0]+ptr[1] = ", int_to_string(ptr_read(p) + ptr_read(q))));
+  print("\n");
+
   print("kernel: done, halting.\n");
 
   let mut spin: Int = 0;

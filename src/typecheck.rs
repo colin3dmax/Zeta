@@ -48,6 +48,10 @@ enum Type {
     /// erased type parameter `T`). An erased `Named(base)` (from a value-flow
     /// constructor) stays compatible with it.
     Generic(String, Vec<Type>),
+    /// A raw pointer `*T` (unsafe, native-only). Pointee tracked for `ptr_read`'s
+    /// result type; pointer-to-pointer assignment is lenient (any `*A` ≈ any
+    /// `*B`) since pointers are an escape hatch with no safety guarantees.
+    Ptr(Box<Type>),
     Unit,
     Error,
 }
@@ -127,6 +131,9 @@ pub fn check_with_external_items(
             .or_insert_with(|| external_function_signature(function, &structs, &enums));
     }
     for (name, sig) in generic_array_builtin_signatures() {
+        functions.entry(name).or_insert(sig);
+    }
+    for (name, sig) in pointer_builtin_signatures() {
         functions.entry(name).or_insert(sig);
     }
     validate_declared_types(module, &structs, &enums, &mut diagnostics);
@@ -285,6 +292,10 @@ fn validate_type_name(
     type_params: &[String],
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    if let Some(pointee) = crate::type_syntax::ptr_parts(name) {
+        validate_type_name(pointee, span, structs, enums, type_params, diagnostics);
+        return;
+    }
     if let Some((params, ret)) = crate::type_syntax::fn_parts(name) {
         for part in params {
             validate_type_name(part, span, structs, enums, type_params, diagnostics);
@@ -364,6 +375,34 @@ fn generic_array_builtin_signatures() -> Vec<(String, FunctionSignature)> {
                 return_type: arr(),
                 bounds: Vec::new(),
             },
+        ),
+    ]
+}
+
+/// Raw-pointer intrinsics (unsafe, native-only). Polymorphic over the pointee
+/// `E`: for read/write/offset/addr `E` flows from the `*E` argument; for
+/// `ptr_from_addr` `E` is return-only and resolved from the binding's annotation
+/// (pointer-to-pointer assignment is lenient, so an unbound `E` still type-
+/// checks). `Unit` returns are spelled `Int` to match the builtin ABI.
+fn pointer_builtin_signatures() -> Vec<(String, FunctionSignature)> {
+    let e = || Type::Named("E".to_string());
+    let ptr = || Type::Ptr(Box::new(e()));
+    let sig = |params: Vec<Type>, return_type: Type| FunctionSignature {
+        type_params: vec!["E".to_string()],
+        params,
+        return_type,
+        bounds: Vec::new(),
+    };
+    vec![
+        ("ptr_from_addr".to_string(), sig(vec![Type::Int], ptr())),
+        ("ptr_addr".to_string(), sig(vec![ptr()], Type::Int)),
+        ("ptr_read".to_string(), sig(vec![ptr()], e())),
+        ("ptr_write".to_string(), sig(vec![ptr(), e()], Type::Int)),
+        ("ptr_offset".to_string(), sig(vec![ptr(), Type::Int], ptr())),
+        // Address of an array's data buffer (for raw access / passing to hardware).
+        (
+            "array_data_addr".to_string(),
+            sig(vec![Type::Array(Box::new(e()))], Type::Int),
         ),
     ]
 }
@@ -1047,6 +1086,7 @@ fn check_match_exhaustiveness(
         | Type::Array(_)
         | Type::Tuple(_)
         | Type::Fn(_, _)
+        | Type::Ptr(_)
         | Type::Range
         | Type::Unit
         | Type::Error => {}
@@ -1797,6 +1837,9 @@ fn parse_type_with_params(
     enums: &HashMap<String, EnumType>,
     type_params: &[String],
 ) -> Type {
+    if let Some(pointee) = crate::type_syntax::ptr_parts(name) {
+        return Type::Ptr(Box::new(parse_type_with_params(pointee, structs, enums, type_params)));
+    }
     if let Some((params, ret)) = crate::type_syntax::fn_parts(name) {
         return Type::Fn(
             params
@@ -1856,6 +1899,7 @@ fn unify_generic(declared: &Type, actual: &Type, type_params: &[String], subst: 
         }
     }
     match (declared, actual) {
+        (Type::Ptr(d), Type::Ptr(a)) => unify_generic(d, a, type_params, subst),
         (Type::Array(d), Type::Array(a)) => unify_generic(d, a, type_params, subst),
         (Type::Tuple(ds), Type::Tuple(as_)) => {
             ds.len() == as_.len()
@@ -1888,6 +1932,7 @@ fn unify_generic(declared: &Type, actual: &Type, type_params: &[String], subst: 
 fn substitute_generic(ty: &Type, subst: &HashMap<String, Type>) -> Type {
     match ty {
         Type::Named(name) => subst.get(name).cloned().unwrap_or_else(|| ty.clone()),
+        Type::Ptr(inner) => Type::Ptr(Box::new(substitute_generic(inner, subst))),
         Type::Array(inner) => Type::Array(Box::new(substitute_generic(inner, subst))),
         Type::Tuple(elems) => {
             Type::Tuple(elems.iter().map(|e| substitute_generic(e, subst)).collect())
@@ -1941,6 +1986,7 @@ fn type_base_name(ty: &Type) -> Option<String> {
         Type::Fn(_, _) => Some("Fn".to_string()),
         Type::Named(name) => Some(name.clone()),
         Type::Generic(base, _) => Some(base.clone()),
+        Type::Ptr(_) => Some("Ptr".to_string()),
         Type::Range | Type::Unit | Type::Error => None,
     }
 }
@@ -2089,6 +2135,9 @@ fn enum_types(module: &Module) -> HashMap<String, EnumType> {
 }
 
 fn parse_type(name: &str) -> Type {
+    if let Some(pointee) = crate::type_syntax::ptr_parts(name) {
+        return Type::Ptr(Box::new(parse_type(pointee)));
+    }
     if let Some((params, ret)) = crate::type_syntax::fn_parts(name) {
         return Type::Fn(
             params.iter().map(|p| parse_type(p)).collect(),
@@ -2125,6 +2174,9 @@ fn parse_declared_type(
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
 ) -> Type {
+    if let Some(pointee) = crate::type_syntax::ptr_parts(name) {
+        return Type::Ptr(Box::new(parse_declared_type(pointee, structs, enums)));
+    }
     if let Some((params, ret)) = crate::type_syntax::fn_parts(name) {
         return Type::Fn(
             params
@@ -2210,6 +2262,12 @@ fn expect_type(
         expect_type(f, e, code, span, diagnostics);
         return;
     }
+    // Raw pointers are an unsafe escape hatch: any `*A` is assignable to any
+    // `*B` (e.g. a `*Int` from `ptr_from_addr` into a `*Point` slot). No pointee
+    // check — correctness rests with the programmer and the native backend.
+    if let (Type::Ptr(_), Type::Ptr(_)) = (found, expected) {
+        return;
+    }
     // A generic type parameter (erased instantiation) is compatible with any
     // concrete type for assignment-like checks (let/return/call-arg/field/
     // payload/match). But an OPERATION that requires a concrete capability
@@ -2265,6 +2323,7 @@ impl Type {
                 let inner: Vec<String> = args.iter().map(|a| a.display()).collect();
                 format!("{base}<{}>", inner.join(", "))
             }
+            Type::Ptr(pointee) => format!("*{}", pointee.display()),
             Type::Unit => "Unit".to_string(),
             Type::Error => "<error>".to_string(),
         }

@@ -1611,6 +1611,28 @@ impl<'a> MirVerifier<'a> {
             }
             return MirType::Array(Box::new(elem));
         }
+        // Raw-pointer intrinsics (unsafe, native-only). Checked leniently: the
+        // verifier just walks the arguments. `ptr_addr` yields Int; the others'
+        // element type is recovered by native codegen, so Unknown here.
+        if matches!(
+            callee,
+            "ptr_from_addr" | "ptr_addr" | "ptr_read" | "ptr_write" | "ptr_offset"
+        ) {
+            for arg in args {
+                self.verify_expr(arg, locals);
+            }
+            return if callee == "ptr_addr" || callee == "ptr_write" {
+                MirType::named("Int")
+            } else {
+                MirType::Unknown
+            };
+        }
+        if callee == "array_data_addr" {
+            for arg in args {
+                self.verify_expr(arg, locals);
+            }
+            return MirType::named("Int");
+        }
         let Some(function) = self.functions.get(callee).copied() else {
             // Indirect call through a local of function type.
             if let Some(MirType::Fn(params, ret)) = locals.get(callee).cloned() {

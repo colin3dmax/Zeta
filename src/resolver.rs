@@ -60,6 +60,17 @@ pub fn resolve_with_imports_functions_enums_and_ambiguous(
     // Generic array intrinsics (`array_push`/`array_repeat`) are always callable.
     functions.insert("array_push".to_string());
     functions.insert("array_repeat".to_string());
+    // Raw-pointer intrinsics (unsafe, native-only) are always callable too.
+    for name in [
+        "ptr_from_addr",
+        "ptr_addr",
+        "ptr_read",
+        "ptr_write",
+        "ptr_offset",
+        "array_data_addr",
+    ] {
+        functions.insert(name.to_string());
+    }
     let mut top_level_names = top_level_names(module);
     let mut enum_variants = enum_variants(module);
     for standard_enum in standard_enum_variants(module) {

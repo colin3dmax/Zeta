@@ -1136,6 +1136,14 @@ impl Parser {
         &mut self,
         message: &'static str,
     ) -> Result<(String, Span), Diagnostic> {
+        // Raw pointer type `*T` (prefix): canonicalized to the type string `*T`.
+        // Only valid in type position, so it never clashes with `*` multiply.
+        if self.check_symbol(Symbol::Star) {
+            let start = self.peek().span.start;
+            self.pos += 1;
+            let (inner, ispan) = self.parse_type_annotation("expected pointee type after `*`")?;
+            return Ok((format!("*{inner}"), Span::new(start, ispan.end)));
+        }
         if self.check_keyword(Keyword::Fn) {
             let start = self.peek().span.start;
             self.pos += 1;

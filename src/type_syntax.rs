@@ -39,6 +39,14 @@ pub fn tuple_parts(name: &str) -> Option<Vec<&str>> {
     }
 }
 
+/// If `name` is a raw pointer type string `*T`, return its pointee type string
+/// `T`. Returns `None` otherwise. The pointer prefix binds outermost, so
+/// `*Point`, `*(Int, Int)`, `**Int` all parse with one strip per level.
+pub fn ptr_parts(name: &str) -> Option<&str> {
+    let trimmed = name.trim();
+    trimmed.strip_prefix('*').map(str::trim)
+}
+
 /// Split a comma-separated type list at the top level (respecting nested parens),
 /// returning the trimmed element strings. An empty/blank input yields `vec![]`.
 pub fn split_top_level(inner: &str) -> Vec<&str> {
