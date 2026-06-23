@@ -2953,7 +2953,7 @@ fn normalize_string_escapes(text: String) -> String {
     let byte: Int = string_byte_at(text, i);
     if byte == 92 && i + 1 < len {
       let nextb: Int = string_byte_at(text, i + 1);
-      if nextb == 110 || nextb == 92 || nextb == 34 {
+      if nextb == 110 || nextb == 92 || nextb == 34 || nextb == 116 || nextb == 114 || nextb == 48 {
         out = string_concat(out, string_byte_slice(text, i, 2));
       } else {
         out = string_concat(out, string_byte_slice(text, i + 1, 1));

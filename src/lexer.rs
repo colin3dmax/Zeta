@@ -220,6 +220,24 @@ impl<'a> Lexer<'a> {
                             value.push('\n');
                             self.bump_char();
                         }
+                        Some('t') => {
+                            value.push('\t');
+                            self.bump_char();
+                        }
+                        Some('r') => {
+                            value.push('\r');
+                            self.bump_char();
+                        }
+                        Some('0') => {
+                            value.push('\0');
+                            self.bump_char();
+                        }
+                        Some('\\') => {
+                            value.push('\\');
+                            self.bump_char();
+                        }
+                        // Unknown escape: drop the backslash, keep the character
+                        // (lenient — `\<` → `<`). Kept for self-hosting parity.
                         Some(other) => {
                             value.push(other);
                             self.bump_char();

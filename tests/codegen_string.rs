@@ -38,6 +38,22 @@ fn main() -> Int {
 }
 
 #[test]
+fn string_escapes_decode_to_bytes() {
+    // \t→9, \r→13, \n→10, \\→92, \"→34, \0→0; both backends agree (lexer-level).
+    // (Rust raw strings here, so `\\t` in source is the Zeta escape `\t`.)
+    assert_eq!(check(r#"fn main() -> Int { return string_byte_at("\t", 0); }"#), 9);
+    assert_eq!(check(r#"fn main() -> Int { return string_byte_at("\r", 0); }"#), 13);
+    assert_eq!(check(r#"fn main() -> Int { return string_byte_at("\n", 0); }"#), 10);
+    assert_eq!(check(r#"fn main() -> Int { return string_byte_at("\\", 0); }"#), 92);
+    assert_eq!(check(r#"fn main() -> Int { return string_byte_at("\"", 0); }"#), 34);
+    assert_eq!(check(r#"fn main() -> Int { return string_byte_at("\0", 0); }"#), 0);
+    // each escape is exactly one byte: "a\tb" has length 3.
+    assert_eq!(check(r#"fn main() -> Int { return string_len("a\tb\r\n"); }"#), 5);
+    // an unknown escape drops the backslash (lenient): "\q" → "q" (len 1).
+    assert_eq!(check(r#"fn main() -> Int { return string_byte_at("\q", 0); }"#), 113);
+}
+
+#[test]
 fn empty_string_len() {
     let src = "\
 fn main() -> Int {

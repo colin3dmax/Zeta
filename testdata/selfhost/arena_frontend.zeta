@@ -2384,10 +2384,10 @@ fn indent_of(depth: Int) -> String {
   return out;
 }
 
-// Replicate the Rust lexer's string-escape contract: `\"`, `\n`, `\\` keep their
-// backslash (re-emitted by Rust's Debug formatting); every other `\<x>` drops the
-// backslash and keeps x; real TAB/CR/LF bytes render as `\t`/`\r`/`\n`. The input
-// `text` is the raw token slice including its surrounding quotes.
+// Replicate the Rust lexer's string-escape contract: `\"`, `\n`, `\t`, `\r`,
+// `\0`, `\\` decode to real bytes and Rust's Debug re-emits them WITH the
+// backslash; every other `\<x>` drops the backslash and keeps x; raw TAB/CR/LF
+// bytes render as `\t`/`\r`/`\n`. Input `text` is the raw token slice w/ quotes.
 fn normalize_string_escapes(text: String) -> String {
   let len: Int = string_len(text);
   let mut out: String = "";
@@ -2396,7 +2396,7 @@ fn normalize_string_escapes(text: String) -> String {
     let byte: Int = string_byte_at(text, i);
     if byte == 92 && i + 1 < len {
       let nextb: Int = string_byte_at(text, i + 1);
-      if nextb == 110 || nextb == 92 || nextb == 34 {
+      if nextb == 110 || nextb == 92 || nextb == 34 || nextb == 116 || nextb == 114 || nextb == 48 {
         out = string_concat(out, string_byte_slice(text, i, 2));
       } else {
         out = string_concat(out, string_byte_slice(text, i + 1, 1));
