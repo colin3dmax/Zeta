@@ -1289,7 +1289,9 @@ impl<'a> MirVerifier<'a> {
                 let mut covered_enum_variants: HashMap<String, HashSet<String>> = HashMap::new();
                 let mut covered_bool_patterns = HashSet::new();
                 for arm in arms {
-                    if matches!(arm.pattern, MirPattern::Wildcard) {
+                    // A `Name` binding is a catch-all too (it matches any value),
+                    // exactly like `_` — matching typecheck's exhaustiveness rule.
+                    if matches!(arm.pattern, MirPattern::Wildcard | MirPattern::Name(_)) {
                         has_wildcard = true;
                     }
                     if let MirPattern::Bool(value) = &arm.pattern {

@@ -2564,6 +2564,11 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
     /// `unreachable`. Returns whether control is guaranteed terminated afterwards.
     fn lower_match(&mut self, value: &MirExpr, arms: &[crate::mir::MirMatchArm]) -> Result<bool, String> {
         let (val, vty) = self.lower_expr(value)?;
+        // A String scrutinee can't drive an integer `switch`; lower it as a
+        // sequential chain of `string_eq` tests (first match wins).
+        if vty == ZType::Str {
+            return self.lower_string_match(val, arms);
+        }
         let scrutinee = match &vty {
             ZType::Enum(_) => self
                 .builder
@@ -2700,6 +2705,73 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             self.locals = scope;
         }
 
+        self.builder.position_at_end(end_bb);
+        Ok(false)
+    }
+
+    /// Lower a `match` on a String scrutinee as a sequential chain of `string_eq`
+    /// tests — `match s { "a" -> .., "b" -> .., _ -> .. }`. Each String arm tests
+    /// equality and branches to its body or the next test; the catch-all
+    /// (Name/Wildcard, required for exhaustiveness since strings are unbounded)
+    /// terminates the chain. Mirrors the interpreter's first-match-wins order.
+    fn lower_string_match(
+        &mut self,
+        sval: BasicValueEnum<'ctx>,
+        arms: &[crate::mir::MirMatchArm],
+    ) -> Result<bool, String> {
+        let scrutinee = sval.into_struct_value();
+        let end_bb = self.context.append_basic_block(self.llvm_fn, "smatch.end");
+        // `cur` is the block where the next arm's test is emitted.
+        let mut cur = self.builder.get_insert_block().unwrap();
+        let mut fell_through = true;
+        for arm in arms {
+            self.builder.position_at_end(cur);
+            match &arm.pattern {
+                MirPattern::String(text) => {
+                    let (lit, _) = self.lower_expr(&MirExpr::String(text.clone()))?;
+                    let eq = self.string_eq(scrutinee, lit.into_struct_value());
+                    let arm_bb = self.context.append_basic_block(self.llvm_fn, "smatch.arm");
+                    let next_bb = self.context.append_basic_block(self.llvm_fn, "smatch.next");
+                    self.builder.build_conditional_branch(eq, arm_bb, next_bb).unwrap();
+                    self.builder.position_at_end(arm_bb);
+                    let scope = self.locals.clone();
+                    if !self.lower_stmts(&arm.body)? {
+                        self.builder.build_unconditional_branch(end_bb).unwrap();
+                    }
+                    self.locals = scope;
+                    cur = next_bb;
+                }
+                MirPattern::Name(name) => {
+                    // Catch-all binding: owns a clone of the scrutinee string.
+                    let scope = self.locals.clone();
+                    let cloned = self.clone_value(sval, &ZType::Str);
+                    let slot = self.entry_alloca(name, self.types.llvm(&ZType::Str));
+                    self.builder.build_store(slot, cloned).unwrap();
+                    self.locals.insert(name.clone(), (slot, ZType::Str));
+                    if !self.lower_stmts(&arm.body)? {
+                        self.builder.build_unconditional_branch(end_bb).unwrap();
+                    }
+                    self.locals = scope;
+                    fell_through = false;
+                    break;
+                }
+                MirPattern::Wildcard => {
+                    let scope = self.locals.clone();
+                    if !self.lower_stmts(&arm.body)? {
+                        self.builder.build_unconditional_branch(end_bb).unwrap();
+                    }
+                    self.locals = scope;
+                    fell_through = false;
+                    break;
+                }
+                _ => return Err("non-string pattern in a string match".into()),
+            }
+        }
+        // No catch-all (should be unreachable — typecheck requires exhaustiveness).
+        if fell_through {
+            self.builder.position_at_end(cur);
+            self.builder.build_unreachable().unwrap();
+        }
         self.builder.position_at_end(end_bb);
         Ok(false)
     }
