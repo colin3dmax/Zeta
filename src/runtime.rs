@@ -1205,7 +1205,9 @@ impl MirRuntime {
                 eval_unary(*op, value)
             }
             MirExpr::Call { callee, args } => {
-                if is_std_builtin(callee) {
+                // User-defined functions shadow same-named std builtins (mirrors
+                // codegen, so the kernel's UART `fn print` wins over std.io's).
+                if is_std_builtin(callee) && !self.functions.contains_key(callee) {
                     let mut arg_values = Vec::with_capacity(args.len());
                     for arg in args {
                         arg_values.push(self.eval_expr(arg, locals)?);
@@ -1780,7 +1782,9 @@ impl Runtime {
                 eval_unary(*op, value)
             }
             Expr::Call { callee, args, .. } => {
-                if is_std_builtin(callee) {
+                // User-defined functions shadow same-named std builtins (see the
+                // MIR path above).
+                if is_std_builtin(callee) && !self.functions.contains_key(callee) {
                     let args = args
                         .iter()
                         .map(|arg| self.eval_expr(arg, locals))

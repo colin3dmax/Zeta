@@ -3453,8 +3453,14 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
             }
             MirExpr::Binary { op, left, right } => self.lower_binary(*op, left, right),
             MirExpr::Call { callee, args } => {
-                if let Some(result) = self.lower_builtin(callee, args)? {
-                    return Ok(result);
+                // A user-defined function shadows a same-named std builtin (lets the
+                // bare-metal kernel define its own `fn print` over a UART instead of
+                // the std.io libc-`write` one). Only shadows when actually defined,
+                // so true builtins — and fixpoint — are unaffected.
+                if !self.functions.contains_key(callee) {
+                    if let Some(result) = self.lower_builtin(callee, args)? {
+                        return Ok(result);
+                    }
                 }
                 if let Some(function) = self.functions.get(callee).copied() {
                     let mut argv = Vec::with_capacity(args.len());

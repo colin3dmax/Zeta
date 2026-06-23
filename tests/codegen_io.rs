@@ -35,6 +35,21 @@ fn main() -> Int {
 }
 
 #[test]
+fn user_defined_print_shadows_std_builtin() {
+    // A user `fn print` must win over the std.io builtin in BOTH backends — this is
+    // what lets the bare-metal kernel route `print` to its UART instead of libc
+    // `write` (which is unlinkable freestanding). If the builtin shadowed the user
+    // function, native `print(..)` would return 0 (the builtin) instead of 5.
+    let src = "\
+import std.core;
+fn print(s: String) -> Int { return string_len(s); }
+fn main() -> Int {
+  return print(\"hello\");   // user print returns the length, not 0
+}";
+    assert_eq!(check(src), 5);
+}
+
+#[test]
 fn print_composed_with_string_builtins() {
     let src = "\
 import std.core;
