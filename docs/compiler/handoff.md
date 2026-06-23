@@ -1,38 +1,44 @@
-# Zeta 交接文档(2026-06-22)
+# Zeta 交接文档(2026-06-23)
 
 > 跨会话接续的**权威入口**。新会话先读本文 + `~/.claude/projects/-Users-colin-Work-Zeta/memory/MEMORY.md`(自动加载的索引)。
-> 详细分项见 memory 下 language-features / feature-backport-selfhost / self-hosting-progress / native-backend-progress / trait-system。
-> **本会话(stdlib + 性能四连)**:#1 容器广度(Set<T> + HashMap remove/contains + 单态化从 struct 实参推断类型参数 `7d23b4a`)→ #2 字符串内置 to_upper/to_lower/trim(`b397b7a`)→ #3 **HashMap/HashSet 提为可 import 的源码标准模块 std.collections**(`179d014`)→ #4 **通用 move-on-last-use**(MIR 活跃性 + 运行时 moved-flag 路径敏感 drop 抑制,`5c2cc09`)。均过 fixpoint 4/4 + 全套件(855)+ ASan。**未 push。**
-> ⚠️ **新方向(用户 2026-06-22 提出)**:后续要用 Zeta **打磨一个操作系统**。这把 FFI/freestanding/裸指针/内联汇编/并发顶到最高优先级 —— 详见 §6 与 memory `os-direction`。
+> 详细分项见 memory 下 os-direction / language-features / trait-system / native-backend-progress / self-hosting-progress / feature-backport-selfhost。
+> **最近一个大会话(2026-06-22~23,已全部 push 至 origin/main,~29 commits,HEAD `ab8a602`)分两段**:
+> **(A) 用 Zeta 写操作系统**(`kernel/`,全部实机 QEMU riscv64 验证):最小闭环 → freestanding 运行时桩(去 snprintf)→ 真 NS16550 UART → 宽度 MMIO → 裸指针 `*T` → 可回收 allocator → 内联汇编(csr/wfi)→ 定时器中断(trap stub + CLINT)→ extern FFI → **协作式调度器**(switch_context 上下文切换 + 两任务交替)。**Zeta OS 已真多任务。**
+> **(B) 把语言搞扎实**(审计真实程序补正确性/可用性缺口,见 §0.5)。
 
 ---
 
 ## 0. 一句话状态
-Zeta 是一门**能自举、有三后端(解释器 / LLVM native / WASM)、内存自动管理(值语义 + 确定性 Drop + COW + move-on-last-use)** 的真实语言,跑 **855 测试全绿**,自编译**字节级一致(fixpoint 4/4)**。
-**语言内核成熟、trait/泛型容器/标准库容器(std.collections)齐备;下一阶段目标 = 用它写操作系统,缺口在系统能力:freestanding 后端、裸指针/MMIO/内联汇编、FFI、并发(见 §6)。**
+Zeta 是一门**能自举、有三后端(解释器 / LLVM native / WASM)、内存自动管理(值语义 + 确定性 Drop + COW + move-on-last-use)** 的真实语言,跑 **880+ 测试全绿**,自编译**字节级一致(fixpoint 4/4)**。能舒服地写真实程序(FizzBuzz/递归/容器/闭包/print 都顺)。
+**且已能编出在裸机 riscv64 上多任务的操作系统(`kernel/`)。** 语言现状见 §0.5/§1,OS 路线见 §6。
 
 ---
 
-## 0.5 语言打磨(2026-06-23,"把语言搞扎实")
-审计真实程序后补的正确性/可用性缺口(均 fixpoint + 全套件 + native 差分):
-- **字符串转义补全**(`8a395b6`):`\t`/`\r`/`\0`/`\\`(此前只 `\"`/`\n`);两个自举前端的 normalize_string_escapes 同步(116/114/48)保 parity。
-- **stdout 打印 print/println**(`45888db`):std.io,libc write;hosted 程序终于能 print。
-- **native 支持 string 模式匹配**(`46e8766`):`match s { "x" -> }` 此前 native 报错;新增顺序 string_eq 链 lower_string_match。
-- **修 Name catch-all 返回分析**(`46e8766`):`match n { 1->.., other->.. }` 全臂返回却报 MIR_MISSING_RETURN(verifier 只认 `_`,typecheck 早已认 Name);mir.rs:1292 修。
-- **已知便利性缺口(非 bug)**:闭包参数需显式类型 `|x: Int|`(无 `|x|` 推断)。
+## 0.5 语言能力(含 2026-06-23 打磨)
+**核心**:标量(Int/Float/Bool/String)、数组/元组/struct/enum/闭包、泛型单态化、错误处理 `?`、`import`/`module`、`Option`/`Result`。
+**trait 完整**:trait/impl + UFCS 派发 + 泛型约束 `<T:Show>`;**方法调用语法 `x.f(a)`≡`f(x,a)`**(`902d69b`,消歧=路径 root 是局部);**运算符重载 `a OP b`→`op$Type`**(`f17017a`,非标量派发)。
+**泛型容器**:`Array<T>` + HashMap/HashSet + **std.collections 源码注入模块**(import 即得)。
+**系统能力**:裸指针 `*T`(`afcd901`)+ 宽度 MMIO + 内联汇编(csr/wfi)+ **extern FFI**(`8026f58`)。
+**2026-06-23 打磨(均 fixpoint + 全套件 + 差分)**:
+- **字符串转义补全**(`8a395b6`):`\t`/`\r`/`\0`/`\\`(此前只 `\"`/`\n`);两个自举前端 normalize_string_escapes 同步(byte 116/114/48)保 parity。
+- **stdout `print`/`println`**(`45888db`):std.io,libc write(放 std.io 避与内核 `fn print` 撞名)。
+- **native 支持 string 模式匹配**(`46e8766`):新增 `lower_string_match` 顺序 string_eq 链(switch 无法 switch 字符串)。
+- **修 Name catch-all 返回分析**(`46e8766`):`match n { 1->.., other->.. }` 全臂返回不再误报 MIR_MISSING_RETURN(mir.rs:1292 把 `Name(_)` 与 `Wildcard` 并列)。
+- **闭包参数推断 `|x|`**(`ab8a602`):desugar `infer_lambda_param_types` 从 `let f: fn(Int)->R = |x|...` 注解填类型;填充在 typecheck 前 ⇒ dump 等价 ⇒ parity 零风险。
+**剩余可选项(均"中大"级,语言核心已扎实)**:match 守卫 `x if cond ->`(顺序链基建已就位)、块体闭包 `|x| { stmts }`(AST/dump 改动有 parity 成本)、string_split 等 stdlib。
 
 ## 1. 实现盘点(2026-06-21)
 
 | 维度 | 完成度 | 说明 |
 |---|---|---|
 | 编译器管线 | ~95% | lex→parse→resolve→HIR→typecheck→desugar→MIR→{解释器/native/wasm};自举闭环 |
-| 核心语言 | ~85% | 标量(Int/Float/Bool/String)、数组/元组/struct/enum/闭包、泛型单态化、错误处理 `?` |
-| 内存管理 | ~92% | 全聚合值语义 + 确定性 Drop 零泄漏;array/string COW;**move-on-last-use 已完成**(活跃性 + moved-flag);缺 SSO / struct·tuple 大聚合 COW |
-| 自举 | ~90% | native emit 全链 + fixpoint;ev_expr 解释器的复合值(Float/Tuple/Closure)推迟 |
-| 类型系统 | ~88% | 泛型单态化齐全;**trait/impl 完整完成**(切片①②③:语法 + 具体类型 UFCS 派发 + 泛型多态 + `<T: Show>` 约束校验);缺:trait 默认方法、关联类型、多 trait 对象 |
-| 标准库 | ~48% | 字符串(+to_upper/to_lower/trim)/数组/整数工具 + 基础 IO + **stdout 打印 print/println(std.io,libc write)** + 泛型数组 + **std.collections 源码模块(HashMap/HashSet)**;无网络/string_split |
-| 并发 | 0% | 无语言级并发(DevGame #77;**OS 调度器前置**) |
-| FFI | 0% | 无 C 互操作 / 裸指针 / 内联汇编 / freestanding(DevGame #78;**OS 第一前置**) |
+| 核心语言 | ~90% | 标量/数组/元组/struct/enum/闭包(参数可推断)、泛型单态化、`?`、**方法语法 `x.f()`** + **运算符重载**;match 含 string 模式;缺 match 守卫/块体闭包 |
+| 内存管理 | ~92% | 全聚合值语义 + 确定性 Drop 零泄漏;array/string COW;move-on-last-use;缺 SSO / struct·tuple 大聚合 COW |
+| 自举 | ~90% | native emit 全链 + fixpoint;ev_expr 解释器的复合值(Float/Tuple/Closure)推迟;**新语言糖默认只在 Rust 前端(arena 不用 ⇒ fixpoint 安全;自托管一致性是后续 backport)** |
+| 类型系统 | ~90% | 泛型单态化 + trait/impl 完整 + `<T:Show>` 约束;缺:trait 默认方法、关联类型、多 trait 对象 |
+| 标准库 | ~50% | 字符串(escape 全/to_upper/lower/trim)/数组/整数工具 + **stdout print/println** + 基础文件 IO + 泛型数组 + **std.collections(HashMap/HashSet)**;无网络/string_split |
+| 系统能力/FFI | ~60% | **裸指针 `*T` + 宽度 MMIO + 内联汇编(csr/wfi)+ extern FFI 全部完成**;freestanding 后端走 `kernel/build.sh`(emit-ir→clang riscv64);缺并发原语(atomic) |
+| OS(`kernel/`) | 真多任务 | 启动→运行时桩→UART→内存管理→中断→**协作式调度器**;全实机 QEMU 验证(详见 §6 + kernel/README.md) |
 
 **语言构造(已实现)**:`if`/`while`/`for in`/C 式 `for`/`match`(+ 通配)/`break`/`continue`/`return`;
 算术·位·逻辑·比较·一元;`let`/赋值;数组字面量与索引读写(`a[i]`/`a[i]=v`/`a.len`);元组 `(a,b)`/`.N`;
@@ -54,10 +60,14 @@ struct 字面量与字段;enum + payload;闭包 `|x| ...` + 捕获;泛型 `<T>`(
 
 ## 2. 构建 / 测试命令
 ```bash
-cargo test                                          # 非 llvm(快)
-LLVM_SYS_221_PREFIX=/opt/homebrew/opt/llvm cargo test --release --features llvm          # native 全套件(LLVM 22)
-LLVM_SYS_221_PREFIX=/opt/homebrew/opt/llvm cargo test --release --features llvm --test selfhost_fixpoint -- --ignored   # 自举完整性门禁 ~145s
+RUST_MIN_STACK=67108864 cargo test                  # 非 llvm(快);大栈避开已知 debug flake(见下)
+LLVM_SYS_221_PREFIX=/opt/homebrew/opt/llvm cargo test --release --features llvm          # native 全套件(LLVM 22,~880 测试)
+LLVM_SYS_221_PREFIX=/opt/homebrew/opt/llvm cargo test --release --features llvm --test selfhost_fixpoint -- --ignored   # 自举门禁 ~130s,改前端/lowering 必跑
+# 内核(裸机 riscv64):需 qemu-system-riscv64 + brew llvm clang + /usr/local/bin/ld.lld
+bash kernel/build.sh && bash kernel/run.sh          # 构建并 QEMU 启动多任务内核(Ctrl-A X 退出)
+cargo run --quiet --release --bin zeta -- run X.zeta   # 跑一个 .zeta(解释器);emit-ir / check 子命令亦在
 ```
+- **加内置改四处**:std_api 签名 + runtime(is_std_builtin+eval)+ mir.rs 内置类型表(最易漏)+ codegen lower_builtin;新名先 `grep "fn <name>" testdata/selfhost/*.zeta` 防撞自举前端(撞名破 fixpoint)。
 - **ASan 验证生成代码无堆错误**(诊断内存问题的利器):
   ```bash
   # 用 emit_llvm_ir 出 .ll → sed 改 @main→@zmain → clang -fsanitize=address 链一个调 zmain 的 driver → 跑
