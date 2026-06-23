@@ -3843,6 +3843,28 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 let v = self.gen_trim(s.into_struct_value());
                 Ok(Some((v.into(), ZType::Str)))
             }
+            // stdout output via libc `write(1, data, len)`. The JIT/AOT resolves
+            // `write` from libc; hosted-only (the freestanding kernel uses its own
+            // UART `print`, never this std.io builtin).
+            "print" | "println" => {
+                let (s, _) = self.lower_expr(&args[0])?;
+                let (len, data) = self.len_ptr_parts(s.into_struct_value());
+                let write = self.module.get_function("write").unwrap_or_else(|| {
+                    let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let fnty = self
+                        .i64t()
+                        .fn_type(&[self.context.i32_type().into(), ptr_ty.into(), self.i64t().into()], false);
+                    self.module.add_function("write", fnty, None)
+                });
+                let fd = self.context.i32_type().const_int(1, false); // stdout
+                b.build_call(write, &[fd.into(), data.into(), len.into()], "").unwrap();
+                if callee == "println" {
+                    let nl = b.build_global_string_ptr("\n", "nl").unwrap().as_pointer_value();
+                    let one = self.i64t().const_int(1, false);
+                    b.build_call(write, &[fd.into(), nl.into(), one.into()], "").unwrap();
+                }
+                Ok(Some((self.i64t().const_zero().into(), ZType::Int)))
+            }
             // Volatile memory-mapped writes at the given width (device registers /
             // page-table entries the optimizer must not drop or reorder).
             "mmio_write_byte" | "mmio_write_word" | "mmio_write_dword" => {

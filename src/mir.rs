@@ -1814,6 +1814,7 @@ impl<'a> MirVerifier<'a> {
             "bool_array_push" => (&["BoolArray", "Bool"][..], parse_mir_type("BoolArray")),
             "float_array_empty" => (&[][..], parse_mir_type("FloatArray")),
             "float_array_push" => (&["FloatArray", "Float"][..], parse_mir_type("FloatArray")),
+            "print" | "println" => (&["String"][..], MirType::named("Int")),
             "file_read_to_string" => (&["String"][..], parse_mir_type("ResultString")),
             "path_join" => (&["String", "String"][..], parse_mir_type("String")),
             "path_basename" => (&["String"][..], parse_mir_type("String")),

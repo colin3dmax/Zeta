@@ -2279,6 +2279,8 @@ fn is_std_builtin(callee: &str) -> bool {
             | "bool_array_push"
             | "float_array_empty"
             | "float_array_push"
+            | "print"
+            | "println"
             | "file_read_to_string"
             | "path_join"
             | "path_basename"
@@ -2629,6 +2631,20 @@ fn eval_std_builtin(callee: &str, args: Vec<Value>) -> Result<Value, Diagnostic>
         "string_array_push" => eval_array_push(callee, args, "String"),
         "bool_array_push" => eval_array_push(callee, args, "Bool"),
         "float_array_push" => eval_array_push(callee, args, "Float"),
+        "print" | "println" => {
+            use std::io::Write;
+            let [s]: [Value; 1] = expect_arity(callee, args)?.try_into().ok().unwrap();
+            let Value::String(s) = s else {
+                return Err(runtime_error("RUNTIME_STD_TYPE", "print expects String"));
+            };
+            let mut out = std::io::stdout();
+            let _ = out.write_all(s.as_bytes());
+            if callee == "println" {
+                let _ = out.write_all(b"\n");
+            }
+            let _ = out.flush();
+            Ok(Value::Int(0))
+        }
         "file_read_to_string" => {
             let [path]: [Value; 1] = expect_arity(callee, args)?.try_into().ok().unwrap();
             let Value::String(path) = path else {

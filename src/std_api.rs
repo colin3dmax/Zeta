@@ -311,6 +311,19 @@ const STD_CORE_FUNCTIONS: &[StandardFunction] = &[
 ];
 
 const STD_IO_FUNCTIONS: &[StandardFunction] = &[
+    // Write a string to stdout (`print`) or stdout + newline (`println`). Returns
+    // Int 0 (used as a statement). In std.io so it never collides with a user
+    // `fn print` in a std.core-only program (e.g. the bare-metal kernel).
+    StandardFunction {
+        name: "print",
+        params: &["String"],
+        return_type: Some("Int"),
+    },
+    StandardFunction {
+        name: "println",
+        params: &["String"],
+        return_type: Some("Int"),
+    },
     StandardFunction {
         name: "file_read_to_string",
         params: &["String"],
