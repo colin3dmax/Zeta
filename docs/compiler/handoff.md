@@ -1,5 +1,7 @@
 # Zeta 交接文档(2026-06-23)
 
+> ⚠️ **当前方向(2026-06-23,最新):专注打磨 Zeta 语言本身,不再做操作系统。** 用户已明确推翻下文 §6 的"OS 北极星"定调 —— 不要主动推进 `kernel/`、抢占式调度、freestanding/并发等 OS 专属工作。§6 仅作既有成果历史记录。语言打磨候选见 §0.5 末尾。详见 memory `focus-language-not-os`。
+
 > 跨会话接续的**权威入口**。新会话先读本文 + `~/.claude/projects/-Users-colin-Work-Zeta/memory/MEMORY.md`(自动加载的索引)。
 > 详细分项见 memory 下 os-direction / language-features / trait-system / native-backend-progress / self-hosting-progress / feature-backport-selfhost。
 > **最近一个大会话(2026-06-22~23,已全部 push 至 origin/main,~29 commits,HEAD `ab8a602`)分两段**:
