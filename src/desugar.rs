@@ -36,6 +36,7 @@ pub fn desugar_try(module: &mut Module) -> Result<(), Vec<Diagnostic>> {
     // functions by resolve / typecheck / mir / codegen / runtime.
     flatten_impls(module);
     desugar_method_calls(module);
+    infer_lambda_param_types(module);
     let mut diagnostics = Vec::new();
     for item in &mut module.items {
         if let Item::Function(function) = item {
@@ -52,6 +53,51 @@ pub fn desugar_try(module: &mut Module) -> Result<(), Vec<Diagnostic>> {
         Ok(())
     } else {
         Err(diagnostics)
+    }
+}
+
+/// Lambda parameter-type inference: an un-annotated `|x|` parameter gets its
+/// type from the binding's `fn(T) -> R` annotation — `let f: fn(Int) -> Int =
+/// |x| x + 1` fills `x: Int`. Only direct `let name: <fn-type> = <lambda>` is
+/// inferred (the common case); a lambda used elsewhere without annotation keeps
+/// its empty param type and is rejected downstream. Runs before resolve/
+/// typecheck/mir, so the filled type flows like an explicit one (and the AST
+/// dump matches `|x: Int|` — no self-host parity churn).
+fn infer_lambda_param_types(module: &mut Module) {
+    for item in &mut module.items {
+        if let Item::Function(function) = item {
+            ilp_stmts(&mut function.body);
+        }
+    }
+}
+
+fn ilp_stmts(stmts: &mut [Stmt]) {
+    for stmt in stmts.iter_mut() {
+        match stmt {
+            Stmt::Let { ty: Some(ann), value, .. } => {
+                if let Expr::Lambda { params, .. } = value {
+                    if let Some((param_types, _ret)) = crate::type_syntax::fn_parts(ann) {
+                        for (param, ty) in params.iter_mut().zip(param_types) {
+                            if param.ty.is_empty() {
+                                param.ty = ty.to_string();
+                            }
+                        }
+                    }
+                }
+            }
+            Stmt::If { then_body, else_body, .. } => {
+                ilp_stmts(then_body);
+                ilp_stmts(else_body);
+            }
+            Stmt::While { body, .. } | Stmt::ForIn { body, .. } => ilp_stmts(body),
+            Stmt::ForC { body, .. } => ilp_stmts(body),
+            Stmt::Match { arms, .. } => {
+                for arm in arms.iter_mut() {
+                    ilp_stmts(&mut arm.body);
+                }
+            }
+            _ => {}
+        }
     }
 }
 

@@ -32,6 +32,39 @@ fn main() -> Int {
 }
 
 #[test]
+fn lambda_param_types_inferred_from_annotation() {
+    // `|x|` (no param type) infers `x: Int` from the `fn(Int) -> Int` binding.
+    let src = "\
+fn main() -> Int {
+  let k: Int = 10;
+  let f: fn(Int) -> Int = |x| x + k;
+  return f(5);
+}";
+    assert_eq!(run(src), Value::Int(15));
+}
+
+#[test]
+fn lambda_inference_multi_param() {
+    let src = "\
+fn main() -> Int {
+  let add: fn(Int, Int) -> Int = |a, b| a + b;
+  return add(3, 4);
+}";
+    assert_eq!(run(src), Value::Int(7));
+}
+
+#[test]
+fn lambda_inference_mixed_with_explicit() {
+    // A partially-annotated list still fills only the empty ones.
+    let src = "\
+fn main() -> Int {
+  let g: fn(Int, Int) -> Int = |a: Int, b| a * 10 + b;
+  return g(4, 2);
+}";
+    assert_eq!(run(src), Value::Int(42));
+}
+
+#[test]
 fn lambda_captures_local_by_value() {
     // The closure captures `n` at creation; mutating `n` afterwards does not
     // change what the closure observes (capture-by-value snapshot).

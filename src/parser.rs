@@ -1088,13 +1088,21 @@ impl Parser {
         if !self.check_symbol(Symbol::Pipe) {
             loop {
                 let (name, name_span) = self.expect_ident_span("expected lambda parameter name")?;
-                self.expect_symbol(Symbol::Colon, "expected `:` after lambda parameter name")?;
-                let (ty, ty_span) = self.parse_type_annotation("expected lambda parameter type")?;
+                // The type annotation is optional: an un-annotated `|x|` parameter
+                // has its type inferred from the binding's `fn(T) -> R` annotation
+                // (see `desugar::infer_lambda_param_types`). An empty `ty` marks it
+                // as not-yet-inferred.
+                let (ty, ty_span) = if self.consume_symbol(Symbol::Colon).is_some() {
+                    let (ty, ty_span) = self.parse_type_annotation("expected lambda parameter type")?;
+                    (ty, Some(ty_span))
+                } else {
+                    (String::new(), None)
+                };
                 params.push(Param {
                     name,
                     name_span,
                     ty,
-                    ty_span,
+                    ty_span: ty_span.unwrap_or(name_span),
                 });
                 if self.consume_symbol(Symbol::Comma).is_none() {
                     break;
