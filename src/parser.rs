@@ -593,13 +593,18 @@ impl Parser {
 
     fn parse_match_arm(&mut self) -> Result<MatchArm, Diagnostic> {
         let pattern = self.parse_pattern()?;
+        // Optional guard: `pat if <cond> -> ...`. Parsed between the pattern and
+        // the arrow so the guard can reference the pattern's bindings.
+        let guard = if self.consume_keyword(Keyword::If).is_some() {
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
         self.expect_symbol(Symbol::Arrow, "expected `->` after match pattern")?;
         self.expect_symbol(Symbol::LBrace, "expected `{` after match arm")?;
         let body = self.parse_block_body()?;
-        if self.consume_symbol(Symbol::Comma).is_none() {
-            return Ok(MatchArm { pattern, body });
-        }
-        Ok(MatchArm { pattern, body })
+        self.consume_symbol(Symbol::Comma);
+        Ok(MatchArm { pattern, guard, body })
     }
 
     fn parse_pattern(&mut self) -> Result<Pattern, Diagnostic> {

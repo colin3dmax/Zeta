@@ -112,6 +112,9 @@ pub enum MirPlace {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MirMatchArm {
     pub pattern: MirPattern,
+    /// Optional guard expression (`pat if <cond> -> ..`); the arm is taken only
+    /// when the pattern matches AND this evaluates true. `None` for a plain arm.
+    pub guard: Option<MirExpr>,
     pub body: Vec<MirStmt>,
 }
 
@@ -405,6 +408,7 @@ fn lower_stmt(
                 .iter()
                 .map(|arm| MirMatchArm {
                     pattern: lower_pattern(&arm.pattern),
+                    guard: arm.guard.as_ref().map(|g| lower_expr(g, enum_variants)),
                     body: arm
                         .body
                         .iter()
@@ -703,6 +707,10 @@ impl DumpCtx {
                 out.push_str(&format!("{pad}match {value_temp}\n"));
                 for arm in arms {
                     out.push_str(&format!("{pad}  arm {}\n", pattern_text(&arm.pattern)));
+                    if let Some(guard) = &arm.guard {
+                        let g = self.dump_expr(guard, indent + 2, out);
+                        out.push_str(&format!("{pad}    guard {g}\n"));
+                    }
                     for stmt in &arm.body {
                         self.dump_stmt(stmt, indent + 2, out);
                     }
@@ -1289,22 +1297,29 @@ impl<'a> MirVerifier<'a> {
                 let mut covered_enum_variants: HashMap<String, HashSet<String>> = HashMap::new();
                 let mut covered_bool_patterns = HashSet::new();
                 for arm in arms {
+                    // A guarded arm can fail (the guard may be false), so it never
+                    // contributes to exhaustiveness — even a `_ if c` isn't a
+                    // catch-all. Only plain arms cover the scrutinee.
+                    let guarded = arm.guard.is_some();
                     // A `Name` binding is a catch-all too (it matches any value),
                     // exactly like `_` — matching typecheck's exhaustiveness rule.
-                    if matches!(arm.pattern, MirPattern::Wildcard | MirPattern::Name(_)) {
+                    if !guarded && matches!(arm.pattern, MirPattern::Wildcard | MirPattern::Name(_))
+                    {
                         has_wildcard = true;
                     }
-                    if let MirPattern::Bool(value) = &arm.pattern {
-                        covered_bool_patterns.insert(*value);
-                    }
-                    if let MirPattern::Variant {
-                        enum_name, variant, ..
-                    } = &arm.pattern
-                    {
-                        covered_enum_variants
-                            .entry(enum_name.clone())
-                            .or_default()
-                            .insert(variant.clone());
+                    if !guarded {
+                        if let MirPattern::Bool(value) = &arm.pattern {
+                            covered_bool_patterns.insert(*value);
+                        }
+                        if let MirPattern::Variant {
+                            enum_name, variant, ..
+                        } = &arm.pattern
+                        {
+                            covered_enum_variants
+                                .entry(enum_name.clone())
+                                .or_default()
+                                .insert(variant.clone());
+                        }
                     }
                     let mut arm_locals = locals.clone();
                     for (name, ty) in self.verify_pattern(&arm.pattern, &value_ty) {
@@ -1315,8 +1330,23 @@ impl<'a> MirVerifier<'a> {
                             );
                         }
                     }
-                    all_arms_return &=
+                    // The guard is a Bool, evaluated with the pattern bindings in
+                    // scope. A guarded arm's body need not return for exhaustiveness
+                    // (control may fall through), so don't fold it into all_arms_return.
+                    if let Some(guard) = &arm.guard {
+                        let guard_ty = self.verify_expr(guard, &arm_locals);
+                        self.expect_type(
+                            &guard_ty,
+                            &MirType::named("Bool"),
+                            "MIR_MATCH_GUARD_NOT_BOOL",
+                            "match guard must be a Bool",
+                        );
+                    }
+                    let arm_returns =
                         self.verify_stmts(&arm.body, &mut arm_locals, expected_return, loop_depth);
+                    if !guarded {
+                        all_arms_return &= arm_returns;
+                    }
                 }
                 all_arms_return
                     && (has_wildcard

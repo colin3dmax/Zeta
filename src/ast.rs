@@ -204,6 +204,10 @@ pub enum Stmt {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatchArm {
     pub pattern: Pattern,
+    /// Optional guard: `pat if <cond> -> ...`. The arm is taken only when the
+    /// pattern matches AND the guard evaluates true; otherwise control falls
+    /// through to the next arm. `None` for a plain arm.
+    pub guard: Option<Expr>,
     pub body: Vec<Stmt>,
 }
 
@@ -583,6 +587,10 @@ impl Stmt {
                 value.dump(indent + 2, out);
                 for arm in arms {
                     out.push_str(&format!("{pad}  Arm pattern={}\n", arm.pattern.dump()));
+                    if let Some(guard) = &arm.guard {
+                        out.push_str(&format!("{pad}    Guard\n"));
+                        guard.dump(indent + 3, out);
+                    }
                     for stmt in &arm.body {
                         stmt.dump(indent + 2, out);
                     }

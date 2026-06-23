@@ -170,6 +170,13 @@ fn mc_stmt(stmt: &mut Stmt, scope: &mut Vec<String>) {
                     Pattern::Variant { binding: Some(b), .. } => vec![b.clone()],
                     _ => Vec::new(),
                 };
+                // The guard sees the arm's pattern bindings, just like the body.
+                if let Some(guard) = &mut arm.guard {
+                    let base = scope.len();
+                    scope.extend(extra.iter().cloned());
+                    mc_expr(guard, scope);
+                    scope.truncate(base);
+                }
                 mc_scoped(&mut arm.body, scope, &extra);
             }
         }
@@ -478,6 +485,7 @@ fn desugar_nested(
                 .into_iter()
                 .map(|arm| MatchArm {
                     pattern: arm.pattern,
+                    guard: arm.guard,
                     body: desugar_block(arm.body, kind, counter, diagnostics),
                 })
                 .collect(),
@@ -526,6 +534,7 @@ fn build_try_match(
                     variant: fail_variant.to_string(),
                     binding: Some(err_name.clone()),
                 },
+                guard: None,
                 // return Result.Err(err)
                 body: vec![Stmt::Return(Some(Expr::Call {
                     callee: format!("{enum_name}.{fail_variant}"),
@@ -541,6 +550,7 @@ fn build_try_match(
                 variant: fail_variant.to_string(),
                 binding: None,
             },
+            guard: None,
             // return Option.None  (no payload — a field-access form)
             body: vec![Stmt::Return(Some(Expr::FieldAccess {
                 base: Box::new(name_expr(enum_name, span)),
@@ -556,6 +566,7 @@ fn build_try_match(
             variant: ok_variant.to_string(),
             binding: Some(value_name),
         },
+        guard: None,
         body: ok_body,
     };
     Stmt::Match {

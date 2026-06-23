@@ -389,6 +389,13 @@ fn live_stmt(
             let mut merged = LiveSet::new();
             for arm in arms {
                 let mut al = live_stmts(&arm.body, live.clone(), ctx, mark, movable);
+                // The guard runs before the body with the pattern bindings in scope.
+                // Add its reads to liveness but never mark them movable (mark=false):
+                // a false guard falls through, so it must not consume a value a later
+                // arm still needs.
+                if let Some(guard) = &arm.guard {
+                    al = live_expr(guard, al, false, movable);
+                }
                 for binding in liveness_pattern_bindings(&arm.pattern) {
                     al.remove(&binding);
                 }
@@ -652,6 +659,9 @@ fn collect_stmt_names(stmt: &MirStmt, out: &mut LiveSet) {
         MirStmt::Match { value, arms } => {
             collect_expr_names(value, out);
             for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    collect_expr_names(guard, out);
+                }
                 for stmt in &arm.body {
                     collect_stmt_names(stmt, out);
                 }
@@ -1076,6 +1086,16 @@ impl MirRuntime {
                 for arm in arms {
                     if let Some(bindings) = mir_pattern_bindings(&arm.pattern, &value)? {
                         let saved = apply_bindings(locals, bindings);
+                        // A guard is evaluated with the pattern bindings in scope;
+                        // if it's false, fall through to the next arm (restoring the
+                        // bindings first so they don't leak into later arms).
+                        if let Some(guard) = &arm.guard {
+                            let pass = matches!(self.eval_expr(guard, locals)?, Value::Bool(true));
+                            if !pass {
+                                restore_bindings(locals, saved);
+                                continue;
+                            }
+                        }
                         let result = self.eval_stmts(&arm.body, locals);
                         restore_bindings(locals, saved);
                         return result;
@@ -1666,6 +1686,15 @@ impl Runtime {
                 for arm in arms {
                     if let Some(bindings) = pattern_bindings(&arm.pattern, &value)? {
                         let saved = apply_bindings(locals, bindings);
+                        // Guard false → fall through to the next arm (mirrors the
+                        // MIR interpreter path).
+                        if let Some(guard) = &arm.guard {
+                            let pass = matches!(self.eval_expr(guard, locals)?, Value::Bool(true));
+                            if !pass {
+                                restore_bindings(locals, saved);
+                                continue;
+                            }
+                        }
                         let result = self.eval_stmts(&arm.body, locals);
                         restore_bindings(locals, saved);
                         return result;

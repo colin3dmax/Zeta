@@ -2564,6 +2564,12 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
     /// `unreachable`. Returns whether control is guaranteed terminated afterwards.
     fn lower_match(&mut self, value: &MirExpr, arms: &[crate::mir::MirMatchArm]) -> Result<bool, String> {
         let (val, vty) = self.lower_expr(value)?;
+        // Any guard means a matched arm can still fall through, which an integer
+        // `switch` can't express — lower the whole match as a sequential
+        // test→guard→body chain (first matching, guard-passing arm wins).
+        if arms.iter().any(|arm| arm.guard.is_some()) {
+            return self.lower_guarded_match(val, &vty, arms);
+        }
         // A String scrutinee can't drive an integer `switch`; lower it as a
         // sequential chain of `string_eq` tests (first match wins).
         if vty == ZType::Str {
@@ -2641,70 +2647,205 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         for (i, arm) in arms.iter().enumerate() {
             self.builder.position_at_end(arm_blocks[i]);
             let scope = self.locals.clone();
-            match &arm.pattern {
-                MirPattern::Name(name) => {
-                    let slot = self.entry_alloca(name, self.types.llvm(&vty));
-                    self.builder.build_store(slot, val).unwrap();
-                    self.locals.insert(name.clone(), (slot, vty.clone()));
-                }
-                MirPattern::Variant {
-                    enum_name,
-                    variant,
-                    binding: Some(binding),
-                } => {
-                    let lookup = enum_instance.as_deref().unwrap_or(enum_name);
-                    let (_, payload_ty) = self.types.variant_tag(lookup, variant)?;
-                    let sv = val.into_struct_value();
-                    let (bound, bty) = match payload_ty {
-                        Some(ZType::Int) => {
-                            // p0 holds the Int payload.
-                            let p0 = self.builder.build_extract_value(sv, 1, "payload").unwrap();
-                            (p0, ZType::Int)
-                        }
-                        Some(ZType::Str) => {
-                            // Reconstruct the String {len, ptr} from (p0, p1), then
-                            // CLONE it so the binding owns an independent buffer — the
-                            // enum still owns the original and frees it on drop, so a
-                            // shared pointer would double-free.
-                            let p0 = self.builder.build_extract_value(sv, 1, "plen").unwrap().into_int_value();
-                            let p1 = self.builder.build_extract_value(sv, 2, "pdata").unwrap().into_pointer_value();
-                            let shared = self.make_len_ptr(p0, p1).into();
-                            (self.clone_value(shared, &ZType::Str), ZType::Str)
-                        }
-                        Some(ZType::Array(elem)) => {
-                            // Rebuild {len, ptr} from (p0, p1), then element-deep clone
-                            // so the binding is an independent owner (its element
-                            // strings/arrays don't alias the enum's — both get dropped).
-                            let p0 = self.builder.build_extract_value(sv, 1, "plen").unwrap().into_int_value();
-                            let p1 = self.builder.build_extract_value(sv, 2, "pdata").unwrap().into_pointer_value();
-                            let shared = self.make_len_ptr(p0, p1).into();
-                            let ty = ZType::Array(elem);
-                            (self.clone_value(shared, &ty), ty)
-                        }
-                        Some(ZType::Struct(name)) => {
-                            // p1 points at the boxed struct; load it, then clone so the
-                            // binding's managed fields don't alias the box (the enum
-                            // frees the box + its fields on drop).
-                            let p1 = self.builder.build_extract_value(sv, 2, "pbox").unwrap().into_pointer_value();
-                            let ty = ZType::Struct(name);
-                            let struct_ty = self.types.llvm(&ty);
-                            let loaded = self.builder.build_load(struct_ty, p1, "boxload").unwrap();
-                            (self.clone_value(loaded, &ty), ty)
-                        }
-                        _ => return Err("enum payload type not in the native subset".into()),
-                    };
-                    let slot = self.entry_alloca(binding, self.types.llvm(&bty));
-                    self.builder.build_store(slot, bound).unwrap();
-                    self.locals.insert(binding.clone(), (slot, bty));
-                }
-                _ => {}
-            }
+            self.bind_arm_pattern(&arm.pattern, val, &vty, &enum_instance)?;
             if !self.lower_stmts(&arm.body)? {
                 self.builder.build_unconditional_branch(end_bb).unwrap();
             }
             self.locals = scope;
         }
 
+        self.builder.position_at_end(end_bb);
+        Ok(false)
+    }
+
+    /// Bind an arm's pattern variables into `self.locals` (the caller saves and
+    /// restores the scope). Mirrors the interpreter: a scalar payload is
+    /// extracted directly; a managed payload (String/Array/Struct) is CLONED so
+    /// the binding owns an independent value — the scrutinee enum still owns the
+    /// original and frees it on drop, so sharing would double-free.
+    fn bind_arm_pattern(
+        &mut self,
+        pattern: &MirPattern,
+        val: BasicValueEnum<'ctx>,
+        vty: &ZType,
+        enum_instance: &Option<String>,
+    ) -> Result<(), String> {
+        match pattern {
+            MirPattern::Name(name) => {
+                let slot = self.entry_alloca(name, self.types.llvm(vty));
+                self.builder.build_store(slot, val).unwrap();
+                self.locals.insert(name.clone(), (slot, vty.clone()));
+            }
+            MirPattern::Variant {
+                enum_name,
+                variant,
+                binding: Some(binding),
+            } => {
+                let lookup = enum_instance.as_deref().unwrap_or(enum_name);
+                let (_, payload_ty) = self.types.variant_tag(lookup, variant)?;
+                let sv = val.into_struct_value();
+                let (bound, bty) = match payload_ty {
+                    Some(ZType::Int) => {
+                        // p0 holds the Int payload.
+                        let p0 = self.builder.build_extract_value(sv, 1, "payload").unwrap();
+                        (p0, ZType::Int)
+                    }
+                    Some(ZType::Str) => {
+                        let p0 = self.builder.build_extract_value(sv, 1, "plen").unwrap().into_int_value();
+                        let p1 = self.builder.build_extract_value(sv, 2, "pdata").unwrap().into_pointer_value();
+                        let shared = self.make_len_ptr(p0, p1).into();
+                        (self.clone_value(shared, &ZType::Str), ZType::Str)
+                    }
+                    Some(ZType::Array(elem)) => {
+                        let p0 = self.builder.build_extract_value(sv, 1, "plen").unwrap().into_int_value();
+                        let p1 = self.builder.build_extract_value(sv, 2, "pdata").unwrap().into_pointer_value();
+                        let shared = self.make_len_ptr(p0, p1).into();
+                        let ty = ZType::Array(elem);
+                        (self.clone_value(shared, &ty), ty)
+                    }
+                    Some(ZType::Struct(name)) => {
+                        let p1 = self.builder.build_extract_value(sv, 2, "pbox").unwrap().into_pointer_value();
+                        let ty = ZType::Struct(name);
+                        let struct_ty = self.types.llvm(&ty);
+                        let loaded = self.builder.build_load(struct_ty, p1, "boxload").unwrap();
+                        (self.clone_value(loaded, &ty), ty)
+                    }
+                    _ => return Err("enum payload type not in the native subset".into()),
+                };
+                let slot = self.entry_alloca(binding, self.types.llvm(&bty));
+                self.builder.build_store(slot, bound).unwrap();
+                self.locals.insert(binding.clone(), (slot, bty));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Lower a `match` containing at least one guarded arm as a sequential chain.
+    /// Each arm becomes: test the pattern → on match, bind + evaluate the guard →
+    /// on a true guard run the body, else fall through to the next arm. This is
+    /// the only shape that models "matched but guard failed → try the next arm",
+    /// which a `switch` cannot. Handles Int/Bool/Enum and String scrutinees.
+    /// NOTE: a managed pattern binding (String/Array/Struct payload, or a `Name`
+    /// binding a managed scrutinee) is cloned before the guard runs; if the guard
+    /// is false that clone leaks. Scalar/Int-payload guards — the common case —
+    /// never clone, so they're leak-free.
+    fn lower_guarded_match(
+        &mut self,
+        val: BasicValueEnum<'ctx>,
+        vty: &ZType,
+        arms: &[crate::mir::MirMatchArm],
+    ) -> Result<bool, String> {
+        let enum_instance: Option<String> = match vty {
+            ZType::Enum(name) => Some(name.clone()),
+            _ => None,
+        };
+        // The integer the scalar/enum predicates compare against (None for String,
+        // which compares via `string_eq` instead).
+        let scrutinee_int: Option<IntValue<'ctx>> = match vty {
+            ZType::Enum(_) => Some(
+                self.builder
+                    .build_extract_value(val.into_struct_value(), 0, "tag")
+                    .unwrap()
+                    .into_int_value(),
+            ),
+            ZType::Int => Some(val.into_int_value()),
+            ZType::Str => None,
+            _ => return Err("guarded match scrutinee must be Int/Bool/enum/String".into()),
+        };
+
+        let end_bb = self.context.append_basic_block(self.llvm_fn, "gmatch.end");
+        let mut cur = self.builder.get_insert_block().unwrap();
+        // True until a plain (unguarded) catch-all terminates the chain; if still
+        // true at the end, the fallthrough edge is unreachable.
+        let mut fell_through = true;
+
+        for arm in arms {
+            self.builder.position_at_end(cur);
+            // The pattern-match predicate (None = always matches: a catch-all).
+            let pred: Option<IntValue<'ctx>> = match &arm.pattern {
+                MirPattern::Name(_) | MirPattern::Wildcard => None,
+                MirPattern::Int(text) => {
+                    let n: i64 = text.parse().map_err(|_| format!("bad Int pattern `{text}`"))?;
+                    let s = scrutinee_int.ok_or("Int pattern on non-Int scrutinee")?;
+                    Some(
+                        self.builder
+                            .build_int_compare(IntPredicate::EQ, s, self.i64t().const_int(n as u64, true), "pmatch")
+                            .unwrap(),
+                    )
+                }
+                MirPattern::Bool(b) => {
+                    let s = scrutinee_int.ok_or("Bool pattern on non-Int scrutinee")?;
+                    Some(
+                        self.builder
+                            .build_int_compare(IntPredicate::EQ, s, self.i64t().const_int(*b as u64, false), "pmatch")
+                            .unwrap(),
+                    )
+                }
+                MirPattern::Variant { enum_name, variant, .. } => {
+                    let lookup = enum_instance.as_deref().unwrap_or(enum_name);
+                    let tag = self.types.variant_index(lookup, variant)?;
+                    let s = scrutinee_int.ok_or("Variant pattern on non-enum scrutinee")?;
+                    Some(
+                        self.builder
+                            .build_int_compare(IntPredicate::EQ, s, self.i64t().const_int(tag, false), "pmatch")
+                            .unwrap(),
+                    )
+                }
+                MirPattern::String(text) => {
+                    let (lit, _) = self.lower_expr(&MirExpr::String(text.clone()))?;
+                    Some(self.string_eq(val.into_struct_value(), lit.into_struct_value()))
+                }
+            };
+
+            let body_bb = self.context.append_basic_block(self.llvm_fn, "gmatch.body");
+            let next_bb = self.context.append_basic_block(self.llvm_fn, "gmatch.next");
+            // Branch to the bind/guard step on a pattern match, else to the next arm.
+            match pred {
+                Some(p) => {
+                    self.builder.build_conditional_branch(p, body_bb, next_bb).unwrap();
+                }
+                None => {
+                    self.builder.build_unconditional_branch(body_bb).unwrap();
+                }
+            }
+
+            // Bind the pattern, evaluate the guard, then run the body.
+            self.builder.position_at_end(body_bb);
+            let scope = self.locals.clone();
+            self.bind_arm_pattern(&arm.pattern, val, vty, &enum_instance)?;
+            if let Some(guard) = &arm.guard {
+                let (g, _) = self.lower_expr(guard)?;
+                let gbool = self
+                    .builder
+                    .build_int_compare(IntPredicate::NE, g.into_int_value(), self.i64t().const_zero(), "guard")
+                    .unwrap();
+                let run_bb = self.context.append_basic_block(self.llvm_fn, "gmatch.run");
+                // Guard false → fall through to the next arm.
+                self.builder.build_conditional_branch(gbool, run_bb, next_bb).unwrap();
+                self.builder.position_at_end(run_bb);
+            }
+            if !self.lower_stmts(&arm.body)? {
+                self.builder.build_unconditional_branch(end_bb).unwrap();
+            }
+            self.locals = scope;
+
+            // An unguarded catch-all ends the chain: its `next_bb` is unreachable
+            // and any later arms are dead.
+            if pred.is_none() && arm.guard.is_none() {
+                self.builder.position_at_end(next_bb);
+                self.builder.build_unreachable().unwrap();
+                fell_through = false;
+                break;
+            }
+            cur = next_bb;
+        }
+
+        // Exhaustive-but-no-plain-catch-all → the final fallthrough is unreachable.
+        if fell_through {
+            self.builder.position_at_end(cur);
+            self.builder.build_unreachable().unwrap();
+        }
         self.builder.position_at_end(end_bb);
         Ok(false)
     }

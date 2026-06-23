@@ -188,6 +188,10 @@ fn dump_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
             dump_expr(value, indent + 2, out);
             for arm in arms {
                 out.push_str(&format!("{pad}  arm {}\n", pattern_text(&arm.pattern)));
+                if let Some(guard) = &arm.guard {
+                    out.push_str(&format!("{pad}    guard\n"));
+                    dump_expr(guard, indent + 3, out);
+                }
                 for stmt in &arm.body {
                     dump_stmt(stmt, indent + 2, out);
                 }

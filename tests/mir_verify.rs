@@ -250,11 +250,13 @@ fn verifier_accepts_match_when_all_arms_return_and_wildcard_covers_default() {
                 value: MirExpr::Int("1".to_string()),
                 arms: vec![
                     MirMatchArm {
-                        pattern: MirPattern::Int("1".to_string()),
+                        guard: None,
+                        pattern:MirPattern::Int("1".to_string()),
                         body: vec![MirStmt::Return(Some(MirExpr::Int("42".to_string())))],
                     },
                     MirMatchArm {
-                        pattern: MirPattern::Wildcard,
+                        guard: None,
+                        pattern:MirPattern::Wildcard,
                         body: vec![MirStmt::Return(Some(MirExpr::Int("0".to_string())))],
                     },
                 ],
@@ -298,7 +300,8 @@ fn verifier_accepts_exhaustive_enum_match_when_all_arms_return() {
                 },
                 arms: vec![
                     MirMatchArm {
-                        pattern: MirPattern::Variant {
+                        guard: None,
+                        pattern:MirPattern::Variant {
                             enum_name: "ResultTag".to_string(),
                             variant: "Ok".to_string(),
                             binding: None,
@@ -306,7 +309,8 @@ fn verifier_accepts_exhaustive_enum_match_when_all_arms_return() {
                         body: vec![MirStmt::Return(Some(MirExpr::Int("42".to_string())))],
                     },
                     MirMatchArm {
-                        pattern: MirPattern::Variant {
+                        guard: None,
+                        pattern:MirPattern::Variant {
                             enum_name: "ResultTag".to_string(),
                             variant: "Err".to_string(),
                             binding: None,
@@ -337,11 +341,13 @@ fn verifier_accepts_exhaustive_bool_match_when_all_arms_return() {
                 value: MirExpr::Bool(true),
                 arms: vec![
                     MirMatchArm {
-                        pattern: MirPattern::Bool(true),
+                        guard: None,
+                        pattern:MirPattern::Bool(true),
                         body: vec![MirStmt::Return(Some(MirExpr::Int("42".to_string())))],
                     },
                     MirMatchArm {
-                        pattern: MirPattern::Bool(false),
+                        guard: None,
+                        pattern:MirPattern::Bool(false),
                         body: vec![MirStmt::Return(Some(MirExpr::Int("0".to_string())))],
                     },
                 ],
@@ -384,6 +390,7 @@ fn verifier_rejects_non_exhaustive_enum_match_without_trailing_return() {
                     payload: None,
                 },
                 arms: vec![MirMatchArm {
+                    guard: None,
                     pattern: MirPattern::Variant {
                         enum_name: "ResultTag".to_string(),
                         variant: "Ok".to_string(),

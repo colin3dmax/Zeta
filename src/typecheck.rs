@@ -549,6 +549,7 @@ fn stmt_refs(stmt: &Stmt, name: &str) -> bool {
             expr_refs(value, name)
                 || arms.iter().any(|arm| {
                     matches!(&arm.pattern, Pattern::Variant { enum_name, .. } if enum_name == name)
+                        || arm.guard.as_ref().is_some_and(|g| expr_refs(g, name))
                         || arm.body.iter().any(|s| stmt_refs(s, name))
                 })
         }
@@ -961,6 +962,19 @@ fn check_stmts(
                     {
                         arm_locals.insert(name, Binding { ty, mutable: false });
                     }
+                    // A guard is a Bool condition evaluated with the pattern's
+                    // bindings in scope (`Some(n) if n > 0`).
+                    if let Some(guard) = &arm.guard {
+                        let guard_ty =
+                            infer_expr(guard, &arm_locals, functions, structs, enums, diagnostics);
+                        expect_type(
+                            &guard_ty,
+                            &Type::Bool,
+                            "TYPE_MATCH_GUARD_NOT_BOOL",
+                            guard.span(),
+                            diagnostics,
+                        );
+                    }
                     check_stmts(
                         &arm.body,
                         &mut arm_locals,
@@ -1025,10 +1039,11 @@ fn check_match_exhaustiveness(
     enums: &HashMap<String, EnumType>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    if arms
-        .iter()
-        .any(|arm| matches!(arm.pattern, Pattern::Wildcard | Pattern::Name(_)))
-    {
+    // A guarded arm can fail (its guard may be false), so it never makes the match
+    // exhaustive — not even `_ if c`. Only plain arms count as catch-alls/coverage.
+    if arms.iter().any(|arm| {
+        arm.guard.is_none() && matches!(arm.pattern, Pattern::Wildcard | Pattern::Name(_))
+    }) {
         return;
     }
 
@@ -1036,6 +1051,7 @@ fn check_match_exhaustiveness(
         Type::Bool => {
             let covered = arms
                 .iter()
+                .filter(|arm| arm.guard.is_none())
                 .filter_map(|arm| match arm.pattern {
                     Pattern::Bool(value) => Some(value),
                     _ => None,
@@ -1059,6 +1075,7 @@ fn check_match_exhaustiveness(
             };
             let covered = arms
                 .iter()
+                .filter(|arm| arm.guard.is_none())
                 .filter_map(|arm| match &arm.pattern {
                     Pattern::Variant {
                         enum_name: pattern_enum,
