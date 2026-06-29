@@ -84,3 +84,26 @@ fn string_replace(s: String, from: String, to: String) -> String {
   let parts: StringArray = string_split(s, from);
   return string_join(parts, to);
 }
+
+// Drop leading ASCII whitespace. Uses `ascii_is_whitespace` (the same predicate
+// behind the `string_trim` builtin), so trim_start/trim_end/trim agree exactly on
+// the whitespace set: space, \t, \n, \r, form-feed. (`&&` short-circuits, so the
+// byte read never runs past the end.)
+fn string_trim_start(s: String) -> String {
+  let n: Int = string_len(s);
+  let mut start: Int = 0;
+  while start < n && ascii_is_whitespace(string_byte_at(s, start)) {
+    start = start + 1;
+  }
+  return string_byte_slice(s, start, n - start);
+}
+
+// Drop trailing ASCII whitespace (same whitespace set as `string_trim_start`).
+fn string_trim_end(s: String) -> String {
+  let n: Int = string_len(s);
+  let mut end: Int = n;
+  while end > 0 && ascii_is_whitespace(string_byte_at(s, end - 1)) {
+    end = end - 1;
+  }
+  return string_byte_slice(s, 0, end);
+}

@@ -193,3 +193,52 @@ fn empty_prefix_suffix_always_match() {
     let body = "b2i(string_starts_with(\"x\", \"\")) * 10 + b2i(string_ends_with(\"x\", \"\"))";
     assert_eq!(check(&int_result(body)), 11);
 }
+
+#[test]
+fn trim_start_drops_leading_whitespace() {
+    assert_eq!(
+        check(&string_result("string_trim_start(\"   hi  \")")),
+        checksum("hi  ")
+    );
+}
+
+#[test]
+fn trim_end_drops_trailing_whitespace() {
+    assert_eq!(
+        check(&string_result("string_trim_end(\"   hi  \")")),
+        checksum("   hi")
+    );
+}
+
+#[test]
+fn trim_handles_tab_newline_formfeed_set() {
+    // \t \n \r \x0c form-feed are all whitespace (matching the string_trim builtin).
+    assert_eq!(
+        check(&string_result("string_trim_start(\"\\t\\n\\r x\")")),
+        checksum("x")
+    );
+    assert_eq!(
+        check(&string_result("string_trim_end(\"x \\t\\n\\r\")")),
+        checksum("x")
+    );
+}
+
+#[test]
+fn trim_all_whitespace_yields_empty() {
+    // Forces the scan index to the end — confirms `&&` short-circuits (no
+    // out-of-bounds byte read) on BOTH backends.
+    assert_eq!(check(&string_result("string_trim_start(\"     \")")), checksum(""));
+    assert_eq!(check(&string_result("string_trim_end(\"     \")")), checksum(""));
+}
+
+#[test]
+fn trim_no_whitespace_is_unchanged() {
+    assert_eq!(
+        check(&string_result("string_trim_start(\"abc\")")),
+        checksum("abc")
+    );
+    assert_eq!(
+        check(&string_result("string_trim_end(\"abc\")")),
+        checksum("abc")
+    );
+}
