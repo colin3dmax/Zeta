@@ -1,0 +1,38 @@
+// std.strings — string helpers written in Zeta on top of the std.core string
+// builtins, injected verbatim when a module writes `import std.strings;`. Pure
+// Zeta means it is correct on every backend by construction (it lowers like user
+// code) and carries no codegen/runtime intrinsic of its own.
+import std.core;
+
+// Split `s` on every (non-overlapping, left-to-right) occurrence of `sep`,
+// returning the pieces between separators. Mirrors the common library contract:
+//   "a,b,c"  / ","  -> ["a", "b", "c"]
+//   "a,,b"   / ","  -> ["a", "", "b"]   (empty piece between adjacent seps)
+//   ""       / ","  -> [""]             (one empty piece)
+//   "abc"    / "x"  -> ["abc"]          (no separator -> the whole string)
+// An empty separator can't make progress, so it degenerates to the whole string
+// as a single piece (rather than looping forever on a 0-width match).
+fn string_split(s: String, sep: String) -> StringArray {
+  let mut out: StringArray = string_array_empty();
+  let sep_len: Int = string_len(sep);
+  if sep_len == 0 {
+    out = string_array_push(out, s);
+    return out;
+  }
+  let mut rest: String = s;
+  let mut more: Bool = true;
+  while more {
+    let i: Int = string_index_of(rest, sep);
+    if i < 0 {
+      out = string_array_push(out, rest);
+      more = false;
+    } else {
+      let piece: String = string_byte_slice(rest, 0, i);
+      out = string_array_push(out, piece);
+      let rest_len: Int = string_len(rest);
+      let tail_start: Int = i + sep_len;
+      rest = string_byte_slice(rest, tail_start, rest_len - tail_start);
+    }
+  }
+  return out;
+}

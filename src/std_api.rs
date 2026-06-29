@@ -1,5 +1,9 @@
-pub const STANDARD_IMPORTS: &[&[&str]] =
-    &[&["std", "core"], &["std", "io"], &["std", "collections"]];
+pub const STANDARD_IMPORTS: &[&[&str]] = &[
+    &["std", "core"],
+    &["std", "io"],
+    &["std", "collections"],
+    &["std", "strings"],
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StandardEnum {
@@ -376,6 +380,15 @@ pub fn is_std_io_import(path: &[String]) -> bool {
 /// `std_prelude`), so it carries no `core_functions`-style builtin entries.
 pub fn is_std_collections_import(path: &[String]) -> bool {
     ["std", "collections"]
+        .into_iter()
+        .eq(path.iter().map(String::as_str))
+}
+
+/// `std.strings` is a SOURCE module (string helpers like `string_split` written
+/// in Zeta on top of the `std.core` string builtins), injected verbatim when
+/// imported — like `std.collections`, it carries no intrinsic builtin entries.
+pub fn is_std_strings_import(path: &[String]) -> bool {
+    ["std", "strings"]
         .into_iter()
         .eq(path.iter().map(String::as_str))
 }

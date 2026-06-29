@@ -15,6 +15,9 @@ use crate::{lexer, parser, std_api};
 /// The `std.collections` library source, embedded at build time.
 const COLLECTIONS_SOURCE: &str = include_str!("std/collections.zeta");
 
+/// The `std.strings` library source (string_split etc.), embedded at build time.
+const STRINGS_SOURCE: &str = include_str!("std/strings.zeta");
+
 /// If `module` imports a source-level standard module, prepend that module's
 /// items so its definitions precede the user code that references them. A no-op
 /// for the common case of no such import — in particular the self-hosting
@@ -22,6 +25,9 @@ const COLLECTIONS_SOURCE: &str = include_str!("std/collections.zeta");
 pub fn inject(module: &mut Module) {
     if imports(module, std_api::is_std_collections_import) {
         prepend_source(module, COLLECTIONS_SOURCE);
+    }
+    if imports(module, std_api::is_std_strings_import) {
+        prepend_source(module, STRINGS_SOURCE);
     }
 }
 
