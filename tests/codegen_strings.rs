@@ -90,3 +90,106 @@ fn split_empty_separator_yields_whole_string() {
     // A 0-width separator can't make progress, so the whole string is one piece.
     assert_eq!(check(&split_encode("abc", "")), enc(&["abc"]));
 }
+
+/// Deterministic checksum of a string: `len * 1_000_000 + Σ byte_i * (i + 1)`.
+/// Used to compare a String result across backends as an Int.
+fn checksum(s: &str) -> i64 {
+    let mut acc = s.len() as i64 * 1_000_000;
+    for (i, b) in s.bytes().enumerate() {
+        acc += b as i64 * (i as i64 + 1);
+    }
+    acc
+}
+
+/// A harness whose `main` builds a String via `expr` and returns its checksum
+/// (matching `checksum`), so the differential `check` compares the actual bytes.
+fn string_result(expr: &str) -> String {
+    format!(
+        "\
+import std.core;
+import std.strings;
+fn main() -> Int {{
+  let s: String = {expr};
+  let mut acc: Int = string_len(s) * 1000000;
+  let mut i: Int = 0;
+  while i < string_len(s) {{
+    acc = acc + string_byte_at(s, i) * (i + 1);
+    i = i + 1;
+  }}
+  return acc;
+}}"
+    )
+}
+
+/// A harness returning an Int directly (for the Bool predicates, encoded 0/1).
+fn int_result(body_expr: &str) -> String {
+    format!(
+        "\
+import std.core;
+import std.strings;
+fn b2i(b: Bool) -> Int {{ if b {{ return 1; }} return 0; }}
+fn main() -> Int {{ return {body_expr}; }}"
+    )
+}
+
+#[test]
+fn join_is_inverse_of_split() {
+    assert_eq!(
+        check(&string_result("string_join(string_split(\"a,b,c\", \",\"), \"-\")")),
+        checksum("a-b-c")
+    );
+}
+
+#[test]
+fn join_empty_and_single() {
+    // Empty array -> "", single piece -> itself (no separator added).
+    assert_eq!(
+        check(&string_result("string_join(string_array_empty(), \",\")")),
+        checksum("")
+    );
+    assert_eq!(
+        check(&string_result("string_join(string_split(\"solo\", \",\"), \"+\")")),
+        checksum("solo")
+    );
+}
+
+#[test]
+fn replace_all_occurrences() {
+    assert_eq!(
+        check(&string_result("string_replace(\"a.b.b.c\", \"b\", \"X\")")),
+        checksum("a.X.X.c")
+    );
+}
+
+#[test]
+fn replace_multi_char_and_grow() {
+    // Replacement longer than the match, multiple hits.
+    assert_eq!(
+        check(&string_result("string_replace(\"xAxAx\", \"A\", \"--\")")),
+        checksum("x--x--x")
+    );
+}
+
+#[test]
+fn replace_empty_from_is_identity() {
+    assert_eq!(
+        check(&string_result("string_replace(\"abc\", \"\", \"X\")")),
+        checksum("abc")
+    );
+}
+
+#[test]
+fn starts_with_and_ends_with() {
+    // 1*1000 + 0*100 + 1*10 + 0 = 1010 (he✓, lo✗ as prefix; lo✓, hello✗ as suffix).
+    let body = "b2i(string_starts_with(\"hello\", \"he\")) * 1000 \
+                + b2i(string_starts_with(\"hello\", \"lo\")) * 100 \
+                + b2i(string_ends_with(\"hello\", \"lo\")) * 10 \
+                + b2i(string_ends_with(\"hi\", \"hello\"))";
+    assert_eq!(check(&int_result(body)), 1010);
+}
+
+#[test]
+fn empty_prefix_suffix_always_match() {
+    let body = "b2i(string_starts_with(\"x\", \"\")) * 10 + b2i(string_ends_with(\"x\", \"\"))";
+    assert_eq!(check(&int_result(body)), 11);
+}

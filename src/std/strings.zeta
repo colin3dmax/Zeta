@@ -36,3 +36,51 @@ fn string_split(s: String, sep: String) -> StringArray {
   }
   return out;
 }
+
+// Concatenate `parts`, inserting `sep` between adjacent pieces (the inverse of
+// `string_split`): join(["a","b","c"], ",") -> "a,b,c". An empty array joins to
+// "" and a single piece joins to itself (no separator added).
+fn string_join(parts: StringArray, sep: String) -> String {
+  let mut out: String = "";
+  let mut i: Int = 0;
+  while i < parts.len {
+    if i > 0 {
+      out = string_concat(out, sep);
+    }
+    out = string_concat(out, parts[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// True when `s` begins with `prefix`. The empty prefix is a prefix of every
+// string. (Defined here in std.strings, never as a global builtin, so it can't
+// clash with the self-hosting frontend's own `string_starts_with`.)
+fn string_starts_with(s: String, prefix: String) -> Bool {
+  let pn: Int = string_len(prefix);
+  if pn > string_len(s) {
+    return false;
+  }
+  return string_byte_slice(s, 0, pn) == prefix;
+}
+
+// True when `s` ends with `suffix`. The empty suffix is a suffix of every string.
+fn string_ends_with(s: String, suffix: String) -> Bool {
+  let sn: Int = string_len(suffix);
+  let n: Int = string_len(s);
+  if sn > n {
+    return false;
+  }
+  return string_byte_slice(s, n - sn, sn) == suffix;
+}
+
+// Replace every (non-overlapping, left-to-right) occurrence of `from` in `s`
+// with `to`. Built as split-then-join, so it inherits split's contract; an empty
+// `from` can't make progress and returns `s` unchanged.
+fn string_replace(s: String, from: String, to: String) -> String {
+  if string_len(from) == 0 {
+    return s;
+  }
+  let parts: StringArray = string_split(s, from);
+  return string_join(parts, to);
+}
