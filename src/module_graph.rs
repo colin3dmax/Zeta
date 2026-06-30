@@ -539,7 +539,7 @@ fn rewrite_expr(
             }
         }
         MirExpr::Lambda { body, .. } => {
-            rewrite_expr(
+            rewrite_stmts(
                 body,
                 current_module,
                 imported_targets,

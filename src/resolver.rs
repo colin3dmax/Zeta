@@ -1,4 +1,4 @@
-use crate::ast::{Expr, Function, Item, Module, Pattern, Stmt};
+use crate::ast::{Expr, Function, Item, LambdaBody, Module, Pattern, Stmt};
 use crate::diagnostic::{Diagnostic, Span};
 use crate::std_api;
 use std::collections::{HashMap, HashSet};
@@ -623,16 +623,28 @@ fn check_expr(
             for param in params {
                 body_locals.insert(param.name.clone(), Binding { mutable: false });
             }
-            check_expr(
-                body,
-                &mut body_locals,
-                functions,
-                top_level_names,
-                enum_variants,
-                ambiguous_external_functions,
-                function_name,
-                diagnostics,
-            );
+            match body {
+                LambdaBody::Expr(e) => check_expr(
+                    e,
+                    &mut body_locals,
+                    functions,
+                    top_level_names,
+                    enum_variants,
+                    ambiguous_external_functions,
+                    function_name,
+                    diagnostics,
+                ),
+                LambdaBody::Block(stmts) => check_stmts(
+                    stmts,
+                    &mut body_locals,
+                    functions,
+                    top_level_names,
+                    enum_variants,
+                    ambiguous_external_functions,
+                    function_name,
+                    diagnostics,
+                ),
+            }
         }
         Expr::Index { base, index, .. } => {
             check_expr(

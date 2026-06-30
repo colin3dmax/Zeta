@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, Function, Item, Module, Pattern, Stmt, UnaryOp};
+use crate::ast::{BinaryOp, Expr, Function, Item, LambdaBody, Module, Pattern, Stmt, UnaryOp};
 use crate::diagnostic::{Diagnostic, Span};
 use crate::std_api;
 use std::cell::RefCell;
@@ -568,7 +568,11 @@ fn expr_refs(expr: &Expr, name: &str) -> bool {
         Expr::Binary { left, right, .. } => expr_refs(left, name) || expr_refs(right, name),
         Expr::Unary { expr, .. } => expr_refs(expr, name),
         Expr::Lambda { params, body, .. } => {
-            params.iter().any(|p| ty_refs(&p.ty, name)) || expr_refs(body, name)
+            params.iter().any(|p| ty_refs(&p.ty, name))
+                || match body {
+                    LambdaBody::Expr(e) => expr_refs(e, name),
+                    LambdaBody::Block(stmts) => stmts.iter().any(|s| stmt_refs(s, name)),
+                }
         }
         Expr::StructLiteral { ty, fields, .. } => {
             ty_refs(ty, name) || fields.iter().any(|f| expr_refs(&f.value, name))
@@ -1206,6 +1210,72 @@ fn check_pattern(
     Vec::new()
 }
 
+/// Infer a lambda block's return type: the type of the first `return <expr>`
+/// reached in evaluation order, accumulating `let` bindings into `scope` so a
+/// `return` can reference earlier locals. Recurses into nested control flow
+/// (each nested block scopes its own lets). Diagnostics here are scratch — the
+/// caller re-checks the body via `check_stmts`.
+fn lambda_block_return_type(
+    stmts: &[Stmt],
+    scope: &mut HashMap<String, Binding>,
+    functions: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<Type> {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Let {
+                mutable, name, ty, value, ..
+            } => {
+                let t = match ty {
+                    Some(s) => parse_type(s),
+                    None => infer_expr(value, scope, functions, structs, enums, diagnostics),
+                };
+                scope.insert(name.clone(), Binding { ty: t, mutable: *mutable });
+            }
+            Stmt::Return(Some(e)) => {
+                return Some(infer_expr(e, scope, functions, structs, enums, diagnostics));
+            }
+            Stmt::Return(None) => return Some(Type::Unit),
+            Stmt::If { then_body, else_body, .. } => {
+                let mut s = scope.clone();
+                if let Some(t) =
+                    lambda_block_return_type(then_body, &mut s, functions, structs, enums, diagnostics)
+                {
+                    return Some(t);
+                }
+                let mut s = scope.clone();
+                if let Some(t) =
+                    lambda_block_return_type(else_body, &mut s, functions, structs, enums, diagnostics)
+                {
+                    return Some(t);
+                }
+            }
+            Stmt::While { body, .. } | Stmt::ForIn { body, .. } | Stmt::ForC { body, .. } => {
+                let mut s = scope.clone();
+                if let Some(t) =
+                    lambda_block_return_type(body, &mut s, functions, structs, enums, diagnostics)
+                {
+                    return Some(t);
+                }
+            }
+            Stmt::Match { arms, .. } => {
+                for arm in arms {
+                    let mut s = scope.clone();
+                    if let Some(t) =
+                        lambda_block_return_type(&arm.body, &mut s, functions, structs, enums, diagnostics)
+                    {
+                        return Some(t);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn infer_expr(
     expr: &Expr,
     locals: &HashMap<String, Binding>,
@@ -1501,7 +1571,39 @@ fn infer_expr(
                 );
                 param_types.push(ty);
             }
-            let ret = infer_expr(body, &body_locals, functions, structs, enums, diagnostics);
+            let ret = match body {
+                LambdaBody::Expr(e) => {
+                    infer_expr(e, &body_locals, functions, structs, enums, diagnostics)
+                }
+                LambdaBody::Block(stmts) => {
+                    // Infer the return type from the block's `return` statements
+                    // (scratch diagnostics — the real check is `check_stmts` below),
+                    // then type-check the block body against it.
+                    let mut scratch = Vec::new();
+                    let mut scan_scope = body_locals.clone();
+                    let ret = lambda_block_return_type(
+                        stmts,
+                        &mut scan_scope,
+                        functions,
+                        structs,
+                        enums,
+                        &mut scratch,
+                    )
+                    .unwrap_or(Type::Unit);
+                    check_stmts(
+                        stmts,
+                        &mut body_locals,
+                        functions,
+                        structs,
+                        enums,
+                        &ret,
+                        "",
+                        0,
+                        diagnostics,
+                    );
+                    ret
+                }
+            };
             Type::Fn(param_types, Box::new(ret))
         }
         Expr::StructLiteral {

@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, Item, Module, Pattern, Stmt, UnaryOp};
+use crate::ast::{BinaryOp, Expr, Item, LambdaBody, Module, Pattern, Stmt, UnaryOp};
 
 pub fn dump(module: &Module) -> String {
     let mut out = String::from("HirModule\n");
@@ -249,7 +249,14 @@ fn dump_expr(expr: &Expr, indent: usize, out: &mut String) {
                 .map(|p| format!("{}: {}", p.name, p.ty))
                 .collect();
             out.push_str(&format!("{pad}lambda |{}|\n", names.join(", ")));
-            dump_expr(body, indent + 1, out);
+            match body {
+                LambdaBody::Expr(e) => dump_expr(e, indent + 1, out),
+                LambdaBody::Block(stmts) => {
+                    for stmt in stmts {
+                        dump_stmt(stmt, indent + 1, out);
+                    }
+                }
+            }
         }
         Expr::StructLiteral { ty, fields, .. } => {
             out.push_str(&format!("{pad}struct_literal {ty}\n"));

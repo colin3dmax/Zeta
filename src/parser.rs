@@ -1,6 +1,7 @@
 use crate::ast::{
-    BinaryOp, EnumDecl, EnumVariant, Expr, Field, Function, ImplBlock, Item, MatchArm, Module,
-    Param, Pattern, Stmt, StructDecl, StructExprField, TraitBound, TraitDecl, TraitMethod, UnaryOp,
+    BinaryOp, EnumDecl, EnumVariant, Expr, Field, Function, ImplBlock, Item, LambdaBody, MatchArm,
+    Module, Param, Pattern, Stmt, StructDecl, StructExprField, TraitBound, TraitDecl, TraitMethod,
+    UnaryOp,
 };
 use crate::diagnostic::{Diagnostic, Span};
 use crate::lexer::{Keyword, Symbol, Token, TokenKind};
@@ -1076,15 +1077,35 @@ impl Parser {
         }
     }
 
+    /// Parse a lambda body: a `{` immediately after the closing `|` starts a
+    /// statement block (`|x| { ...; return e; }`); anything else is a single
+    /// expression (`|x| x + 1`). A struct-returning lambda `|x| Foo { .. }` is
+    /// unambiguous — the `{` there follows the type name, not the `|`.
+    fn parse_lambda_body(&mut self) -> Result<(LambdaBody, usize), Diagnostic> {
+        if self.check_symbol(Symbol::LBrace) {
+            self.expect_symbol(Symbol::LBrace, "expected `{` to begin a lambda block")?;
+            let mut stmts = Vec::new();
+            while !self.check_symbol(Symbol::RBrace) && !self.at_eof() {
+                stmts.push(self.parse_stmt()?);
+            }
+            let end = self.peek().span.end;
+            self.expect_symbol(Symbol::RBrace, "expected `}` after lambda block")?;
+            Ok((LambdaBody::Block(stmts), end))
+        } else {
+            let body = self.parse_expr()?;
+            let end = body.span().end;
+            Ok((LambdaBody::Expr(Box::new(body)), end))
+        }
+    }
+
     fn parse_lambda(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.peek().span.start;
         // `||` lexes as a single OrOr token: that's an empty parameter list.
         if self.consume_symbol(Symbol::OrOr).is_some() {
-            let body = self.parse_expr()?;
-            let end = body.span().end;
+            let (body, end) = self.parse_lambda_body()?;
             return Ok(Expr::Lambda {
                 params: Vec::new(),
-                body: Box::new(body),
+                body,
                 span: Span::new(start, end),
             });
         }
@@ -1115,11 +1136,10 @@ impl Parser {
             }
         }
         self.expect_symbol(Symbol::Pipe, "expected `|` after lambda parameters")?;
-        let body = self.parse_expr()?;
-        let end = body.span().end;
+        let (body, end) = self.parse_lambda_body()?;
         Ok(Expr::Lambda {
             params,
-            body: Box::new(body),
+            body,
             span: Span::new(start, end),
         })
     }

@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, Function, Item, Module, Pattern, Stmt, UnaryOp};
+use crate::ast::{BinaryOp, Expr, Function, Item, LambdaBody, Module, Pattern, Stmt, UnaryOp};
 use crate::diagnostic::{Diagnostic, Span};
 use crate::mir::{self, MirExpr, MirFunction, MirPattern, MirPlace, MirStmt, Program};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -57,8 +57,11 @@ pub struct Closure {
 
 #[derive(Debug, Clone, PartialEq)]
 enum ClosureBody {
-    Mir(MirExpr),
+    /// A MIR closure body: a statement block (an expression lambda `|x| e` lowers
+    /// to `[return e]`), executed like a function body.
+    MirBlock(Vec<MirStmt>),
     Ast(Expr),
+    AstBlock(Vec<Stmt>),
 }
 
 /// 赋值左值展平后的一步:字段名或已求值的数组下标。
@@ -509,7 +512,9 @@ fn live_expr(
             // so every name the body references is used here. Keep them live (and
             // never movable: the capture clones them, leaving the originals).
             let mut names = LiveSet::new();
-            collect_expr_names(body, &mut names);
+            for stmt in body {
+                collect_stmt_names(stmt, &mut names);
+            }
             for name in names {
                 live.insert(name);
             }
@@ -582,7 +587,11 @@ fn collect_expr_names(expr: &MirExpr, out: &mut LiveSet) {
                 collect_expr_names(element, out);
             }
         }
-        MirExpr::Lambda { body, .. } => collect_expr_names(body, out),
+        MirExpr::Lambda { body, .. } => {
+            for stmt in body {
+                collect_stmt_names(stmt, out);
+            }
+        }
         MirExpr::Index { base, index } => {
             collect_expr_names(base, out);
             collect_expr_names(index, out);
@@ -1174,17 +1183,24 @@ impl MirRuntime {
                 ),
             ));
         }
-        let ClosureBody::Mir(body) = &closure.body else {
-            return Err(runtime_error(
-                "RUNTIME_CLOSURE_BODY",
-                "closure body is not MIR in the MIR interpreter",
-            ));
-        };
         let mut call_locals = closure.captured.clone();
         for (name, value) in closure.params.iter().zip(args) {
             call_locals.insert(name.clone(), value);
         }
-        self.eval_expr(body, &mut call_locals)
+        match &closure.body {
+            ClosureBody::MirBlock(stmts) => match self.eval_stmts(stmts, &mut call_locals)? {
+                Control::Return(value) => Ok(value),
+                Control::Continue => Ok(Value::Unit),
+                Control::BreakLoop | Control::ContinueLoop => Err(runtime_error(
+                    "RUNTIME_BREAK_OUTSIDE_LOOP",
+                    "`break`/`continue` reached closure boundary",
+                )),
+            },
+            _ => Err(runtime_error(
+                "RUNTIME_CLOSURE_BODY",
+                "closure body is not MIR in the MIR interpreter",
+            )),
+        }
     }
 
     fn eval_expr(
@@ -1389,7 +1405,7 @@ impl MirRuntime {
                 Ok(Value::Closure(Rc::new(Closure {
                     params: params.iter().map(|p| p.name.clone()).collect(),
                     captured: locals.clone(),
-                    body: ClosureBody::Mir((**body).clone()),
+                    body: ClosureBody::MirBlock(body.clone()),
                 })))
             }
             MirExpr::Index { base, index } => {
@@ -1766,17 +1782,25 @@ impl Runtime {
                 ),
             ));
         }
-        let ClosureBody::Ast(body) = &closure.body else {
-            return Err(runtime_error(
-                "RUNTIME_CLOSURE_BODY",
-                "closure body is not AST in the AST interpreter",
-            ));
-        };
         let mut call_locals = closure.captured.clone();
         for (name, value) in closure.params.iter().zip(args) {
             call_locals.insert(name.clone(), value);
         }
-        self.eval_expr(body, &call_locals)
+        match &closure.body {
+            ClosureBody::Ast(body) => self.eval_expr(body, &call_locals),
+            ClosureBody::AstBlock(stmts) => match self.eval_stmts(stmts, &mut call_locals)? {
+                Control::Return(value) => Ok(value),
+                Control::Continue => Ok(Value::Unit),
+                Control::BreakLoop | Control::ContinueLoop => Err(runtime_error(
+                    "RUNTIME_BREAK_OUTSIDE_LOOP",
+                    "`break`/`continue` reached closure boundary",
+                )),
+            },
+            _ => Err(runtime_error(
+                "RUNTIME_CLOSURE_BODY",
+                "closure body is not AST in the AST interpreter",
+            )),
+        }
     }
 
     fn eval_expr(
@@ -1952,7 +1976,10 @@ impl Runtime {
                 Ok(Value::Closure(Rc::new(Closure {
                     params: params.iter().map(|p| p.name.clone()).collect(),
                     captured: locals.clone(),
-                    body: ClosureBody::Ast((**body).clone()),
+                    body: match body {
+                        LambdaBody::Expr(e) => ClosureBody::Ast((**e).clone()),
+                        LambdaBody::Block(stmts) => ClosureBody::AstBlock(stmts.clone()),
+                    },
                 })))
             }
             Expr::Index { base, index, .. } => {

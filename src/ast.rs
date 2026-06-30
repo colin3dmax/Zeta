@@ -201,6 +201,15 @@ pub enum Stmt {
     Expr(Expr),
 }
 
+/// A lambda's body is either a single expression (`|x| x + 1`, implicit return)
+/// or a statement block (`|x| { ...; return e; }`, explicit `return` like a
+/// function). The block form is lowered as if it were the lifted function's body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LambdaBody {
+    Expr(Box<Expr>),
+    Block(Vec<Stmt>),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatchArm {
     pub pattern: Pattern,
@@ -273,7 +282,7 @@ pub enum Expr {
     },
     Lambda {
         params: Vec<Param>,
-        body: Box<Expr>,
+        body: LambdaBody,
         span: Span,
     },
     StructLiteral {
@@ -703,7 +712,14 @@ impl Expr {
                     .map(|p| format!("{}: {}", p.name, p.ty))
                     .collect();
                 out.push_str(&format!("{pad}Lambda |{}|\n", names.join(", ")));
-                body.dump(indent + 1, out);
+                match body {
+                    LambdaBody::Expr(e) => e.dump(indent + 1, out),
+                    LambdaBody::Block(stmts) => {
+                        for stmt in stmts {
+                            stmt.dump(indent + 1, out);
+                        }
+                    }
+                }
             }
             Expr::StructLiteral { ty, fields, .. } => {
                 out.push_str(&format!("{pad}StructLiteral type={ty}\n"));

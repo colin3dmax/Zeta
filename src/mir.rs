@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, Function, Item, Module, Param, Pattern, Stmt, UnaryOp};
+use crate::ast::{BinaryOp, Expr, Function, Item, LambdaBody, Module, Param, Pattern, Stmt, UnaryOp};
 use crate::diagnostic::{Diagnostic, Span};
 use std::collections::{HashMap, HashSet};
 
@@ -173,7 +173,10 @@ pub enum MirExpr {
     },
     Lambda {
         params: Vec<Param>,
-        body: Box<MirExpr>,
+        // Both expression and block lambda bodies collapse to a statement block
+        // here (an expr body `|x| e` lowers to `[return e]`), so the lifted
+        // function is emitted uniformly across backends.
+        body: Vec<MirStmt>,
     },
     Index {
         base: Box<MirExpr>,
@@ -554,7 +557,14 @@ fn lower_expr(
         },
         Expr::Lambda { params, body, .. } => MirExpr::Lambda {
             params: params.clone(),
-            body: Box::new(lower_expr(body, enum_variants)),
+            body: match body {
+                // An expression body becomes a single `return <expr>` so the lifted
+                // function body is always a statement block.
+                LambdaBody::Expr(e) => vec![MirStmt::Return(Some(lower_expr(e, enum_variants)))],
+                LambdaBody::Block(stmts) => {
+                    stmts.iter().map(|s| lower_stmt(s, enum_variants)).collect()
+                }
+            },
         },
         Expr::Index { base, index, .. } => MirExpr::Index {
             base: Box::new(lower_expr(base, enum_variants)),
@@ -876,7 +886,20 @@ impl DumpCtx {
                 let names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
                 let temp = self.temp();
                 out.push_str(&format!("{pad}{temp} = lambda |{}|\n", names.join(", ")));
-                self.dump_expr(body, indent + 1, out);
+                // An expression-body lambda lowers to a single `return <expr>`; dump
+                // it as just the expression (the historical format the self-hosting
+                // frontend also emits) so stage-1 parity holds. Only genuine
+                // multi-statement block bodies dump as statements.
+                match body.as_slice() {
+                    [MirStmt::Return(Some(expr))] => {
+                        self.dump_expr(expr, indent + 1, out);
+                    }
+                    _ => {
+                        for stmt in body {
+                            self.dump_stmt(stmt, indent + 1, out);
+                        }
+                    }
+                }
                 temp
             }
             MirExpr::Index { base, index } => {
@@ -1425,6 +1448,59 @@ impl<'a> MirVerifier<'a> {
         }
     }
 
+    /// Infer a lambda block's return type for the verifier: the type of the first
+    /// `return <expr>` reached, with `let` bindings accumulated into scope.
+    /// Recurses into nested control flow (each nested block scopes its own lets).
+    fn block_return_mir_type(
+        &mut self,
+        stmts: &[MirStmt],
+        scope: &mut HashMap<String, MirType>,
+    ) -> MirType {
+        for stmt in stmts {
+            match stmt {
+                MirStmt::Local { name, value, .. } => {
+                    let t = self.verify_expr(value, scope);
+                    scope.insert(name.clone(), t);
+                }
+                MirStmt::Return(Some(e)) => return self.verify_expr(e, scope),
+                MirStmt::Return(None) => return MirType::named("Unit"),
+                MirStmt::If { then_body, else_body, .. } => {
+                    let mut s = scope.clone();
+                    let t = self.block_return_mir_type(then_body, &mut s);
+                    if !t.is_unknown() {
+                        return t;
+                    }
+                    let mut s = scope.clone();
+                    let t = self.block_return_mir_type(else_body, &mut s);
+                    if !t.is_unknown() {
+                        return t;
+                    }
+                }
+                MirStmt::While { body, .. }
+                | MirStmt::ForIn { body, .. }
+                | MirStmt::ForRange { body, .. }
+                | MirStmt::ForC { body, .. } => {
+                    let mut s = scope.clone();
+                    let t = self.block_return_mir_type(body, &mut s);
+                    if !t.is_unknown() {
+                        return t;
+                    }
+                }
+                MirStmt::Match { arms, .. } => {
+                    for arm in arms {
+                        let mut s = scope.clone();
+                        let t = self.block_return_mir_type(&arm.body, &mut s);
+                        if !t.is_unknown() {
+                            return t;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        MirType::Unknown
+    }
+
     fn verify_expr(&mut self, expr: &MirExpr, locals: &HashMap<String, MirType>) -> MirType {
         match expr {
             MirExpr::Load(name) => locals.get(name).cloned().unwrap_or_else(|| {
@@ -1538,7 +1614,7 @@ impl<'a> MirVerifier<'a> {
                 MirType::Tuple(types)
             }
             MirExpr::Lambda { params, body } => {
-                // Verify the body with the lambda's params added to the scope.
+                // Verify the block body with the lambda's params added to scope.
                 let mut body_locals = locals.clone();
                 let mut param_types = Vec::with_capacity(params.len());
                 for param in params {
@@ -1546,7 +1622,10 @@ impl<'a> MirVerifier<'a> {
                     body_locals.insert(param.name.clone(), ty.clone());
                     param_types.push(ty);
                 }
-                let ret = self.verify_expr(body, &body_locals);
+                // The return type is inferred from the block's `return` statements;
+                // then the body is verified against it.
+                let ret = self.block_return_mir_type(body, &mut body_locals.clone());
+                self.verify_stmts(body, &mut body_locals, &ret, 0);
                 MirType::Fn(param_types, Box::new(ret))
             }
             MirExpr::ArrayLiteral { elements } => {

@@ -782,13 +782,137 @@ fn collect_free_loads(expr: &MirExpr, bound: &mut HashSet<String>, out: &mut Vec
                 .map(|p| p.name.clone())
                 .filter(|n| bound.insert(n.clone()))
                 .collect();
-            collect_free_loads(body, bound, out);
+            collect_free_loads_stmts(body, bound, out);
             for name in added {
                 bound.remove(&name);
             }
         }
         MirExpr::Index { base, index } => {
             collect_free_loads(base, bound, out);
+            collect_free_loads(index, bound, out);
+        }
+    }
+}
+
+/// Free-variable collection over a statement block (a lambda's lifted body):
+/// names read but not bound by params or `let`s become captures. Mirrors the
+/// expression walker, tracking `let`/loop/match bindings as they enter scope so
+/// they're not miscounted as free; nested blocks scope their own bindings.
+fn collect_free_loads_stmts(stmts: &[MirStmt], bound: &mut HashSet<String>, out: &mut Vec<String>) {
+    let mut added: Vec<String> = Vec::new();
+    for stmt in stmts {
+        collect_free_loads_stmt(stmt, bound, out, &mut added);
+    }
+    for name in added {
+        bound.remove(&name);
+    }
+}
+
+fn collect_free_loads_stmt(
+    stmt: &MirStmt,
+    bound: &mut HashSet<String>,
+    out: &mut Vec<String>,
+    added: &mut Vec<String>,
+) {
+    match stmt {
+        MirStmt::Local { name, value, .. } => {
+            collect_free_loads(value, bound, out); // initializer sees the outer scope
+            if bound.insert(name.clone()) {
+                added.push(name.clone()); // bound for the rest of this block
+            }
+        }
+        MirStmt::Store { place, value } => {
+            collect_free_loads_place(place, bound, out);
+            collect_free_loads(value, bound, out);
+        }
+        MirStmt::If { condition, then_body, else_body } => {
+            collect_free_loads(condition, bound, out);
+            collect_free_loads_stmts(then_body, bound, out);
+            collect_free_loads_stmts(else_body, bound, out);
+        }
+        MirStmt::While { condition, body } => {
+            collect_free_loads(condition, bound, out);
+            collect_free_loads_stmts(body, bound, out);
+        }
+        MirStmt::ForIn { binding, iterable, body } => {
+            collect_free_loads(iterable, bound, out);
+            let fresh = bound.insert(binding.clone());
+            collect_free_loads_stmts(body, bound, out);
+            if fresh {
+                bound.remove(binding);
+            }
+        }
+        MirStmt::ForRange { binding, start, end, body } => {
+            collect_free_loads(start, bound, out);
+            collect_free_loads(end, bound, out);
+            let fresh = bound.insert(binding.clone());
+            collect_free_loads_stmts(body, bound, out);
+            if fresh {
+                bound.remove(binding);
+            }
+        }
+        MirStmt::ForC { init, condition, step, body } => {
+            let mut inner: Vec<String> = Vec::new();
+            collect_free_loads_stmt(init, bound, out, &mut inner); // init's `let` scopes the loop
+            collect_free_loads(condition, bound, out);
+            collect_free_loads_stmt(step, bound, out, &mut inner);
+            collect_free_loads_stmts(body, bound, out);
+            for name in inner {
+                bound.remove(&name);
+            }
+        }
+        MirStmt::Match { value, arms } => {
+            collect_free_loads(value, bound, out);
+            for arm in arms {
+                let binds: Vec<String> = match &arm.pattern {
+                    MirPattern::Name(n) => vec![n.clone()],
+                    MirPattern::Variant { binding: Some(b), .. } => vec![b.clone()],
+                    _ => Vec::new(),
+                };
+                let fresh: Vec<String> =
+                    binds.into_iter().filter(|b| bound.insert(b.clone())).collect();
+                if let Some(guard) = &arm.guard {
+                    collect_free_loads(guard, bound, out);
+                }
+                collect_free_loads_stmts(&arm.body, bound, out);
+                for b in fresh {
+                    bound.remove(&b);
+                }
+            }
+        }
+        MirStmt::Return(Some(e)) | MirStmt::Drop(e) => collect_free_loads(e, bound, out),
+        MirStmt::Return(None) | MirStmt::Break | MirStmt::Continue => {}
+    }
+}
+
+/// Whether a statement block contains a `return` anywhere (including nested
+/// control flow) — used to pick which branch carries a lambda's return type.
+fn block_has_return(stmts: &[MirStmt]) -> bool {
+    stmts.iter().any(|stmt| match stmt {
+        MirStmt::Return(_) => true,
+        MirStmt::If { then_body, else_body, .. } => {
+            block_has_return(then_body) || block_has_return(else_body)
+        }
+        MirStmt::While { body, .. }
+        | MirStmt::ForIn { body, .. }
+        | MirStmt::ForRange { body, .. }
+        | MirStmt::ForC { body, .. } => block_has_return(body),
+        MirStmt::Match { arms, .. } => arms.iter().any(|a| block_has_return(&a.body)),
+        _ => false,
+    })
+}
+
+/// Free names read by an assignment place (the root local plus any index exprs).
+fn collect_free_loads_place(place: &MirPlace, bound: &mut HashSet<String>, out: &mut Vec<String>) {
+    match place {
+        MirPlace::Local(name) => {
+            if !bound.contains(name) && !out.contains(name) {
+                out.push(name.clone());
+            }
+        }
+        MirPlace::Field { base, .. } => collect_free_loads_place(base, bound, out),
+        MirPlace::Index { base, index } => {
+            collect_free_loads_place(base, bound, out);
             collect_free_loads(index, bound, out);
         }
     }
@@ -3066,7 +3190,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                     inner.insert(p.name.clone(), zt.clone());
                     ptys.push(zt);
                 }
-                let ret = self.infer_ztype(body, &inner)?;
+                let ret = self.block_return_ztype(body, &mut inner)?;
                 Ok(ZType::Closure(ptys, Box::new(ret)))
             }
             MirExpr::StructLiteral { ty, .. } => Ok(ZType::Struct(ty.clone())),
@@ -3081,6 +3205,57 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         }
     }
 
+    /// Infer a lambda block's return ZType (for the lifted function signature):
+    /// the type of the first `return <expr>` reached, with `let` bindings
+    /// accumulated into scope. Recurses into nested control flow tolerantly — a
+    /// nested branch whose return can't be typed is skipped rather than failing.
+    /// Defaults to `Int` if no return is found (a degenerate value-less lambda).
+    fn block_return_ztype(
+        &self,
+        stmts: &[MirStmt],
+        scope: &mut HashMap<String, ZType>,
+    ) -> Result<ZType, String> {
+        for stmt in stmts {
+            match stmt {
+                MirStmt::Local { name, value, .. } => {
+                    if let Ok(t) = self.infer_ztype(value, scope) {
+                        scope.insert(name.clone(), t);
+                    }
+                }
+                MirStmt::Return(Some(e)) => return self.infer_ztype(e, scope),
+                MirStmt::If { then_body, else_body, .. } => {
+                    if block_has_return(then_body) {
+                        let mut s = scope.clone();
+                        return self.block_return_ztype(then_body, &mut s);
+                    }
+                    if block_has_return(else_body) {
+                        let mut s = scope.clone();
+                        return self.block_return_ztype(else_body, &mut s);
+                    }
+                }
+                MirStmt::While { body, .. }
+                | MirStmt::ForIn { body, .. }
+                | MirStmt::ForRange { body, .. }
+                | MirStmt::ForC { body, .. } => {
+                    if block_has_return(body) {
+                        let mut s = scope.clone();
+                        return self.block_return_ztype(body, &mut s);
+                    }
+                }
+                MirStmt::Match { arms, .. } => {
+                    for arm in arms {
+                        if block_has_return(&arm.body) {
+                            let mut s = scope.clone();
+                            return self.block_return_ztype(&arm.body, &mut s);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(ZType::Int)
+    }
+
     /// Closure conversion: lift `|params| body` to a top-level LLVM function whose
     /// first parameter is a heap-allocated environment of captured variables, then
     /// build the closure value `{ fn_ptr, env_ptr }` at the use site. Captured
@@ -3089,7 +3264,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
     fn lower_lambda(
         &mut self,
         params: &[crate::ast::Param],
-        body: &MirExpr,
+        body: &[MirStmt],
     ) -> Result<(BasicValueEnum<'ctx>, ZType), String> {
         let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
 
@@ -3102,7 +3277,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         // Free variables that are enclosing locals → captured into the env.
         let mut bound: HashSet<String> = params.iter().map(|p| p.name.clone()).collect();
         let mut free = Vec::new();
-        collect_free_loads(body, &mut bound, &mut free);
+        collect_free_loads_stmts(body, &mut bound, &mut free);
         let captures: Vec<(String, ZType, PointerValue<'ctx>)> = free
             .iter()
             .filter_map(|name| {
@@ -3120,7 +3295,7 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
         for (param, zt) in params.iter().zip(&param_ztys) {
             body_types.insert(param.name.clone(), zt.clone());
         }
-        let ret_zty = self.infer_ztype(body, &body_types)?;
+        let ret_zty = self.block_return_ztype(body, &mut body_types.clone())?;
 
         // Environment struct: one field per capture, in capture order.
         let env_field_types: Vec<BasicTypeEnum<'ctx>> =
@@ -3192,8 +3367,12 @@ impl<'a, 'ctx> FnLower<'a, 'ctx> {
                 inner.builder.build_store(slot, value).unwrap();
                 inner.locals.insert(param.name.clone(), (slot, zt.clone()));
             }
-            let (rv, _) = inner.lower_expr(body)?;
-            inner.builder.build_return(Some(&rv)).unwrap();
+            // Lower the block; an expr lambda is `[return e]`, so this terminates.
+            // A block that can fall through without returning is degenerate for a
+            // value-producing lambda — guard the CFG with `unreachable`.
+            if !inner.lower_stmts(body)? {
+                inner.builder.build_unreachable().unwrap();
+            }
         }
         if let Some(block) = saved_block {
             self.builder.position_at_end(block);

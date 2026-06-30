@@ -269,7 +269,7 @@ macro_rules! impl_walk {
                     }
                     MirExpr::Lambda { body, .. } => {
                         // Captured free vars stay live; nothing inside is moved.
-                        self.walk_expr(body, live_out, false, false)
+                        self.walk_stmts(body, live_out, false)
                     }
                 }
             }
@@ -386,7 +386,7 @@ fn collect_captures(stmts: &[MirStmt], forced: &mut HashSet<String>) {
 fn collect_lambda_free_vars(expr: &MirExpr, forced: &mut HashSet<String>) {
     if let MirExpr::Lambda { params, body } = expr {
         let bound: HashSet<String> = params.iter().map(|p| p.name.clone()).collect();
-        walk_expr_tree(body, &mut |e| {
+        walk_block_exprs(body, &mut |e| {
             if let MirExpr::Load(name) = e {
                 if !bound.contains(name) {
                     forced.insert(name.clone());
@@ -494,7 +494,15 @@ fn walk_expr_tree(expr: &MirExpr, f: &mut dyn FnMut(&MirExpr)) {
             walk_expr_tree(base, f);
             walk_expr_tree(index, f);
         }
-        MirExpr::Lambda { body, .. } => walk_expr_tree(body, f),
+        MirExpr::Lambda { body, .. } => walk_block_exprs(body, f),
         _ => {}
+    }
+}
+
+/// Visit every expression in a statement block (a lambda's lifted body), reusing
+/// the per-statement walker.
+fn walk_block_exprs(stmts: &[MirStmt], f: &mut dyn FnMut(&MirExpr)) {
+    for stmt in stmts {
+        walk_stmt_exprs(stmt, f);
     }
 }

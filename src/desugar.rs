@@ -228,7 +228,14 @@ fn mc_expr(expr: &mut Expr, scope: &mut Vec<String>) {
         Expr::Lambda { params, body, .. } => {
             let base = scope.len();
             scope.extend(params.iter().map(|p| p.name.clone()));
-            mc_expr(body, scope);
+            match body {
+                LambdaBody::Expr(e) => mc_expr(e, scope),
+                LambdaBody::Block(stmts) => {
+                    for stmt in stmts.iter_mut() {
+                        mc_stmt(stmt, scope);
+                    }
+                }
+            }
             scope.truncate(base);
         }
         Expr::StructLiteral { fields, .. } => {
