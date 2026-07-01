@@ -195,10 +195,18 @@ impl Parser {
             } else {
                 (None, None)
             };
-            self.expect_symbol(
-                Symbol::Semicolon,
-                "expected `;` after trait method signature",
-            )?;
+            // A `{` starts a default method body; otherwise the signature ends
+            // at `;` and implementers must provide the method.
+            let default_body = if self.check_symbol(Symbol::LBrace) {
+                self.expect_symbol(Symbol::LBrace, "expected `{` for default method body")?;
+                Some(self.parse_block_body()?)
+            } else {
+                self.expect_symbol(
+                    Symbol::Semicolon,
+                    "expected `;` or `{ ... }` after trait method signature",
+                )?;
+                None
+            };
             methods.push(TraitMethod {
                 name: method_name,
                 name_span: method_name_span,
@@ -206,6 +214,7 @@ impl Parser {
                 params,
                 return_type,
                 return_type_span,
+                default_body,
             });
         }
         self.expect_symbol(Symbol::RBrace, "expected `}` after trait methods")?;

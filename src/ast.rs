@@ -135,6 +135,10 @@ pub struct TraitMethod {
     pub params: Vec<Param>,
     pub return_type: Option<String>,
     pub return_type_span: Option<Span>,
+    /// A default body `fn m(self: Self) -> T { ... }` inside the trait. An `impl`
+    /// that omits this method inherits the default (with `Self` substituted for
+    /// the target type). `None` for a bodyless signature that impls must provide.
+    pub default_body: Option<Vec<Stmt>>,
 }
 
 /// An `impl Trait for Type { ... }` block. Methods are full functions (with

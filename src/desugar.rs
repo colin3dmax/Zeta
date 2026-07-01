@@ -273,6 +273,16 @@ fn mc_expr(expr: &mut Expr, scope: &mut Vec<String>) {
 /// type. `impl` items are removed; `trait` items stay (they declare the
 /// dispatchable method names consulted downstream).
 fn flatten_impls(module: &mut Module) {
+    // Trait declarations, for looking up default method bodies an impl may inherit.
+    let traits: std::collections::HashMap<String, Vec<TraitMethod>> = module
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Trait(decl) => Some((decl.name.clone(), decl.methods.clone())),
+            _ => None,
+        })
+        .collect();
+
     let mut generated: Vec<Item> = Vec::new();
     for item in &module.items {
         let Item::Impl(impl_block) = item else {
@@ -298,6 +308,44 @@ fn flatten_impls(module: &mut Module) {
                 function.type_params = type_params;
             }
             generated.push(Item::Function(function));
+        }
+
+        // Trait default methods the impl didn't override: synthesize the same
+        // mangled free function from the trait's default body (Self → target).
+        if let Some(trait_methods) = traits.get(&impl_block.trait_name) {
+            let provided: std::collections::HashSet<&str> =
+                impl_block.methods.iter().map(|m| m.name.as_str()).collect();
+            for tm in trait_methods {
+                if provided.contains(tm.name.as_str()) {
+                    continue;
+                }
+                let Some(default_body) = &tm.default_body else {
+                    continue;
+                };
+                let params = tm
+                    .params
+                    .iter()
+                    .map(|p| Param {
+                        ty: subst_self(&p.ty, target),
+                        ..p.clone()
+                    })
+                    .collect();
+                let mut type_params = impl_block.type_params.clone();
+                type_params.extend(tm.type_params.iter().cloned());
+                generated.push(Item::Function(Function {
+                    exported: false,
+                    reloadable: false,
+                    name: crate::type_syntax::dispatch_name(&tm.name, base),
+                    name_span: tm.name_span,
+                    type_params,
+                    type_param_bounds: Vec::new(),
+                    params,
+                    return_type: tm.return_type.as_ref().map(|rt| subst_self(rt, target)),
+                    return_type_span: tm.return_type_span,
+                    body: default_body.clone(),
+                    is_extern: false,
+                }));
+            }
         }
     }
     if generated.is_empty() {
